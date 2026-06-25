@@ -74,7 +74,7 @@ export function emailDomainOk(email) {
 }
 
 /* Release links — APKs and builds are shared as links (not file uploads).
-   Temporary/expiring hosts like WeTransfer are rejected. */
+   WeTransfer is rejected because its links expire. */
 export const BLOCKED_LINK_HOSTS = ['wetransfer.com', 'we.tl'];
 
 export function linkIssue(url) {
