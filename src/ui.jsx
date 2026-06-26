@@ -136,7 +136,7 @@ export function Wordmark({ size = 30, tone }) {
           color,
         }}
       >
-        Gamma<span style={{ color: 'var(--brand)' }}>Quality</span>
+        Jump<span style={{ color: 'var(--brand)' }}>Test</span>
       </div>
     </div>
   );

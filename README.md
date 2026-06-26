@@ -1,4 +1,4 @@
-# GammaQuality
+# JumpTest
 
 A single-page React app for managing releases across **Developer**, **QA**, and
 **Admin** roles, backed entirely by **Supabase** (Auth, Postgres, Storage).

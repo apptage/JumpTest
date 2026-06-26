@@ -517,6 +517,11 @@ export default function ReleaseTracker() {
       refetchProjects();
     }
   }
+  async function handleCreateUser(payload) {
+    const ok = await run(() => api.adminCreateUser(payload), 'Account created');
+    if (ok) refetchProfiles();
+    return ok;
+  }
   async function handleUpdateMember(id, patch) {
     const ok = await run(() => api.updateProfile(id, patch), 'Member updated');
     if (ok) refetchProfiles();
@@ -712,6 +717,7 @@ export default function ReleaseTracker() {
           onCreateTeam={handleCreateTeam}
           onDeleteTeam={handleDeleteTeam}
           onUpdateMember={handleUpdateMember}
+          onCreateUser={handleCreateUser}
           onCreateProject={handleCreateProject}
           onUpdateProject={handleUpdateProject}
           onDeleteProject={handleDeleteProject}
@@ -934,7 +940,7 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
               marginBottom: 20,
             }}
           >
-            {isSignup ? 'Join your team on GammaQuality' : 'Sign in to continue'}
+            {isSignup ? 'Join your team on JumpTest' : 'Sign in to continue'}
           </div>
 
           <div
@@ -2998,6 +3004,7 @@ function AdminPanel({
   onCreateTeam,
   onDeleteTeam,
   onUpdateMember,
+  onCreateUser,
   onCreateProject,
   onUpdateProject,
   onDeleteProject,
@@ -3067,8 +3074,10 @@ function AdminPanel({
           profiles={visibleProfiles}
           teams={teams}
           teamsById={teamsById}
+          isSubmitting={isSubmitting}
           showToast={showToast}
           onUpdateMember={onUpdateMember}
+          onCreateUser={onCreateUser}
           refetchProfiles={refetchProfiles}
         />
       )}
@@ -3178,6 +3187,146 @@ function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam, onDel
   );
 }
 
+function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: 'Developer',
+    teamId: '',
+  });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const domainBad = form.email.trim().length > 0 && !emailDomainOk(form.email);
+  const invalid =
+    !form.name.trim() ||
+    !form.email.trim() ||
+    domainBad ||
+    form.password.length < 6;
+
+  async function submit() {
+    if (invalid) return;
+    const ok = await onCreateUser({
+      name: form.name.trim(),
+      email: form.email.trim(),
+      password: form.password,
+      role: form.role,
+      teamId: form.teamId || null,
+    });
+    if (ok) {
+      setForm({ name: '', email: '', password: '', role: 'Developer', teamId: '' });
+      setOpen(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div style={{ marginBottom: 6 }}>
+        <button
+          style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          onClick={() => setOpen(true)}
+        >
+          <IconPlus size={15} />
+          Create account
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="anim-in"
+      style={{
+        ...card,
+        padding: 14,
+        background: 'var(--color-background-secondary)',
+        marginBottom: 8,
+      }}
+    >
+      <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>New account</div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 160px' }}>
+          <Field label="Name">
+            <input
+              style={inputStyle}
+              value={form.name}
+              placeholder="e.g. Sara Khan"
+              onChange={(e) => set('name', e.target.value)}
+            />
+          </Field>
+        </div>
+        <div style={{ flex: '1 1 200px' }}>
+          <Field label="Email">
+            <input
+              style={{
+                ...inputStyle,
+                borderColor: domainBad ? 'var(--danger)' : 'var(--color-border-tertiary)',
+              }}
+              type="email"
+              value={form.email}
+              placeholder={`name@${ALLOWED_EMAIL_DOMAIN}`}
+              onChange={(e) => set('email', e.target.value)}
+            />
+          </Field>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 160px' }}>
+          <Field label="Temporary password">
+            <input
+              style={inputStyle}
+              type="text"
+              value={form.password}
+              placeholder="At least 6 characters"
+              onChange={(e) => set('password', e.target.value)}
+            />
+          </Field>
+        </div>
+        <div style={{ flex: '1 1 120px' }}>
+          <Field label="Role">
+            <select style={inputStyle} value={form.role} onChange={(e) => set('role', e.target.value)}>
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div style={{ flex: '1 1 120px' }}>
+          <Field label="Team">
+            <select style={inputStyle} value={form.teamId} onChange={(e) => set('teamId', e.target.value)}>
+              <option value="">No team</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+        The account is created already-confirmed (no email sent). Share the
+        temporary password with the user.
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button style={ghostButton} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        <button
+          style={primaryButton(invalid || isSubmitting)}
+          disabled={invalid || isSubmitting}
+          onClick={submit}
+        >
+          {isSubmitting ? 'Creating…' : 'Create account'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function UsersTab({
   currentUser,
   isAdmin,
@@ -3185,8 +3334,10 @@ function UsersTab({
   profiles,
   teams,
   teamsById,
+  isSubmitting,
   showToast,
   onUpdateMember,
+  onCreateUser,
   refetchProfiles,
 }) {
   const [busyId, setBusyId] = useState(null);
@@ -3221,6 +3372,9 @@ function UsersTab({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {isAdmin && (
+        <CreateUserForm teams={teams} isSubmitting={isSubmitting} onCreateUser={onCreateUser} />
+      )}
       {profiles.map((p) => {
         const isSelf = p.id === currentUser.id;
         // a team lead may only adjust Developers/QA in their own team

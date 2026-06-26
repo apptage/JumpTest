@@ -144,6 +144,27 @@ export async function adminDeleteUser(id) {
   if (error) throw error;
 }
 
+// Admin creates a fully-provisioned account for any role via Edge Function.
+// (No confirmation email is sent, so this also avoids the email rate limit.)
+export async function adminCreateUser(payload) {
+  const { data, error } = await supabase.functions.invoke('admin-create-user', {
+    body: payload,
+  });
+  if (error) {
+    // surface the function's JSON error body when present
+    let msg = error.message;
+    try {
+      const body = await error.context?.json?.();
+      if (body?.error) msg = body.error;
+    } catch (_) {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 export async function fetchProfiles() {
   const { data, error } = await supabase
     .from('profiles')
