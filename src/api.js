@@ -5,7 +5,13 @@ import { supabase } from './supabaseClient.js';
 /* ------------------------------------------------------------------ */
 
 export function mapProfile(p) {
-  return { id: p.id, email: p.email, name: p.name, role: p.role };
+  return {
+    id: p.id,
+    email: p.email,
+    name: p.name,
+    role: p.role,
+    teamId: p.team_id ?? null,
+  };
 }
 
 export function mapProject(p) {
@@ -14,8 +20,13 @@ export function mapProject(p) {
     name: p.name,
     type: p.type,
     platform: p.platform,
+    teamId: p.team_id ?? null,
     createdAt: p.created_at,
   };
+}
+
+export function mapTeam(t) {
+  return { id: t.id, name: t.name, createdAt: t.created_at };
 }
 
 export function mapRelease(r) {
@@ -106,6 +117,33 @@ export async function fetchProfileById(userId) {
   return null;
 }
 
+// Fetch the caller's profile, self-healing if the signup trigger missed it.
+export async function ensureProfile(session) {
+  const existing = await fetchProfileById(session.user.id);
+  if (existing) return existing;
+  const metaRole = session.user.user_metadata?.role;
+  const role = metaRole === 'QA' ? 'QA' : 'Developer'; // never Admin/Team Lead
+  try {
+    await supabase.from('profiles').insert({
+      id: session.user.id,
+      email: session.user.email,
+      name:
+        session.user.user_metadata?.name ||
+        (session.user.email || '').split('@')[0] ||
+        'User',
+      role,
+    });
+  } catch (_) {
+    // ignore — may race with the trigger; we re-fetch below
+  }
+  return fetchProfileById(session.user.id);
+}
+
+export async function adminDeleteUser(id) {
+  const { error } = await supabase.rpc('admin_delete_user', { target: id });
+  if (error) throw error;
+}
+
 export async function fetchProfiles() {
   const { data, error } = await supabase
     .from('profiles')
@@ -113,6 +151,34 @@ export async function fetchProfiles() {
     .order('created_at', { ascending: true });
   if (error) throw error;
   return data.map(mapProfile);
+}
+
+export async function updateProfile(id, patch) {
+  const { error } = await supabase.from('profiles').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ */
+/* Teams                                                              */
+/* ------------------------------------------------------------------ */
+
+export async function fetchTeams() {
+  const { data, error } = await supabase
+    .from('teams')
+    .select('*')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data.map(mapTeam);
+}
+
+export async function createTeam(name) {
+  const { error } = await supabase.rpc('admin_create_team', { p_name: name });
+  if (error) throw error;
+}
+
+export async function deleteTeam(id) {
+  const { error } = await supabase.rpc('admin_delete_team', { p_id: id });
+  if (error) throw error;
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,6 +199,7 @@ export async function createProject(p) {
     name: p.name,
     type: p.type,
     platform: p.platform,
+    team_id: p.team_id ?? null,
   });
   if (error) throw error;
 }
@@ -206,6 +273,42 @@ export async function updateBugStatus(id, status) {
 
 export async function deleteBug(id) {
   const { error } = await supabase.from('bugs').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ */
+/* Bug comments (thread per bug)                                       */
+/* ------------------------------------------------------------------ */
+
+export function mapBugComment(c) {
+  return {
+    id: c.id,
+    bugId: c.bug_id,
+    authorId: c.author_id,
+    authorName: c.author_name,
+    authorRole: c.author_role,
+    body: c.body,
+    createdAt: c.created_at,
+  };
+}
+
+export async function fetchBugComments(bugId) {
+  const { data, error } = await supabase
+    .from('bug_comments')
+    .select('*')
+    .eq('bug_id', bugId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data.map(mapBugComment);
+}
+
+export async function createBugComment(payload) {
+  const { error } = await supabase.from('bug_comments').insert(payload);
+  if (error) throw error;
+}
+
+export async function deleteBugComment(id) {
+  const { error } = await supabase.from('bug_comments').delete().eq('id', id);
   if (error) throw error;
 }
 

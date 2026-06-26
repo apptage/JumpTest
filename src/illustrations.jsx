@@ -1,8 +1,9 @@
 /* Custom inline SVG vectors — dev / programming / QA themed.
    Black & orange. No external assets. */
 
-const O = '#ff7a1a'; // orange
-const O2 = '#ff5400'; // deep orange
+const O = '#2563eb'; // primary
+const O2 = '#3b82f6'; // lighter primary
+const OK = '#16a34a'; // success (QA passed)
 
 /* ---------- small line icons (use currentColor) ---------- */
 
@@ -91,8 +92,8 @@ export function HeroIllustration({ width = '100%' }) {
 
       {/* QA passed badge (top right) */}
       <g className="floaty" style={{ animationDelay: '0.8s' }}>
-        <circle cx="300" cy="44" r="26" fill={O} />
-        <path d="M289 44l7 7 14-14" stroke="#0c0d11" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="300" cy="44" r="26" fill={OK} />
+        <path d="M289 44l7 7 14-14" stroke="#06281c" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
       </g>
 
       {/* bug chip (bottom left, being squashed) */}
@@ -126,8 +127,8 @@ export function EmptyIllustration({ size = 120 }) {
       <circle cx="53" cy="39" r="2.6" fill="#28c840" />
       <path d="M44 58l7 7-7 7" stroke={O} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
       <rect x="58" y="62" width="34" height="6" rx="3" fill="var(--color-border-tertiary)" />
-      <circle cx="104" cy="30" r="15" fill={O} />
-      <path d="M97 30l5 5 9-9" stroke="#0c0d11" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="104" cy="30" r="15" fill={OK} />
+      <path d="M97 30l5 5 9-9" stroke="#06281c" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

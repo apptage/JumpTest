@@ -1,9 +1,9 @@
 /* Release statuses */
 export const STATUSES = {
-  in_qa: { label: 'In QA', color: '#3b82f6', icon: '🔍' },
-  pending: { label: 'Pending', color: '#f59e0b', icon: '⏳' },
-  qa_complete: { label: 'QA Complete', color: '#10b981', icon: '✅' },
-  bug_repeat: { label: 'Repeat Bug', color: '#f43f5e', icon: '🐛' },
+  in_qa: { label: 'In QA', color: '#64748b', icon: '🔍' },
+  pending: { label: 'Pending', color: '#d97706', icon: '⏳' },
+  qa_complete: { label: 'QA Complete', color: '#16a34a', icon: '✅' },
+  bug_repeat: { label: 'Repeat Bug', color: '#dc2626', icon: '🐛' },
 };
 export const STATUS_ORDER = ['in_qa', 'pending', 'qa_complete', 'bug_repeat'];
 
@@ -44,28 +44,31 @@ export function platformLabel(platform) {
 
 /* Bug severity */
 export const SEVERITIES = {
-  critical: { label: 'Critical', color: '#f43f5e' },
-  major: { label: 'Major', color: '#f59e0b' },
-  minor: { label: 'Minor', color: '#6b7280' },
+  critical: { label: 'Critical', color: '#dc2626' },
+  major: { label: 'Major', color: '#d97706' },
+  minor: { label: 'Minor', color: '#64748b' },
 };
 export const SEVERITY_ORDER = ['critical', 'major', 'minor'];
 
 /* Bug status workflow */
 export const BUG_STATUSES = {
-  open: { label: 'Open', color: '#f43f5e' },
-  in_progress: { label: 'In Progress', color: '#3b82f6' },
-  fixed: { label: 'Fixed', color: '#8b5cf6' },
-  verified: { label: 'Verified', color: '#10b981' },
+  open: { label: 'Open', color: '#dc2626' },
+  in_progress: { label: 'In Progress', color: '#2563eb' },
+  fixed: { label: 'Fixed', color: '#d97706' },
+  verified: { label: 'Verified', color: '#16a34a' },
 };
 export const BUG_STATUS_ORDER = ['open', 'in_progress', 'fixed', 'verified'];
 
 /* Roles */
-export const ROLES = ['Developer', 'QA', 'Admin'];
+export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
 export const ROLE_COLORS = {
-  QA: '#3b82f6',
-  Developer: '#22c55e',
-  Admin: '#ff6a1a',
+  QA: '#2563eb',
+  Developer: '#16a34a',
+  'Team Lead': '#d97706',
+  Admin: '#2563eb',
 };
+/* Roles a Team Lead is allowed to assign within their own team. */
+export const TEAM_ASSIGNABLE_ROLES = ['Developer', 'QA'];
 
 /* Org restriction */
 export const ALLOWED_EMAIL_DOMAIN = 'jumppace.com';

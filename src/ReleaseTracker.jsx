@@ -16,6 +16,7 @@ import {
   SEVERITY_ORDER,
   BUG_STATUSES,
   ROLES,
+  TEAM_ASSIGNABLE_ROLES,
   ALLOWED_EMAIL_DOMAIN,
   emailDomainOk,
 } from './constants.js';
@@ -42,10 +43,25 @@ import {
   HeroIllustration,
   EmptyIllustration,
   IconCode,
-  IconBug,
   IconShieldCheck,
-  IconRocket,
 } from './illustrations.jsx';
+import {
+  IconSearch,
+  IconClock,
+  IconCheck,
+  IconBug,
+  IconFolder,
+  IconBell,
+  IconPower,
+  IconPlus,
+  IconChart,
+  IconSliders,
+  IconUpload,
+  IconSmartphone,
+  IconGlobe,
+  IconDownload,
+  IconExternal,
+} from './icons.jsx';
 
 /* ================================================================== */
 /* Root                                                               */
@@ -61,6 +77,7 @@ export default function ReleaseTracker() {
   const [releases, setReleases] = useState([]);
   const [bugs, setBugs] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [checklistItems, setChecklistItems] = useState([]);
 
@@ -127,7 +144,7 @@ export default function ReleaseTracker() {
       return;
     }
     setProfileMissing(false);
-    api.fetchProfileById(session.user.id).then((p) => {
+    api.ensureProfile(session).then((p) => {
       if (cancelled) return;
       if (p) setUser(p);
       else setProfileMissing(true);
@@ -158,21 +175,27 @@ export default function ReleaseTracker() {
     setNotifications(await api.fetchNotifications(user.id));
   }, [user]);
 
+  const refetchTeams = useCallback(async () => {
+    setTeams(await api.fetchTeams());
+  }, []);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [pr, rel, bg, prof, ci] = await Promise.all([
+      const [pr, rel, bg, prof, ci, tm] = await Promise.all([
         api.fetchProjects(),
         api.fetchReleases(),
         api.fetchBugs(),
         api.fetchProfiles(),
         api.fetchChecklistItems(),
+        api.fetchTeams(),
       ]);
       setProjects(pr);
       setReleases(rel);
       setBugs(bg);
       setProfiles(prof);
       setChecklistItems(ci);
+      setTeams(tm);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -207,21 +230,52 @@ export default function ReleaseTracker() {
     return m;
   }, [profiles]);
 
+  /* ---- team scoping (app-level): non-admins only see their team ---- */
+  const adminScope = user?.role === 'Admin';
+  const myTeamId = user?.teamId ?? null;
+
+  const scopedProjects = useMemo(
+    () => (adminScope ? projects : projects.filter((p) => p.teamId === myTeamId)),
+    [projects, adminScope, myTeamId]
+  );
+  const scopedProjectIds = useMemo(
+    () => new Set(scopedProjects.map((p) => p.id)),
+    [scopedProjects]
+  );
+  const releaseProjectId = useMemo(() => {
+    const m = {};
+    releases.forEach((r) => (m[r.id] = r.projectId));
+    return m;
+  }, [releases]);
+  const scopedReleases = useMemo(
+    () =>
+      adminScope
+        ? releases
+        : releases.filter((r) => scopedProjectIds.has(r.projectId)),
+    [releases, adminScope, scopedProjectIds]
+  );
+  const scopedBugs = useMemo(
+    () =>
+      adminScope
+        ? bugs
+        : bugs.filter((b) => scopedProjectIds.has(releaseProjectId[b.releaseId])),
+    [bugs, adminScope, scopedProjectIds, releaseProjectId]
+  );
+
   const openBugCountByRelease = useMemo(() => {
     const m = {};
-    bugs.forEach((b) => {
-      if (b.status === 'open')
-        m[b.releaseId] = (m[b.releaseId] || 0) + 1;
+    scopedBugs.forEach((b) => {
+      if (b.status === 'open') m[b.releaseId] = (m[b.releaseId] || 0) + 1;
     });
     return m;
-  }, [bugs]);
+  }, [scopedBugs]);
 
   const counts = STATUS_ORDER.reduce((acc, key) => {
-    acc[key] = releases.filter((r) => r.status === key).length;
+    acc[key] = scopedReleases.filter((r) => r.status === key).length;
     return acc;
   }, {});
 
-  const filtered = releases.filter(
+  const filtered = scopedReleases.filter(
     (r) =>
       (projectFilter === 'all' || r.projectId === projectFilter) &&
       (typeFilter === 'all' || r.releaseType === typeFilter) &&
@@ -229,7 +283,7 @@ export default function ReleaseTracker() {
   );
 
   const unread = notifications.filter((n) => !n.read).length;
-  const selected = releases.find((r) => r.id === selectedId) || null;
+  const selected = scopedReleases.find((r) => r.id === selectedId) || null;
 
   /* ---- auth actions ---- */
   async function handleSignIn({ email, password }) {
@@ -242,12 +296,20 @@ export default function ReleaseTracker() {
     }, 'Signed in');
   }
 
-  async function handleSignUp({ name, email, password }) {
+  async function handleSignUp({ name, email, password, role }) {
     setIsSubmitting(true);
+    // only Developer / QA are allowed at signup; Admin & Team Lead are
+    // assigned later by an admin
+    const safeRole = role === 'QA' ? 'QA' : 'Developer';
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
-      options: { data: { name: name.trim() } },
+      options: {
+        data: { name: name.trim(), role: safeRole },
+        // confirmation link returns to wherever the app is running
+        // (your Vercel domain in prod, localhost in dev)
+        emailRedirectTo: window.location.origin,
+      },
     });
     setIsSubmitting(false);
     if (error) return showToast(error.message, 'error');
@@ -436,6 +498,31 @@ export default function ReleaseTracker() {
     if (ok) refetchChecklist();
   }
 
+  /* ---- teams + members (admin / team lead) ---- */
+  async function handleCreateTeam(name) {
+    const ok = await run(() => api.createTeam(name), 'Team created');
+    if (ok) refetchTeams();
+  }
+  async function handleDeleteTeam(id) {
+    if (
+      !window.confirm(
+        'Delete this team? Its members and projects become unassigned (visible only to admins).'
+      )
+    )
+      return;
+    const ok = await run(() => api.deleteTeam(id), 'Team deleted');
+    if (ok) {
+      refetchTeams();
+      refetchProfiles();
+      refetchProjects();
+    }
+  }
+  async function handleUpdateMember(id, patch) {
+    const ok = await run(() => api.updateProfile(id, patch), 'Member updated');
+    if (ok) refetchProfiles();
+    return ok;
+  }
+
   /* ---- notifications ---- */
   async function handleOpenNotif() {
     setShowNotif((v) => !v);
@@ -491,13 +578,22 @@ export default function ReleaseTracker() {
   if (!user) return <CenteredMessage>Loading your profile…</CenteredMessage>;
 
   const isAdmin = user.role === 'Admin';
-  const canSubmit = user.role === 'Developer' || isAdmin;
+  const isLead = user.role === 'Team Lead';
+  const canManage = isAdmin || isLead; // can open the Manage panel
+  const canSubmit = user.role === 'Developer' || isLead || isAdmin;
+  const myTeam = teams.find((t) => t.id === myTeamId) || null;
+
+  // manager rights on the selected release (admin everywhere; lead in own team)
+  const selProjectTeam = selected ? projectsById[selected.projectId]?.teamId : null;
+  const isManagerOfSelected =
+    isAdmin || (isLead && selProjectTeam && selProjectTeam === myTeamId);
 
   return (
     <div style={{ minHeight: '100%' }}>
       <Header
         user={user}
-        isAdmin={isAdmin}
+        teamName={isAdmin ? null : myTeam?.name}
+        canManage={canManage}
         canSubmit={canSubmit}
         unread={unread}
         notifOpen={showNotif}
@@ -515,9 +611,10 @@ export default function ReleaseTracker() {
         {/* LEFT — project nav + quick stats */}
         <aside className="shell-aside shell-left">
           <Sidebar
-            projects={projects}
-            releases={releases}
-            openBugTotal={bugs.filter((b) => b.status === 'open').length}
+            projects={scopedProjects}
+            releases={scopedReleases}
+            teamName={isAdmin ? null : myTeam?.name}
+            openBugTotal={scopedBugs.filter((b) => b.status === 'open').length}
             projectFilter={projectFilter}
             onProject={setProjectFilter}
           />
@@ -530,17 +627,17 @@ export default function ReleaseTracker() {
               {greeting()}, {user.name.split(/[\s_]+/)[0]}
             </h1>
             <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
-              {releases.length} release{releases.length === 1 ? '' : 's'} ·{' '}
-              {projects.length} project{projects.length === 1 ? '' : 's'} ·{' '}
-              {bugs.filter((b) => b.status === 'open').length} open bug
-              {bugs.filter((b) => b.status === 'open').length === 1 ? '' : 's'}
+              {scopedReleases.length} release{scopedReleases.length === 1 ? '' : 's'} ·{' '}
+              {scopedProjects.length} project{scopedProjects.length === 1 ? '' : 's'} ·{' '}
+              {scopedBugs.filter((b) => b.status === 'open').length} open bug
+              {scopedBugs.filter((b) => b.status === 'open').length === 1 ? '' : 's'}
             </p>
           </div>
 
           <StatCards counts={counts} />
 
           <FilterBar
-            projects={projects}
+            projects={scopedProjects}
             projectFilter={projectFilter}
             typeFilter={typeFilter}
             statusFilter={statusFilter}
@@ -554,7 +651,7 @@ export default function ReleaseTracker() {
             <Empty>Loading releases…</Empty>
           ) : filtered.length === 0 ? (
             <Empty>
-              {releases.length === 0
+              {scopedReleases.length === 0
                 ? 'No releases yet — submit your first build.'
                 : 'No releases match your filters.'}
             </Empty>
@@ -579,10 +676,10 @@ export default function ReleaseTracker() {
         {/* RIGHT — activity, platform mix, quick actions */}
         <aside className="shell-aside shell-right">
           <RightPanel
-            releases={releases}
-            bugs={bugs}
+            releases={scopedReleases}
+            bugs={scopedBugs}
             canSubmit={canSubmit}
-            isAdmin={isAdmin}
+            canManage={canManage}
             onSubmit={() => setShowSubmit(true)}
             onAdmin={() => setShowAdmin(true)}
             onAnalytics={() => setShowAnalytics(true)}
@@ -593,7 +690,7 @@ export default function ReleaseTracker() {
 
       {showSubmit && (
         <SubmitModal
-          projects={projects}
+          projects={scopedProjects}
           isSubmitting={isSubmitting}
           onClose={() => setShowSubmit(false)}
           onSubmit={handleCreateRelease}
@@ -603,27 +700,33 @@ export default function ReleaseTracker() {
       {showAdmin && (
         <AdminPanel
           currentUser={user}
+          isAdmin={isAdmin}
+          myTeamId={myTeamId}
+          teams={teams}
           profiles={profiles}
           projects={projects}
           releases={releases}
           checklistItems={checklistItems}
           isSubmitting={isSubmitting}
           showToast={showToast}
-          refetchProfiles={refetchProfiles}
+          onCreateTeam={handleCreateTeam}
+          onDeleteTeam={handleDeleteTeam}
+          onUpdateMember={handleUpdateMember}
           onCreateProject={handleCreateProject}
           onUpdateProject={handleUpdateProject}
           onDeleteProject={handleDeleteProject}
           onAddChecklistItem={handleAddChecklistItem}
           onDeleteChecklistItem={handleDeleteChecklistItem}
+          refetchProfiles={refetchProfiles}
           onClose={() => setShowAdmin(false)}
         />
       )}
 
       {showAnalytics && (
         <AnalyticsModal
-          projects={projects}
-          releases={releases}
-          bugs={bugs}
+          projects={scopedProjects}
+          releases={scopedReleases}
+          bugs={scopedBugs}
           onClose={() => setShowAnalytics(false)}
           onOpenHistory={(p) => {
             setShowAnalytics(false);
@@ -635,7 +738,7 @@ export default function ReleaseTracker() {
       {historyProject && (
         <HistoryModal
           project={historyProject}
-          releases={releases.filter((r) => r.projectId === historyProject.id)}
+          releases={scopedReleases.filter((r) => r.projectId === historyProject.id)}
           showToast={showToast}
           onClose={() => setHistoryProject(null)}
         />
@@ -646,6 +749,7 @@ export default function ReleaseTracker() {
           release={selected}
           project={projectsById[selected.projectId]}
           user={user}
+          isManager={isManagerOfSelected}
           profiles={profiles}
           profilesById={profilesById}
           bugs={bugs.filter((b) => b.releaseId === selected.id)}
@@ -713,6 +817,7 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('Developer');
 
   const isSignup = mode === 'signup';
   const domainBad = email.trim().length > 0 && !emailDomainOk(email);
@@ -724,7 +829,7 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
 
   function submit() {
     if (invalid || isSubmitting) return;
-    if (isSignup) onSignUp({ name, email, password });
+    if (isSignup) onSignUp({ name, email, password, role });
     else onSignIn({ email, password });
   }
 
@@ -768,8 +873,7 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
             flex: '1 1 330px',
             minWidth: 0,
             padding: 36,
-            background:
-              'radial-gradient(420px 240px at 80% 0%, rgba(255,90,0,0.22), transparent 70%), var(--ink)',
+            background: 'var(--ink-2)',
             color: 'var(--on-ink)',
             display: 'flex',
             flexDirection: 'column',
@@ -861,6 +965,15 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
           </Field>
         )}
 
+        {isSignup && (
+          <Field label="Role">
+            <select style={inputStyle} value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="Developer">Developer</option>
+              <option value="QA">QA</option>
+            </select>
+          </Field>
+        )}
+
         <Field label="Email">
           <input
             style={inputStyle}
@@ -931,7 +1044,8 @@ function Field({ label, children }) {
 
 function Header({
   user,
-  isAdmin,
+  teamName,
+  canManage,
   canSubmit,
   unread,
   notifOpen,
@@ -948,9 +1062,9 @@ function Header({
     padding: '8px 13px',
     fontSize: 13,
     fontWeight: 500,
-    color: 'var(--on-ink)',
-    background: 'rgba(255,255,255,0.06)',
-    border: '0.5px solid var(--ink-border)',
+    color: 'var(--color-text-primary)',
+    background: 'var(--color-background-primary)',
+    border: '1px solid var(--color-border-tertiary)',
     borderRadius: 'var(--r-input)',
     cursor: 'pointer',
     fontFamily: 'inherit',
@@ -976,18 +1090,33 @@ function Header({
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}>
           <Wordmark size={30} tone="ink" />
+          {teamName && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--color-text-secondary)',
+                background: 'var(--color-background-secondary)',
+                border: '1px solid var(--color-border-tertiary)',
+                padding: '3px 9px',
+                borderRadius: 999,
+              }}
+            >
+              {teamName}
+            </span>
+          )}
         </div>
 
         {/* bell */}
         <div style={{ position: 'relative' }}>
           <button
             onClick={onToggleNotif}
-            style={{ ...inkGhost, padding: '8px 11px', position: 'relative', fontSize: 15 }}
+            style={{ ...inkGhost, padding: 9, position: 'relative', display: 'inline-flex' }}
             title="Notifications"
           >
-            🔔
+            <IconBell size={17} />
             {unread > 0 && (
               <span style={{ position: 'absolute', top: -5, right: -5 }}>
                 <CountBadge count={unread} />
@@ -1006,14 +1135,18 @@ function Header({
         <button style={inkGhost} onClick={onAnalyticsClick}>
           Analytics
         </button>
-        {isAdmin && (
+        {canManage && (
           <button style={inkGhost} onClick={onAdminClick}>
-            Admin
+            Manage
           </button>
         )}
         {canSubmit && (
-          <button style={primaryButton(false)} onClick={onSubmitClick}>
-            + Submit release
+          <button
+            style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            onClick={onSubmitClick}
+          >
+            <IconPlus size={15} />
+            Submit release
           </button>
         )}
 
@@ -1024,25 +1157,25 @@ function Header({
             alignItems: 'center',
             gap: 8,
             padding: '5px 10px 5px 6px',
-            background: 'rgba(255,255,255,0.06)',
-            border: '0.5px solid var(--ink-border)',
+            background: 'var(--color-background-secondary)',
+            border: '1px solid var(--color-border-tertiary)',
             borderRadius: 999,
           }}
         >
-          <Avatar name={user.name} role={user.role} size={26} />
+          <Avatar name={user.name} size={26} />
           <div style={{ lineHeight: 1.15 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--on-ink)' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>
               {user.name}
             </div>
-            <div style={{ fontSize: 10.5, color: 'var(--on-ink-dim)' }}>{user.role}</div>
+            <div style={{ fontSize: 10.5, color: 'var(--color-text-secondary)' }}>{user.role}</div>
           </div>
         </div>
         <button
-          style={{ ...inkGhost, padding: '8px 11px' }}
+          style={{ ...inkGhost, padding: 9, display: 'inline-flex' }}
           onClick={onSignOut}
           title="Sign out"
         >
-          ⏻
+          <IconPower size={17} />
         </button>
       </div>
     </header>
@@ -1135,6 +1268,13 @@ function NotificationsDropdown({ notifications, onNotifClick, onMarkAllRead }) {
 /* Stat cards + filters                                               */
 /* ================================================================== */
 
+const STATUS_ICONS = {
+  in_qa: IconSearch,
+  pending: IconClock,
+  qa_complete: IconCheck,
+  bug_repeat: IconBug,
+};
+
 function StatCards({ counts }) {
   return (
     <div
@@ -1147,62 +1287,54 @@ function StatCards({ counts }) {
     >
       {STATUS_ORDER.map((key) => {
         const s = STATUSES[key];
+        const Ico = STATUS_ICONS[key];
+        const n = counts[key];
+        const active = n > 0;
+        // zero-state cards stay fully neutral; only non-empty cards carry color
+        const accent = active ? s.color : 'var(--color-text-tertiary)';
         return (
-          <div
-            key={key}
-            style={{
-              ...card,
-              padding: 16,
-              position: 'relative',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                height: 3,
-                background: s.color,
-                opacity: 0.85,
-              }}
-            />
+          <div key={key} style={{ ...card, padding: 16 }}>
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                marginBottom: 10,
+                marginBottom: 12,
+              }}
+            >
+              <span style={{ color: accent, display: 'inline-flex' }}>
+                <Ico size={18} />
+              </span>
+              <span
+                className="tnum"
+                style={{
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                }}
+              >
+                {n}
+              </span>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--color-text-secondary)',
               }}
             >
               <span
                 style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 10,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 16,
-                  background: `${s.color}1a`,
+                  width: 6,
+                  height: 6,
+                  borderRadius: 999,
+                  background: accent,
+                  flexShrink: 0,
                 }}
-              >
-                {s.icon}
-              </span>
-              <span
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 28,
-                  fontWeight: 700,
-                  color: s.color,
-                  letterSpacing: '-0.03em',
-                }}
-              >
-                {counts[key]}
-              </span>
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+              />
               {s.label}
             </div>
           </div>
@@ -1270,7 +1402,6 @@ function FilterBar({
 
 function ReleaseCard({ release, project, openBugs, assignedName, onClick }) {
   const [hover, setHover] = useState(false);
-  const accent = STATUSES[release.status]?.color || '#6b7280';
   const notesPreview = (release.releaseNotes || '').split('\n')[0].trim();
   return (
     <div
@@ -1279,29 +1410,15 @@ function ReleaseCard({ release, project, openBugs, assignedName, onClick }) {
       onMouseLeave={() => setHover(false)}
       style={{
         ...card,
-        position: 'relative',
-        padding: '14px 16px 14px 18px',
+        padding: 15,
         cursor: 'pointer',
-        overflow: 'hidden',
-        borderColor: hover ? 'var(--color-border-tertiary)' : 'var(--color-border-tertiary)',
-        boxShadow: hover ? 'var(--shadow-md)' : 'var(--shadow-sm)',
-        transform: hover ? 'translateY(-1px)' : 'none',
-        transition: 'box-shadow .15s ease, transform .15s ease',
+        borderColor: hover ? 'var(--brand)' : 'var(--color-border-tertiary)',
+        transition: 'border-color .12s ease',
       }}
     >
-      <span
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 3,
-          background: accent,
-        }}
-      />
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <TypeBadge type={release.releaseType} />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13.5, fontWeight: 600 }}>
+        <span className="tnum" style={{ fontSize: 13.5, fontWeight: 600 }}>
           v{release.version}
         </span>
         <StatusBadge status={release.status} />
@@ -1316,45 +1433,27 @@ function ReleaseCard({ release, project, openBugs, assignedName, onClick }) {
               gap: 5,
             }}
           >
-            <span style={{ opacity: 0.5 }}>📁</span>
+            <IconFolder size={13} />
             {project.name}
           </span>
         )}
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 500,
-            color: 'var(--color-text-secondary)',
-            padding: '2px 8px',
-            background: 'var(--color-background-secondary)',
-            borderRadius: 999,
-          }}
-        >
+        <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--color-text-tertiary)' }}>
           {release.platform}
         </span>
         {openBugs > 0 && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <CountBadge count={openBugs} />
-            <span style={{ fontSize: 11, fontWeight: 600, color: '#f43f5e' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--danger)' }}>
               open bug{openBugs === 1 ? '' : 's'}
             </span>
           </span>
         )}
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 500,
-            color: assignedName ? 'var(--brand)' : 'var(--color-text-tertiary)',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-        >
-          🧪 {assignedName || 'Unassigned'}
+        <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--color-text-tertiary)' }}>
+          {assignedName ? `QA: ${assignedName}` : 'Unassigned'}
         </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Avatar name={release.submittedBy} role={release.submittedByRole} size={28} />
+          <Avatar name={release.submittedBy} size={28} />
           <div style={{ lineHeight: 1.2, textAlign: 'right' }}>
             <div style={{ fontSize: 12, fontWeight: 600 }}>{release.submittedBy}</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
@@ -1430,10 +1529,10 @@ function relativeTime(t) {
 }
 
 const PLAT_COLORS = {
-  Android: '#22c55e',
+  Android: '#10b981',
   iOS: '#3b82f6',
   Web: '#f59e0b',
-  Both: '#8b5cf6',
+  Both: '#0c5cab',
 };
 
 function NavRow({ label, count, active, onClick }) {
@@ -1479,7 +1578,7 @@ function NavRow({ label, count, active, onClick }) {
   );
 }
 
-function Sidebar({ projects, releases, openBugTotal, projectFilter, onProject }) {
+function Sidebar({ projects, releases, teamName, openBugTotal, projectFilter, onProject }) {
   const countFor = (id) => releases.filter((r) => r.projectId === id).length;
   const stat = (label, value, color) => (
     <div
@@ -1507,7 +1606,30 @@ function Sidebar({ projects, releases, openBugTotal, projectFilter, onProject })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ ...card, padding: 14 }}>
-        <div style={sideHead}>Projects</div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 10,
+          }}
+        >
+          <span style={{ ...sideHead, marginBottom: 0 }}>Projects</span>
+          {teamName && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: 'var(--brand)',
+                background: 'var(--brand-soft)',
+                padding: '2px 7px',
+                borderRadius: 999,
+              }}
+            >
+              {teamName}
+            </span>
+          )}
+        </div>
         <NavRow
           label="All projects"
           count={releases.length}
@@ -1534,7 +1656,7 @@ function Sidebar({ projects, releases, openBugTotal, projectFilter, onProject })
         <div style={sideHead}>At a glance</div>
         {stat('Releases', releases.length)}
         {stat('Projects', projects.length)}
-        {stat('Open bugs', openBugTotal, openBugTotal ? '#f43f5e' : undefined)}
+        {stat('Open bugs', openBugTotal, openBugTotal ? '#dc2626' : undefined)}
       </div>
     </div>
   );
@@ -1544,7 +1666,7 @@ function RightPanel({
   releases,
   bugs,
   canSubmit,
-  isAdmin,
+  canManage,
   onSubmit,
   onAdmin,
   onAnalytics,
@@ -1596,18 +1718,28 @@ function RightPanel({
         <div style={sideHead}>Quick actions</div>
         {canSubmit && (
           <button
-            style={{ ...primaryButton(false), width: '100%', display: 'block', textAlign: 'center' }}
+            style={{
+              ...primaryButton(false),
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+            }}
             onClick={onSubmit}
           >
-            + Submit release
+            <IconPlus size={15} />
+            Submit release
           </button>
         )}
         <button style={quickBtn} onClick={onAnalytics}>
-          📊 View analytics
+          <IconChart size={15} />
+          View analytics
         </button>
-        {isAdmin && (
+        {canManage && (
           <button style={quickBtn} onClick={onAdmin}>
-            ⚙️ Manage projects & users
+            <IconSliders size={15} />
+            Manage projects &amp; users
           </button>
         )}
       </div>
@@ -1647,7 +1779,7 @@ function RightPanel({
                       width: `${(v / maxPlat) * 100}%`,
                       height: '100%',
                       borderRadius: 999,
-                      background: PLAT_COLORS[k] || 'var(--brand)',
+                      background: 'var(--brand)',
                     }}
                   />
                 </div>
@@ -1674,16 +1806,17 @@ function RightPanel({
                   style={{
                     width: 26,
                     height: 26,
-                    borderRadius: 8,
+                    borderRadius: 6,
                     flexShrink: 0,
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: a.kind === 'bug' ? '#f43f5e' : 'var(--brand)',
-                    background: a.kind === 'bug' ? 'rgba(244,63,94,0.12)' : 'var(--brand-soft)',
+                    color: 'var(--color-text-secondary)',
+                    background: 'var(--color-background-secondary)',
+                    border: '1px solid var(--color-border-tertiary)',
                   }}
                 >
-                  {a.kind === 'bug' ? <IconBug size={14} /> : <IconRocket size={14} />}
+                  {a.kind === 'bug' ? <IconBug size={13} /> : <IconUpload size={13} />}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, lineHeight: 1.4 }}>{a.text}</div>
@@ -1797,7 +1930,7 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
         >
           {allowedTypes.map((t) => (
             <option key={t} value={t}>
-              {RELEASE_TYPES[t].icon} {RELEASE_TYPES[t].label}
+              {RELEASE_TYPES[t].label}
             </option>
           ))}
         </select>
@@ -1808,7 +1941,7 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
           style={{
             ...inputStyle,
             borderColor:
-              form.linkUrl && linkErr ? '#f43f5e' : 'var(--color-border-tertiary)',
+              form.linkUrl && linkErr ? '#dc2626' : 'var(--color-border-tertiary)',
           }}
           value={form.linkUrl}
           placeholder={
@@ -1820,7 +1953,7 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
         />
         <div style={{ fontSize: 11, marginTop: 5, minHeight: 14, color: 'var(--color-text-tertiary)' }}>
           {form.linkUrl && linkErr ? (
-            <span style={{ color: '#f43f5e' }}>{linkErr}</span>
+            <span style={{ color: '#dc2626' }}>{linkErr}</span>
           ) : form.releaseType === 'apk' ? (
             'Paste a permanent download link — WeTransfer and other expiring links are not allowed.'
           ) : (
@@ -1863,6 +1996,7 @@ function DetailModal({
   release,
   project,
   user,
+  isManager,
   profiles,
   profilesById,
   bugs,
@@ -1884,13 +2018,13 @@ function DetailModal({
   const [note, setNote] = useState(release.qaNote || '');
   const [checks, setChecks] = useState({}); // item_id -> checked
 
-  const isAdmin = user.role === 'Admin';
-  const isQA = user.role === 'QA' || isAdmin;
+  // a "manager" (Admin anywhere, or Team Lead in their own team) gets full rights
+  const isQA = user.role === 'QA' || isManager;
   const canDoQA =
-    isAdmin ||
+    isManager ||
     (user.role === 'QA' &&
       (!release.assignedQa || release.assignedQa === user.id));
-  const canDelete = isAdmin || release.submittedBy === user.name;
+  const canDelete = isManager || release.submittedBy === user.name;
 
   const loadChecks = useCallback(async () => {
     try {
@@ -1986,7 +2120,7 @@ function DetailModal({
         {tabBtn(
           'bugs',
           'Bugs',
-          bugs.length ? <CountBadge count={openBugs || bugs.length} color={openBugs ? '#dc2626' : '#6b7280'} /> : null
+          bugs.length ? <CountBadge count={openBugs || bugs.length} color={openBugs ? '#dc2626' : '#64748b'} /> : null
         )}
         {tabBtn('comments', 'Comments')}
         {checklistItems.length > 0 && tabBtn('checklist', 'Checklist')}
@@ -2000,7 +2134,7 @@ function DetailModal({
           isQA={isQA}
           canDoQA={canDoQA}
           canDelete={canDelete}
-          isAdmin={isAdmin}
+          isAdmin={isManager}
           qaList={qaList}
           profilesById={profilesById}
           isSubmitting={isSubmitting}
@@ -2017,6 +2151,7 @@ function DetailModal({
           bugs={bugs}
           user={user}
           isQA={isQA}
+          showToast={showToast}
           isSubmitting={isSubmitting}
           onAddBug={onAddBug}
           onBugStatus={onBugStatus}
@@ -2098,11 +2233,21 @@ function DetailsTab({
             rel="noreferrer"
             style={{
               ...ghostButton,
-              display: 'inline-block',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
               textDecoration: 'none',
             }}
           >
-            {release.releaseType === 'apk' ? '⬇ Download APK' : '↗ Open link'}
+            {release.releaseType === 'apk' ? (
+              <>
+                <IconDownload size={15} /> Download APK
+              </>
+            ) : (
+              <>
+                <IconExternal size={15} /> Open link
+              </>
+            )}
           </a>
         </div>
       )}
@@ -2256,6 +2401,7 @@ function BugsTab({
   bugs,
   user,
   isQA,
+  showToast,
   isSubmitting,
   onAddBug,
   onBugStatus,
@@ -2358,6 +2504,8 @@ function BugsTab({
             <BugRow
               key={bug.id}
               bug={bug}
+              user={user}
+              showToast={showToast}
               isDev={isDev}
               isQA={isQA}
               canDelete={user.role === 'Admin' || bug.createdById === user.id}
@@ -2372,7 +2520,8 @@ function BugsTab({
   );
 }
 
-function BugRow({ bug, isDev, isQA, canDelete, isSubmitting, onStatus, onDelete }) {
+function BugRow({ bug, user, showToast, isDev, isQA, canDelete, isSubmitting, onStatus, onDelete }) {
+  const [showThread, setShowThread] = useState(false);
   // contextual transitions
   const actions = [];
   if (isDev) {
@@ -2467,6 +2616,150 @@ function BugRow({ bug, isDev, isQA, canDelete, isSubmitting, onStatus, onDelete 
           )}
         </div>
       )}
+
+      {/* comment thread */}
+      <div style={{ marginTop: 10, borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>
+        <button
+          onClick={() => setShowThread((v) => !v)}
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--color-text-secondary)',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          {showThread ? 'Hide comments' : 'Comments'}
+        </button>
+        {showThread && <BugThread bug={bug} user={user} showToast={showToast} />}
+      </div>
+    </div>
+  );
+}
+
+function BugThread({ bug, user, showToast }) {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setComments(await api.fetchBugComments(bug.id));
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [bug.id, showToast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function add() {
+    if (!body.trim()) return;
+    setBusy(true);
+    try {
+      await api.createBugComment({
+        bug_id: bug.id,
+        author_id: user.id,
+        author_name: user.name,
+        author_role: user.role,
+        body: body.trim(),
+      });
+      setBody('');
+      await load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id) {
+    try {
+      await api.deleteBugComment(id);
+      load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {loading ? (
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+      ) : comments.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+          No comments yet.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
+          {comments.map((c) => (
+            <div key={c.id} style={{ display: 'flex', gap: 9 }}>
+              <Avatar name={c.authorName} size={26} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.authorName}</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+                    {c.authorRole} · {new Date(c.createdAt).toLocaleString()}
+                  </span>
+                  {(user.role === 'Admin' || c.authorId === user.id) && (
+                    <button
+                      onClick={() => remove(c.id)}
+                      style={{
+                        marginLeft: 'auto',
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        fontSize: 11,
+                        color: 'var(--color-text-tertiary)',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, marginTop: 3, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
+                  {c.body}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        <Avatar name={user.name} size={26} />
+        <div style={{ flex: 1 }}>
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical' }}
+            rows={2}
+            value={body}
+            placeholder="Add a comment…"
+            onChange={(e) => setBody(e.target.value)}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+            <button
+              style={primaryButton(!body.trim() || busy)}
+              disabled={!body.trim() || busy}
+              onClick={add}
+            >
+              {busy ? 'Saving…' : 'Comment'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2693,21 +2986,37 @@ function ChecklistTab({ items, checks, canEdit, onToggle }) {
 
 function AdminPanel({
   currentUser,
+  isAdmin,
+  myTeamId,
+  teams,
   profiles,
   projects,
   releases,
   checklistItems,
   isSubmitting,
   showToast,
-  refetchProfiles,
+  onCreateTeam,
+  onDeleteTeam,
+  onUpdateMember,
   onCreateProject,
   onUpdateProject,
   onDeleteProject,
   onAddChecklistItem,
   onDeleteChecklistItem,
+  refetchProfiles,
   onClose,
 }) {
-  const [tab, setTab] = useState('users');
+  const [tab, setTab] = useState(isAdmin ? 'teams' : 'projects');
+
+  const visibleProjects = isAdmin
+    ? projects
+    : projects.filter((p) => p.teamId === myTeamId);
+  const visibleProfiles = isAdmin
+    ? profiles
+    : profiles.filter((p) => p.teamId === myTeamId);
+  const teamsById = {};
+  teams.forEach((t) => (teamsById[t.id] = t));
+
   const tabBtn = (key, label) => (
     <div
       onClick={() => setTab(key)}
@@ -2725,7 +3034,7 @@ function AdminPanel({
   );
 
   return (
-    <ModalShell onClose={onClose} title="Admin" maxWidth={640}>
+    <ModalShell onClose={onClose} title={isAdmin ? 'Manage' : 'Manage team'} maxWidth={680}>
       <div
         style={{
           display: 'flex',
@@ -2734,20 +3043,43 @@ function AdminPanel({
           borderBottom: '0.5px solid var(--color-border-primary)',
         }}
       >
-        {tabBtn('users', 'Users')}
+        {isAdmin && tabBtn('teams', 'Teams')}
+        {tabBtn('users', isAdmin ? 'Users' : 'Team members')}
         {tabBtn('projects', 'Projects & Checklists')}
       </div>
 
-      {tab === 'users' ? (
+      {tab === 'teams' && isAdmin && (
+        <TeamsTab
+          teams={teams}
+          profiles={profiles}
+          projects={projects}
+          isSubmitting={isSubmitting}
+          onCreateTeam={onCreateTeam}
+          onDeleteTeam={onDeleteTeam}
+        />
+      )}
+
+      {tab === 'users' && (
         <UsersTab
           currentUser={currentUser}
-          profiles={profiles}
+          isAdmin={isAdmin}
+          myTeamId={myTeamId}
+          profiles={visibleProfiles}
+          teams={teams}
+          teamsById={teamsById}
           showToast={showToast}
+          onUpdateMember={onUpdateMember}
           refetchProfiles={refetchProfiles}
         />
-      ) : (
+      )}
+
+      {tab === 'projects' && (
         <ProjectsTab
-          projects={projects}
+          isAdmin={isAdmin}
+          myTeamId={myTeamId}
+          teams={teams}
+          teamsById={teamsById}
+          projects={visibleProjects}
           releases={releases}
           checklistItems={checklistItems}
           isSubmitting={isSubmitting}
@@ -2768,37 +3100,133 @@ function AdminPanel({
   );
 }
 
-function UsersTab({ currentUser, profiles, showToast, refetchProfiles }) {
-  const [busyId, setBusyId] = useState(null);
+function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam, onDeleteTeam }) {
+  const [name, setName] = useState('');
+  const members = (id) => profiles.filter((p) => p.teamId === id);
+  const leadOf = (id) => members(id).find((p) => p.role === 'Team Lead');
+  const projCount = (id) => projects.filter((p) => p.teamId === id).length;
+  function add() {
+    if (!name.trim()) return;
+    onCreateTeam(name.trim());
+    setName('');
+  }
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <input
+          style={{ ...inputStyle, flex: 1 }}
+          value={name}
+          placeholder="New team name (e.g. Team B)"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && add()}
+        />
+        <button style={primaryButton(!name.trim() || isSubmitting)} disabled={!name.trim() || isSubmitting} onClick={add}>
+          Add team
+        </button>
+      </div>
 
-  async function changeRole(id, role) {
+      {teams.length === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No teams yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {teams.map((t) => {
+            const lead = leadOf(t.id);
+            return (
+              <div
+                key={t.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '11px 13px',
+                  background: 'var(--color-background-secondary)',
+                  border: '0.5px solid var(--color-border-primary)',
+                  borderRadius: 10,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{t.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                    {lead ? (
+                      <span>
+                        Lead: <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>{lead.name}</span>
+                      </span>
+                    ) : (
+                      <span style={{ color: '#dc2626' }}>No team lead</span>
+                    )}{' '}
+                    · {members(t.id).length} member{members(t.id).length === 1 ? '' : 's'} · {projCount(t.id)} project
+                    {projCount(t.id) === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onDeleteTeam(t.id)}
+                  disabled={isSubmitting}
+                  style={{ ...ghostButton, padding: '6px 10px', fontSize: 12, color: '#dc2626', borderColor: '#dc262644' }}
+                >
+                  Delete
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 12, lineHeight: 1.5 }}>
+        Assign each team a Team Lead in the Users tab. Team Leads manage their own
+        team's projects and members; Developers and QA only see their team's work.
+      </div>
+    </div>
+  );
+}
+
+function UsersTab({
+  currentUser,
+  isAdmin,
+  myTeamId,
+  profiles,
+  teams,
+  teamsById,
+  showToast,
+  onUpdateMember,
+  refetchProfiles,
+}) {
+  const [busyId, setBusyId] = useState(null);
+  const roleOptions = isAdmin ? ROLES : TEAM_ASSIGNABLE_ROLES;
+
+  async function patch(id, p) {
     setBusyId(id);
-    const { error } = await supabase.from('profiles').update({ role }).eq('id', id);
+    await onUpdateMember(id, p);
     setBusyId(null);
-    if (error) showToast(error.message, 'error');
-    else {
-      showToast('Role updated');
-      refetchProfiles();
-    }
   }
 
   async function removeUser(p) {
-    if (!window.confirm(`Remove ${p.name}? They will lose access until re-onboarded.`))
+    if (
+      !window.confirm(
+        `Permanently delete ${p.name}? This removes them from both the app and the authentication system.`
+      )
+    )
       return;
     setBusyId(p.id);
-    const { error } = await supabase.from('profiles').delete().eq('id', p.id);
-    setBusyId(null);
-    if (error) showToast(error.message, 'error');
-    else {
-      showToast('User removed');
+    try {
+      await api.adminDeleteUser(p.id);
+      showToast('User deleted');
       refetchProfiles();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setBusyId(null);
     }
   }
+
+  const selStyle = { ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {profiles.map((p) => {
         const isSelf = p.id === currentUser.id;
+        // a team lead may only adjust Developers/QA in their own team
+        const leadLocked =
+          !isAdmin && (p.role === 'Admin' || p.role === 'Team Lead');
+        const roleDisabled = isSelf || leadLocked || busyId === p.id;
         return (
           <div
             key={p.id}
@@ -2810,10 +3238,11 @@ function UsersTab({ currentUser, profiles, showToast, refetchProfiles }) {
               background: 'var(--color-background-secondary)',
               border: '0.5px solid var(--color-border-primary)',
               borderRadius: 10,
+              flexWrap: 'wrap',
             }}
           >
             <Avatar name={p.name} role={p.role} />
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 120 }}>
               <div style={{ fontSize: 13, fontWeight: 500 }}>
                 {p.name}
                 {isSelf && (
@@ -2834,45 +3263,77 @@ function UsersTab({ currentUser, profiles, showToast, refetchProfiles }) {
                 {p.email}
               </div>
             </div>
+
+            {isAdmin ? (
+              <select
+                style={selStyle}
+                value={p.teamId || ''}
+                disabled={busyId === p.id}
+                onChange={(e) => patch(p.id, { team_id: e.target.value || null })}
+                title="Team"
+              >
+                <option value="">No team</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                {p.teamId ? teamsById[p.teamId]?.name : '—'}
+              </span>
+            )}
+
             <select
-              style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}
+              style={selStyle}
               value={p.role}
-              disabled={isSelf || busyId === p.id}
-              onChange={(e) => changeRole(p.id, e.target.value)}
+              disabled={roleDisabled}
+              onChange={(e) => patch(p.id, { role: e.target.value })}
+              title={leadLocked ? 'Only an admin can change this role' : 'Role'}
             >
-              {ROLES.map((r) => (
+              {/* keep the current role visible even if outside a lead's options */}
+              {(roleOptions.includes(p.role) ? roleOptions : [p.role, ...roleOptions]).map((r) => (
                 <option key={r} value={r}>
                   {r}
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => removeUser(p)}
-              disabled={isSelf || busyId === p.id}
-              style={{
-                ...ghostButton,
-                padding: '6px 10px',
-                fontSize: 12,
-                color: isSelf ? 'var(--color-text-secondary)' : '#dc2626',
-                borderColor: isSelf ? 'var(--color-border-tertiary)' : '#dc262644',
-                opacity: isSelf ? 0.5 : 1,
-                cursor: isSelf ? 'default' : 'pointer',
-              }}
-            >
-              Remove
-            </button>
+
+            {isAdmin && (
+              <button
+                onClick={() => removeUser(p)}
+                disabled={isSelf || busyId === p.id}
+                style={{
+                  ...ghostButton,
+                  padding: '6px 10px',
+                  fontSize: 12,
+                  color: isSelf ? 'var(--color-text-secondary)' : '#dc2626',
+                  borderColor: isSelf ? 'var(--color-border-tertiary)' : '#dc262644',
+                  opacity: isSelf ? 0.5 : 1,
+                  cursor: isSelf ? 'default' : 'pointer',
+                }}
+              >
+                Remove
+              </button>
+            )}
           </div>
         );
       })}
       <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
-        New sign-ups join as Developer. Promote to QA or Admin here. You can't
-        change or remove your own account.
+        {isAdmin
+          ? 'New sign-ups join as Developer. Set each user’s team and role here; one Team Lead per team.'
+          : 'You can set your team members between Developer and QA. Ask an admin to add or remove people.'}
       </div>
     </div>
   );
 }
 
 function ProjectsTab({
+  isAdmin,
+  myTeamId,
+  teams,
+  teamsById,
   projects,
   releases,
   checklistItems,
@@ -2884,9 +3345,14 @@ function ProjectsTab({
   onDeleteChecklistItem,
 }) {
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', type: 'mobile' });
+  const [form, setForm] = useState({
+    name: '',
+    type: 'mobile',
+    team: isAdmin ? teams[0]?.id || '' : myTeamId || '',
+  });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const invalid = !form.name.trim();
+  const needsTeam = isAdmin && teams.length > 0;
+  const invalid = !form.name.trim() || (needsTeam && !form.team);
   const releaseCount = (id) => releases.filter((r) => r.projectId === id).length;
 
   function create() {
@@ -2895,8 +3361,9 @@ function ProjectsTab({
       name: form.name.trim(),
       type: form.type,
       platform: platformForProjectType(form.type),
+      team_id: isAdmin ? form.team || null : myTeamId || null,
     });
-    setForm({ name: '', type: 'mobile' });
+    setForm({ name: '', type: 'mobile', team: isAdmin ? teams[0]?.id || '' : myTeamId || '' });
     setCreating(false);
   }
 
@@ -2958,6 +3425,19 @@ function ProjectsTab({
               ))}
             </select>
           </div>
+          {isAdmin && (
+            <div style={{ flex: '1 1 150px' }}>
+              <label style={labelStyle}>Team</label>
+              <select style={inputStyle} value={form.team} onChange={(e) => set('team', e.target.value)}>
+                <option value="">No team</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <button
             style={primaryButton(invalid || isSubmitting)}
             disabled={invalid || isSubmitting}
@@ -2987,6 +3467,9 @@ function ProjectsTab({
             <ProjectRow
               key={p.id}
               project={p}
+              isAdmin={isAdmin}
+              teams={teams}
+              teamName={p.teamId ? teamsById[p.teamId]?.name : null}
               releaseCount={releaseCount(p.id)}
               items={checklistItems.filter((c) => c.projectId === p.id)}
               isSubmitting={isSubmitting}
@@ -3004,6 +3487,9 @@ function ProjectsTab({
 
 function ProjectRow({
   project,
+  isAdmin,
+  teams,
+  teamName,
   releaseCount,
   items,
   isSubmitting,
@@ -3014,25 +3500,31 @@ function ProjectRow({
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState({ name: project.name, type: project.type });
+  const [edit, setEdit] = useState({
+    name: project.name,
+    type: project.type,
+    team: project.teamId || '',
+  });
   const [label, setLabel] = useState('');
 
   const isWeb = project.type === 'web';
-  const typeColor = isWeb ? '#f59e0b' : '#22c55e';
+  const typeColor = isWeb ? '#f59e0b' : '#10b981';
 
   function startEdit(e) {
     e.stopPropagation();
-    setEdit({ name: project.name, type: project.type });
+    setEdit({ name: project.name, type: project.type, team: project.teamId || '' });
     setEditing(true);
     setOpen(true);
   }
   async function saveEdit() {
     if (!edit.name.trim()) return;
-    const ok = await onUpdate(project.id, {
+    const patch = {
       name: edit.name.trim(),
       type: edit.type,
       platform: platformForProjectType(edit.type),
-    });
+    };
+    if (isAdmin) patch.team_id = edit.team || null;
+    const ok = await onUpdate(project.id, patch);
     if (ok) setEditing(false);
   }
   function addItem() {
@@ -3061,19 +3553,34 @@ function ProjectRow({
           style={{
             width: 34,
             height: 34,
-            borderRadius: 9,
+            borderRadius: 8,
             flexShrink: 0,
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 16,
-            background: `${typeColor}1a`,
+            color: 'var(--color-text-secondary)',
+            background: 'var(--color-background-secondary)',
+            border: '1px solid var(--color-border-tertiary)',
           }}
         >
-          {isWeb ? '🌐' : '📱'}
+          {isWeb ? <IconGlobe size={17} /> : <IconSmartphone size={17} />}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{project.name}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+            {project.name}
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: teamName ? 'var(--brand)' : 'var(--color-text-tertiary)',
+                background: teamName ? 'var(--brand-soft)' : 'var(--color-background-secondary)',
+                padding: '2px 7px',
+                borderRadius: 999,
+              }}
+            >
+              {teamName || 'No team'}
+            </span>
+          </div>
           <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
             {platformLabel(project.platform)} · {releaseCount} release
             {releaseCount === 1 ? '' : 's'} · {items.length} checklist item
@@ -3084,7 +3591,7 @@ function ProjectRow({
           Edit
         </button>
         <button
-          style={iconBtn('#f43f5e')}
+          style={iconBtn('#dc2626')}
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -3136,6 +3643,23 @@ function ProjectRow({
                   ))}
                 </select>
               </div>
+              {isAdmin && (
+                <div style={{ flex: '1 1 140px' }}>
+                  <label style={labelStyle}>Team</label>
+                  <select
+                    style={inputStyle}
+                    value={edit.team}
+                    onChange={(e) => setEdit((s) => ({ ...s, team: e.target.value }))}
+                  >
+                    <option value="">No team</option>
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <button style={ghostButton} onClick={() => setEditing(false)}>
                 Cancel
               </button>
@@ -3177,7 +3701,7 @@ function ProjectRow({
                       style={{
                         background: 'none',
                         border: 'none',
-                        color: '#f43f5e',
+                        color: '#dc2626',
                         cursor: 'pointer',
                         fontSize: 11,
                         fontFamily: 'inherit',
@@ -3396,7 +3920,7 @@ function HistoryModal({ project, releases, showToast, onClose }) {
                   width: 8,
                   height: 8,
                   borderRadius: '50%',
-                  background: STATUSES[r.status]?.color || '#6b7280',
+                  background: STATUSES[r.status]?.color || '#64748b',
                   flexShrink: 0,
                 }}
               />

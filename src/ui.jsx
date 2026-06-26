@@ -3,14 +3,14 @@ import {
   RELEASE_TYPES,
   SEVERITIES,
   BUG_STATUSES,
-  ROLE_COLORS,
 } from './constants.js';
+import { IconPackage, IconSend, IconGlobe } from './icons.jsx';
 
 /* ---------- style tokens ---------- */
 
 export const card = {
   background: 'var(--color-background-primary)',
-  border: '0.5px solid var(--color-border-tertiary)',
+  border: '1px solid var(--color-border-tertiary)',
   borderRadius: 'var(--r-card)',
   boxShadow: 'var(--shadow-sm)',
 };
@@ -21,8 +21,8 @@ export const inputStyle = {
   fontSize: 13,
   fontWeight: 400,
   color: 'var(--color-text-primary)',
-  background: 'var(--color-background-secondary)',
-  border: '0.5px solid var(--color-border-tertiary)',
+  background: 'var(--color-background-primary)',
+  border: '1px solid var(--color-border-tertiary)',
   borderRadius: 'var(--r-input)',
   outline: 'none',
   fontFamily: 'inherit',
@@ -65,18 +65,30 @@ export const ghostButton = {
   boxShadow: 'var(--shadow-sm)',
 };
 
-export const pill = (color) => ({
+/* subtle, consistent status chip: dot + neutral text + thin border
+   (no large colored blocks — color appears only as a small dot) */
+const dotPillStyle = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 5,
-  padding: '3px 10px',
+  gap: 6,
+  padding: '3px 9px',
   borderRadius: 999,
   fontSize: 11,
   fontWeight: 600,
-  color,
-  background: `${color}1a`,
+  color: 'var(--color-text-secondary)',
+  background: 'var(--color-background-secondary)',
+  border: '1px solid var(--color-border-tertiary)',
   whiteSpace: 'nowrap',
-});
+};
+
+export function DotPill({ color, label }) {
+  return (
+    <span style={dotPillStyle}>
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0 }} />
+      {label}
+    </span>
+  );
+}
 
 /* ---------- brand ---------- */
 
@@ -93,8 +105,8 @@ export function Logo({ size = 30 }) {
     >
       <defs>
         <linearGradient id="rt-grad" x1="0" y1="0" x2="32" y2="32">
-          <stop stopColor="#ff8a1f" />
-          <stop offset="1" stopColor="#ff5400" />
+          <stop stopColor="#2563eb" />
+          <stop offset="1" stopColor="#1d4ed8" />
         </linearGradient>
       </defs>
       <rect width="32" height="32" rx="8" fill="url(#rt-grad)" />
@@ -133,35 +145,25 @@ export function Wordmark({ size = 30, tone }) {
 /* ---------- badges ---------- */
 
 export function StatusBadge({ status }) {
-  const s = STATUSES[status] || { label: status, color: '#6b7280' };
-  return (
-    <span style={pill(s.color)}>
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: s.color,
-          display: 'inline-block',
-        }}
-      />
-      {s.label}
-    </span>
-  );
+  const s = STATUSES[status] || { label: status, color: 'var(--color-text-tertiary)' };
+  return <DotPill color={s.color} label={s.label} />;
 }
 
 export function BugStatusBadge({ status }) {
-  const s = BUG_STATUSES[status] || { label: status, color: '#6b7280' };
-  return <span style={pill(s.color)}>{s.label}</span>;
+  const s = BUG_STATUSES[status] || { label: status, color: 'var(--color-text-tertiary)' };
+  return <DotPill color={s.color} label={s.label} />;
 }
 
 export function SeverityBadge({ severity }) {
-  const s = SEVERITIES[severity] || { label: severity, color: '#6b7280' };
-  return <span style={pill(s.color)}>{s.label}</span>;
+  const s = SEVERITIES[severity] || { label: severity, color: 'var(--color-text-tertiary)' };
+  return <DotPill color={s.color} label={s.label} />;
 }
 
+const TYPE_ICONS = { apk: IconPackage, testflight: IconSend, web: IconGlobe };
+
 export function TypeBadge({ type }) {
-  const t = RELEASE_TYPES[type] || { label: type, icon: '📄' };
+  const t = RELEASE_TYPES[type] || { label: type };
+  const Ico = TYPE_ICONS[type] || IconPackage;
   return (
     <span
       style={{
@@ -173,20 +175,19 @@ export function TypeBadge({ type }) {
         fontWeight: 600,
       }}
     >
-      <span style={{ fontSize: 15 }}>{t.icon}</span>
+      <Ico size={15} />
       {t.label}
     </span>
   );
 }
 
-export function Avatar({ name, role, size = 30 }) {
+export function Avatar({ name, size = 30 }) {
   const initials = (name || '?')
     .split(/[\s_]+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((p) => p[0].toUpperCase())
     .join('');
-  const color = ROLE_COLORS[role] || '#6b7280';
   return (
     <span
       style={{
@@ -196,12 +197,12 @@ export function Avatar({ name, role, size = 30 }) {
         width: size,
         height: size,
         borderRadius: '50%',
-        background: `${color}24`,
-        color,
+        background: 'var(--color-background-tertiary)',
+        color: 'var(--color-text-secondary)',
         fontSize: size < 26 ? 10 : 11,
-        fontWeight: 700,
+        fontWeight: 600,
         flexShrink: 0,
-        border: `1px solid ${color}33`,
+        border: '1px solid var(--color-border-tertiary)',
       }}
     >
       {initials}
@@ -209,7 +210,7 @@ export function Avatar({ name, role, size = 30 }) {
   );
 }
 
-export function CountBadge({ count, color = '#f43f5e' }) {
+export function CountBadge({ count, color = '#dc2626' }) {
   if (!count) return null;
   return (
     <span
@@ -244,9 +245,7 @@ export function ModalShell({ children, onClose, title, maxWidth = 520, right }) 
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15, 16, 20, 0.5)',
-        backdropFilter: 'blur(4px)',
-        WebkitBackdropFilter: 'blur(4px)',
+        background: 'rgba(15, 23, 42, 0.45)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -286,7 +285,7 @@ export function ModalShell({ children, onClose, title, maxWidth = 520, right }) 
 export function Toast({ toast }) {
   if (!toast) return null;
   const isError = toast.kind === 'error';
-  const color = isError ? '#f43f5e' : '#10b981';
+  const color = isError ? '#ef4444' : '#10b981';
   return (
     <div
       className="anim-toast"
