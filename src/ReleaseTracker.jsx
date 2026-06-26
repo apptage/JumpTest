@@ -2242,7 +2242,12 @@ function DetailModal({
   }
 
   const openBugs = bugs.filter((b) => b.status === 'open').length;
-  const qaList = profiles.filter((p) => p.role === 'QA' || p.role === 'Admin');
+  // QA testers assignable to this release: QA role only (never Admin),
+  // limited to the release's project team.
+  const qaTeamId = project ? project.teamId : null;
+  const qaList = profiles.filter(
+    (p) => p.role === 'QA' && p.teamId === qaTeamId
+  );
 
   const tabBtn = (key, label, badge) => (
     <div
@@ -2379,6 +2384,22 @@ function DetailsTab({
   onDelete,
 }) {
   const assigned = release.assignedQa ? profilesById[release.assignedQa] : null;
+  const soleQa = qaList.length === 1 ? qaList[0] : null;
+  const autoAssignedRef = useRef(null);
+
+  // one QA on the team → auto-assign, no selection dialog
+  useEffect(() => {
+    if (
+      isAdmin &&
+      soleQa &&
+      release.assignedQa !== soleQa.id &&
+      autoAssignedRef.current !== release.id
+    ) {
+      autoAssignedRef.current = release.id;
+      onAssignQa(soleQa.id);
+    }
+  }, [isAdmin, soleQa, release.assignedQa, release.id, onAssignQa]);
+
   return (
     <>
       <div
@@ -2435,7 +2456,7 @@ function DetailsTab({
         </div>
       </div>
 
-      {/* assignment (admin) */}
+      {/* QA tester assignment (managers only) */}
       {isAdmin && (
         <div
           style={{
@@ -2445,19 +2466,45 @@ function DetailsTab({
           }}
         >
           <label style={labelStyle}>Assign QA tester</label>
-          <select
-            style={inputStyle}
-            value={release.assignedQa || ''}
-            disabled={isSubmitting}
-            onChange={(e) => onAssignQa(e.target.value)}
-          >
-            <option value="">Anyone (unassigned)</option>
-            {qaList.map((q) => (
-              <option key={q.id} value={q.id}>
-                {q.name} ({q.role})
-              </option>
-            ))}
-          </select>
+          {qaList.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+              No QA testers on this team yet.
+            </div>
+          ) : qaList.length === 1 ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 9,
+                padding: '9px 11px',
+                background: 'var(--color-background-secondary)',
+                border: '1px solid var(--color-border-tertiary)',
+                borderRadius: 'var(--r-input)',
+              }}
+            >
+              <Avatar name={qaList[0].name} size={26} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{qaList[0].name}</div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                  Auto-assigned — only QA tester on this team
+                </div>
+              </div>
+            </div>
+          ) : (
+            <select
+              style={inputStyle}
+              value={release.assignedQa || ''}
+              disabled={isSubmitting}
+              onChange={(e) => onAssignQa(e.target.value)}
+            >
+              <option value="">Anyone (unassigned)</option>
+              {qaList.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
 
