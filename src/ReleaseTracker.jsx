@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient.js';
 import * as api from './api.js';
 import {
@@ -7,10 +7,12 @@ import {
   RELEASE_TYPES,
   RELEASE_TYPE_ORDER,
   PROJECT_TYPES,
-  RELEASE_TYPES_BY_PROJECT,
-  platformForProjectType,
+  projectTypeLabel,
+  RELEASE_PLATFORMS,
+  platformsForProjectType,
+  RELEASE_TYPES_BY_PLATFORM,
   platformForReleaseType,
-  platformLabel,
+  ENVIRONMENTS,
   linkIssue,
   SEVERITIES,
   SEVERITY_ORDER,
@@ -86,6 +88,7 @@ export default function ReleaseTracker() {
   const [toast, setToast] = useState(null);
 
   const [projectFilter, setProjectFilter] = useState('all');
+  const [platformFilter, setPlatformFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
@@ -270,16 +273,22 @@ export default function ReleaseTracker() {
     return m;
   }, [scopedBugs]);
 
+  // releases in the current project + platform + type context (no status filter)
+  const contextReleases = scopedReleases.filter(
+    (r) =>
+      (projectFilter === 'all' || r.projectId === projectFilter) &&
+      (platformFilter === 'all' || r.platform === platformFilter) &&
+      (typeFilter === 'all' || r.releaseType === typeFilter)
+  );
+
+  // stat cards reflect the active context
   const counts = STATUS_ORDER.reduce((acc, key) => {
-    acc[key] = scopedReleases.filter((r) => r.status === key).length;
+    acc[key] = contextReleases.filter((r) => r.status === key).length;
     return acc;
   }, {});
 
-  const filtered = scopedReleases.filter(
-    (r) =>
-      (projectFilter === 'all' || r.projectId === projectFilter) &&
-      (typeFilter === 'all' || r.releaseType === typeFilter) &&
-      (statusFilter === 'all' || r.status === statusFilter)
+  const filtered = contextReleases.filter(
+    (r) => statusFilter === 'all' || r.status === statusFilter
   );
 
   const unread = notifications.filter((n) => !n.read).length;
@@ -343,7 +352,8 @@ export default function ReleaseTracker() {
         project_id: form.projectId,
         version: form.version.trim(),
         release_type: form.releaseType,
-        platform: platformForReleaseType(form.releaseType),
+        platform: form.platform || platformForReleaseType(form.releaseType),
+        environment: form.environment || 'Production',
         file_url: '',
         link_url: form.linkUrl.trim(),
         submitted_by: user.name,
@@ -621,7 +631,11 @@ export default function ReleaseTracker() {
             teamName={isAdmin ? null : myTeam?.name}
             openBugTotal={scopedBugs.filter((b) => b.status === 'open').length}
             projectFilter={projectFilter}
-            onProject={setProjectFilter}
+            platformFilter={platformFilter}
+            onSelect={(pid, plat) => {
+              setProjectFilter(pid);
+              setPlatformFilter(plat);
+            }}
           />
         </aside>
 
@@ -644,9 +658,11 @@ export default function ReleaseTracker() {
           <FilterBar
             projects={scopedProjects}
             projectFilter={projectFilter}
+            platformFilter={platformFilter}
             typeFilter={typeFilter}
             statusFilter={statusFilter}
             onProject={setProjectFilter}
+            onPlatform={setPlatformFilter}
             onType={setTypeFilter}
             onStatus={setStatusFilter}
             count={filtered.length}
@@ -1353,9 +1369,11 @@ function StatCards({ counts }) {
 function FilterBar({
   projects,
   projectFilter,
+  platformFilter,
   typeFilter,
   statusFilter,
   onProject,
+  onPlatform,
   onType,
   onStatus,
   count,
@@ -1376,6 +1394,14 @@ function FilterBar({
         {projects.map((p) => (
           <option key={p.id} value={p.id}>
             {p.name}
+          </option>
+        ))}
+      </select>
+      <select style={s} value={platformFilter} onChange={(e) => onPlatform(e.target.value)}>
+        <option value="all">All platforms</option>
+        {RELEASE_PLATFORMS.map((pl) => (
+          <option key={pl} value={pl}>
+            {pl}
           </option>
         ))}
       </select>
@@ -1405,6 +1431,30 @@ function FilterBar({
 /* ================================================================== */
 /* Release card                                                       */
 /* ================================================================== */
+
+function EnvBadge({ environment }) {
+  const env = environment || 'Production';
+  const color = env === 'Staging' ? 'var(--warning)' : 'var(--success)';
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--color-text-secondary)',
+        background: 'var(--color-background-secondary)',
+        border: '1px solid var(--color-border-tertiary)',
+        padding: '2px 8px',
+        borderRadius: 999,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: color }} />
+      {env}
+    </span>
+  );
+}
 
 function ReleaseCard({ release, project, openBugs, assignedName, onClick }) {
   const [hover, setHover] = useState(false);
@@ -1443,9 +1493,20 @@ function ReleaseCard({ release, project, openBugs, assignedName, onClick }) {
             {project.name}
           </span>
         )}
-        <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--color-text-tertiary)' }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: 'var(--color-text-secondary)',
+            background: 'var(--color-background-secondary)',
+            border: '1px solid var(--color-border-tertiary)',
+            padding: '1px 7px',
+            borderRadius: 999,
+          }}
+        >
           {release.platform}
         </span>
+        <EnvBadge environment={release.environment} />
         {openBugs > 0 && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <CountBadge count={openBugs} />
@@ -1584,8 +1645,23 @@ function NavRow({ label, count, active, onClick }) {
   );
 }
 
-function Sidebar({ projects, releases, teamName, openBugTotal, projectFilter, onProject }) {
-  const countFor = (id) => releases.filter((r) => r.projectId === id).length;
+function Sidebar({
+  projects,
+  releases,
+  teamName,
+  openBugTotal,
+  projectFilter,
+  platformFilter,
+  onSelect,
+}) {
+  const [q, setQ] = useState('');
+  const countFor = (id, plat) =>
+    releases.filter(
+      (r) => r.projectId === id && (!plat || r.platform === plat)
+    ).length;
+  const shown = projects.filter((p) =>
+    p.name.toLowerCase().includes(q.trim().toLowerCase())
+  );
   const stat = (label, value, color) => (
     <div
       style={{
@@ -1636,26 +1712,53 @@ function Sidebar({ projects, releases, teamName, openBugTotal, projectFilter, on
             </span>
           )}
         </div>
-        <NavRow
-          label="All projects"
-          count={releases.length}
-          active={projectFilter === 'all'}
-          onClick={() => onProject('all')}
+        <input
+          style={{ ...inputStyle, padding: '7px 10px', marginBottom: 8 }}
+          value={q}
+          placeholder="Search projects…"
+          onChange={(e) => setQ(e.target.value)}
         />
-        {projects.map((p) => (
+        <div style={{ maxHeight: 360, overflowY: 'auto', margin: '0 -4px', padding: '0 4px' }}>
           <NavRow
-            key={p.id}
-            label={p.name}
-            count={countFor(p.id)}
-            active={projectFilter === p.id}
-            onClick={() => onProject(p.id)}
+            label="All projects"
+            count={releases.length}
+            active={projectFilter === 'all'}
+            onClick={() => onSelect('all', 'all')}
           />
-        ))}
-        {projects.length === 0 && (
-          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '6px 10px' }}>
-            No projects yet.
-          </div>
-        )}
+          {shown.map((p) => {
+            const plats = platformsForProjectType(p.type);
+            const both = plats.length > 1;
+            const projActive = projectFilter === p.id;
+            return (
+              <div key={p.id}>
+                <NavRow
+                  label={p.name}
+                  count={countFor(p.id)}
+                  active={projActive && platformFilter === 'all'}
+                  onClick={() => onSelect(p.id, 'all')}
+                />
+                {both && (
+                  <div style={{ marginLeft: 16 }}>
+                    {plats.map((pl) => (
+                      <NavRow
+                        key={pl}
+                        label={pl}
+                        count={countFor(p.id, pl)}
+                        active={projActive && platformFilter === pl}
+                        onClick={() => onSelect(p.id, pl)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {shown.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '6px 10px' }}>
+              {projects.length === 0 ? 'No projects yet.' : 'No matches.'}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ ...card, padding: 14 }}>
@@ -1844,21 +1947,26 @@ function RightPanel({
 /* ================================================================== */
 
 function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
+  const projectById = (id) => projects.find((x) => x.id === id);
   const firstProject = projects[0];
-  const allowedFor = (id) => {
-    const p = projects.find((x) => x.id === id);
-    return RELEASE_TYPES_BY_PROJECT[p?.type] || RELEASE_TYPE_ORDER;
-  };
+  const initPlatform = firstProject
+    ? platformsForProjectType(firstProject.type)[0]
+    : 'Mobile';
+
   const [form, setForm] = useState({
     projectId: firstProject ? firstProject.id : '',
+    platform: initPlatform,
     version: '',
-    releaseType: firstProject ? allowedFor(firstProject.id)[0] : 'apk',
+    releaseType: RELEASE_TYPES_BY_PLATFORM[initPlatform][0],
+    environment: 'Production',
     linkUrl: '',
     releaseNotes: '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const allowedTypes = allowedFor(form.projectId);
+  const project = projectById(form.projectId);
+  const platforms = project ? platformsForProjectType(project.type) : ['Mobile'];
+  const allowedTypes = RELEASE_TYPES_BY_PLATFORM[form.platform] || RELEASE_TYPE_ORDER;
   const linkErr = linkIssue(form.linkUrl);
   const linkLabel =
     form.releaseType === 'apk'
@@ -1868,12 +1976,22 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
       : 'Web link';
 
   function selectProject(id) {
-    // keep release type valid for the newly-selected project
-    const allowed = allowedFor(id);
+    const p = projectById(id);
+    const plats = p ? platformsForProjectType(p.type) : ['Mobile'];
+    const platform = plats[0];
     setForm((f) => ({
       ...f,
       projectId: id,
-      releaseType: allowed.includes(f.releaseType) ? f.releaseType : allowed[0],
+      platform,
+      releaseType: RELEASE_TYPES_BY_PLATFORM[platform][0],
+    }));
+  }
+
+  function selectPlatform(platform) {
+    setForm((f) => ({
+      ...f,
+      platform,
+      releaseType: RELEASE_TYPES_BY_PLATFORM[platform][0],
     }));
   }
 
@@ -1913,20 +2031,69 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
         >
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name} ({platformLabel(p.platform)})
+              {p.name} ({projectTypeLabel(p.type)})
             </option>
           ))}
         </select>
       </Field>
 
-      <Field label="Version">
-        <input
-          style={inputStyle}
-          value={form.version}
-          placeholder="e.g. 2.4.3"
-          onChange={(e) => set('version', e.target.value)}
-        />
-      </Field>
+      {platforms.length > 1 && (
+        <Field label="Platform">
+          <div style={{ display: 'flex', gap: 8 }}>
+            {platforms.map((pl) => {
+              const active = form.platform === pl;
+              return (
+                <button
+                  key={pl}
+                  onClick={() => selectPlatform(pl)}
+                  style={{
+                    flex: 1,
+                    padding: '9px 12px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    borderRadius: 'var(--r-input)',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    color: active ? '#fff' : 'var(--color-text-primary)',
+                    background: active ? 'var(--brand)' : 'var(--color-background-primary)',
+                    border: `1px solid ${active ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+                  }}
+                >
+                  {pl}
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+      )}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <Field label="Version">
+            <input
+              style={inputStyle}
+              value={form.version}
+              placeholder="e.g. 2.4.3"
+              onChange={(e) => set('version', e.target.value)}
+            />
+          </Field>
+        </div>
+        <div style={{ flex: 1 }}>
+          <Field label="Environment">
+            <select
+              style={inputStyle}
+              value={form.environment}
+              onChange={(e) => set('environment', e.target.value)}
+            >
+              {ENVIRONMENTS.map((env) => (
+                <option key={env} value={env}>
+                  {env}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </div>
 
       <Field label="Release type">
         <select
@@ -2157,6 +2324,8 @@ function DetailModal({
           bugs={bugs}
           user={user}
           isQA={isQA}
+          profiles={profiles}
+          projectTeamId={project?.teamId}
           showToast={showToast}
           isSubmitting={isSubmitting}
           onAddBug={onAddBug}
@@ -2225,6 +2394,7 @@ function DetailsTab({
         }}
       >
         <Info label="Platform" value={release.platform} />
+        <Info label="Environment" value={release.environment || 'Production'} />
         <Info label="Date" value={release.date} />
         <Info label="Submitted by" value={release.submittedBy} />
         <Info label="Assigned QA" value={assigned ? assigned.name : '—'} />
@@ -2407,6 +2577,8 @@ function BugsTab({
   bugs,
   user,
   isQA,
+  profiles,
+  projectTeamId,
   showToast,
   isSubmitting,
   onAddBug,
@@ -2416,10 +2588,34 @@ function BugsTab({
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', severity: 'major' });
   const [file, setFile] = useState(null);
+  const [commentCounts, setCommentCounts] = useState({});
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const isDev = user.role === 'Developer' || user.role === 'Admin';
   const invalid = !form.title.trim();
+
+  // people a developer may tag: same team's QA + Team Lead
+  const tagTeamId = user.teamId || projectTeamId || null;
+  const taggable = (profiles || []).filter(
+    (p) =>
+      p.id !== user.id &&
+      p.teamId === tagTeamId &&
+      (p.role === 'QA' || p.role === 'Team Lead')
+  );
+
+  const bugIdsKey = bugs.map((b) => b.id).join(',');
+  const refreshCounts = useCallback(async () => {
+    try {
+      setCommentCounts(await api.fetchBugCommentCounts(bugs.map((b) => b.id)));
+    } catch (_) {
+      /* non-critical */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bugIdsKey]);
+
+  useEffect(() => {
+    refreshCounts();
+  }, [refreshCounts]);
 
   function submit() {
     if (invalid) return;
@@ -2512,6 +2708,9 @@ function BugsTab({
               bug={bug}
               user={user}
               showToast={showToast}
+              taggable={taggable}
+              commentCount={commentCounts[bug.id] || 0}
+              onCommentsChanged={refreshCounts}
               isDev={isDev}
               isQA={isQA}
               canDelete={user.role === 'Admin' || bug.createdById === user.id}
@@ -2526,7 +2725,20 @@ function BugsTab({
   );
 }
 
-function BugRow({ bug, user, showToast, isDev, isQA, canDelete, isSubmitting, onStatus, onDelete }) {
+function BugRow({
+  bug,
+  user,
+  showToast,
+  taggable,
+  commentCount,
+  onCommentsChanged,
+  isDev,
+  isQA,
+  canDelete,
+  isSubmitting,
+  onStatus,
+  onDelete,
+}) {
   const [showThread, setShowThread] = useState(false);
   // contextual transitions
   const actions = [];
@@ -2642,18 +2854,66 @@ function BugRow({ bug, user, showToast, isDev, isQA, canDelete, isSubmitting, on
           }}
         >
           {showThread ? 'Hide comments' : 'Comments'}
+          {commentCount > 0 && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--color-text-secondary)',
+                background: 'var(--color-background-secondary)',
+                border: '1px solid var(--color-border-tertiary)',
+                borderRadius: 999,
+                padding: '0 7px',
+                lineHeight: '16px',
+              }}
+            >
+              {commentCount}
+            </span>
+          )}
         </button>
-        {showThread && <BugThread bug={bug} user={user} showToast={showToast} />}
+        {showThread && (
+          <BugThread
+            bug={bug}
+            user={user}
+            showToast={showToast}
+            taggable={taggable}
+            onChanged={onCommentsChanged}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function BugThread({ bug, user, showToast }) {
+const MENTION_RE = /(^|\s)@([\p{L}\p{N}_]*)$/u;
+
+function renderCommentBody(text, names) {
+  if (!names || names.length === 0) return text;
+  const mentionSet = new Set(names.map((n) => '@' + n));
+  const esc = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`(@(?:${esc.join('|')}))`, 'g');
+  return text.split(re).map((part, i) =>
+    mentionSet.has(part) ? (
+      <span key={i} style={{ color: 'var(--brand)', fontWeight: 600 }}>
+        {part}
+      </span>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+}
+
+function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const [mentions, setMentions] = useState([]); // selected {id,name,role}
+  const [menuQuery, setMenuQuery] = useState(null); // active @query or null
+  const taRef = useRef(null);
+
+  const taggableNames = taggable.map((p) => p.name);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2670,6 +2930,40 @@ function BugThread({ bug, user, showToast }) {
     load();
   }, [load]);
 
+  function onBodyChange(e) {
+    const val = e.target.value;
+    setBody(val);
+    const caret = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, caret).match(MENTION_RE);
+    setMenuQuery(m && taggable.length ? m[2].toLowerCase() : null);
+  }
+
+  function applyMention(p) {
+    const ta = taRef.current;
+    const caret = ta ? ta.selectionStart : body.length;
+    const upto = body.slice(0, caret);
+    const m = upto.match(MENTION_RE);
+    if (!m) return;
+    const at = caret - m[2].length - 1; // index of '@'
+    const insert = `@${p.name} `;
+    const next = body.slice(0, at) + insert + body.slice(caret);
+    setBody(next);
+    setMentions((ms) => (ms.find((x) => x.id === p.id) ? ms : [...ms, p]));
+    setMenuQuery(null);
+    const pos = at + insert.length;
+    setTimeout(() => {
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+      }
+    }, 0);
+  }
+
+  const suggestions =
+    menuQuery == null
+      ? []
+      : taggable.filter((p) => p.name.toLowerCase().includes(menuQuery));
+
   async function add() {
     if (!body.trim()) return;
     setBusy(true);
@@ -2681,8 +2975,23 @@ function BugThread({ bug, user, showToast }) {
         author_role: user.role,
         body: body.trim(),
       });
+      // notify only tagged people that are still referenced in the text
+      const tagged = mentions.filter((p) => body.includes('@' + p.name));
+      await Promise.all(
+        tagged.map((p) =>
+          api.createNotification({
+            user_id: p.id,
+            type: 'bug_mention',
+            message: `${user.name} mentioned you on bug "${bug.title}"`,
+            release_id: bug.releaseId,
+          })
+        )
+      );
       setBody('');
+      setMentions([]);
+      setMenuQuery(null);
       await load();
+      onChanged && onChanged();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -2693,7 +3002,8 @@ function BugThread({ bug, user, showToast }) {
   async function remove(id) {
     try {
       await api.deleteBugComment(id);
-      load();
+      await load();
+      onChanged && onChanged();
     } catch (e) {
       showToast(e.message, 'error');
     }
@@ -2737,7 +3047,7 @@ function BugThread({ bug, user, showToast }) {
                   )}
                 </div>
                 <div style={{ fontSize: 13, marginTop: 3, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
-                  {c.body}
+                  {renderCommentBody(c.body, taggableNames)}
                 </div>
               </div>
             </div>
@@ -2747,14 +3057,69 @@ function BugThread({ bug, user, showToast }) {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <Avatar name={user.name} size={26} />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, position: 'relative' }}>
           <textarea
+            ref={taRef}
             style={{ ...inputStyle, resize: 'vertical' }}
             rows={2}
             value={body}
-            placeholder="Add a comment…"
-            onChange={(e) => setBody(e.target.value)}
+            placeholder={
+              taggable.length ? 'Add a comment… use @ to tag QA / Team Lead' : 'Add a comment…'
+            }
+            onChange={onBodyChange}
+            onKeyDown={(e) => e.key === 'Escape' && setMenuQuery(null)}
           />
+
+          {menuQuery != null && (
+            <div
+              style={{
+                ...card,
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: '100%',
+                marginTop: 4,
+                zIndex: 60,
+                maxHeight: 180,
+                overflowY: 'auto',
+                boxShadow: 'var(--shadow-md)',
+                padding: 4,
+              }}
+            >
+              {suggestions.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 10px' }}>
+                  No teammates to tag.
+                </div>
+              ) : (
+                suggestions.map((p) => (
+                  <div
+                    key={p.id}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      applyMention(p);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '7px 8px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-secondary)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <Avatar name={p.name} size={24} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{p.role}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
             <button
               style={primaryButton(!body.trim() || busy)}
@@ -3370,12 +3735,71 @@ function UsersTab({
 
   const selStyle = { ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 };
 
+  const [q, setQ] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [visible, setVisible] = useState(15);
+  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+
+  const term = q.trim().toLowerCase();
+  const filteredUsers = profiles.filter(
+    (p) =>
+      (p.name.toLowerCase().includes(term) ||
+        (p.email || '').toLowerCase().includes(term)) &&
+      (roleFilter === 'all' || p.role === roleFilter) &&
+      (teamFilter === 'all' ||
+        (teamFilter === 'none' ? !p.teamId : p.teamId === teamFilter))
+  );
+  const pageUsers = filteredUsers.slice(0, visible);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {isAdmin && (
         <CreateUserForm teams={teams} isSubmitting={isSubmitting} onCreateUser={onCreateUser} />
       )}
-      {profiles.map((p) => {
+
+      {/* search + filters */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...inputStyle, flex: '1 1 180px', width: 'auto' }}
+          value={q}
+          placeholder="Search by name or email…"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setVisible(15);
+          }}
+        />
+        <select style={fSel} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+          <option value="all">All roles</option>
+          {ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        {isAdmin && (
+          <select style={fSel} value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
+            <option value="all">All teams</option>
+            <option value="none">No team</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <span
+          style={{
+            fontSize: 12,
+            color: 'var(--color-text-secondary)',
+            alignSelf: 'center',
+          }}
+        >
+          {filteredUsers.length} user{filteredUsers.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {pageUsers.map((p) => {
         const isSelf = p.id === currentUser.id;
         // a team lead may only adjust Developers/QA in their own team
         const leadLocked =
@@ -3474,6 +3898,19 @@ function UsersTab({
           </div>
         );
       })}
+      {filteredUsers.length === 0 && (
+        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 2px' }}>
+          No users match.
+        </div>
+      )}
+      {visible < filteredUsers.length && (
+        <button
+          style={{ ...ghostButton, width: '100%', marginTop: 4 }}
+          onClick={() => setVisible((v) => v + 15)}
+        >
+          Load more ({filteredUsers.length - visible} left)
+        </button>
+      )}
       <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
         {isAdmin
           ? 'New sign-ups join as Developer. Set each user’s team and role here; one Team Lead per team.'
@@ -3509,12 +3946,27 @@ function ProjectsTab({
   const invalid = !form.name.trim() || (needsTeam && !form.team);
   const releaseCount = (id) => releases.filter((r) => r.projectId === id).length;
 
+  const [q, setQ] = useState('');
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [visible, setVisible] = useState(12);
+
+  const filteredProjects = projects.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q.trim().toLowerCase()) &&
+      (teamFilter === 'all' ||
+        (teamFilter === 'none' ? !p.teamId : p.teamId === teamFilter)) &&
+      (typeFilter === 'all' || p.type === typeFilter)
+  );
+  const pageProjects = filteredProjects.slice(0, visible);
+  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+
   function create() {
     if (invalid) return;
     onCreateProject({
       name: form.name.trim(),
       type: form.type,
-      platform: platformForProjectType(form.type),
+      platform: projectTypeLabel(form.type),
       team_id: isAdmin ? form.team || null : myTeamId || null,
     });
     setForm({ name: '', type: 'mobile', team: isAdmin ? teams[0]?.id || '' : myTeamId || '' });
@@ -3533,7 +3985,9 @@ function ProjectsTab({
         }}
       >
         <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-          {projects.length} project{projects.length === 1 ? '' : 's'}
+          {filteredProjects.length === projects.length
+            ? `${projects.length} project${projects.length === 1 ? '' : 's'}`
+            : `${filteredProjects.length} of ${projects.length}`}
         </span>
         <button
           style={creating ? ghostButton : primaryButton(false)}
@@ -3541,6 +3995,38 @@ function ProjectsTab({
         >
           {creating ? 'Cancel' : '+ New project'}
         </button>
+      </div>
+
+      {/* search + filters */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...inputStyle, flex: '1 1 160px', width: 'auto' }}
+          value={q}
+          placeholder="Search projects…"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setVisible(12);
+          }}
+        />
+        {isAdmin && (
+          <select style={fSel} value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
+            <option value="all">All teams</option>
+            <option value="none">No team</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <select style={fSel} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="all">All platforms</option>
+          {PROJECT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {projectTypeLabel(t)}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* create form (on demand) */}
@@ -3574,7 +4060,7 @@ function ProjectsTab({
             <select style={inputStyle} value={form.type} onChange={(e) => set('type', e.target.value)}>
               {PROJECT_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t === 'mobile' ? 'Mobile (Android & iOS)' : 'Web'}
+                  {projectTypeLabel(t)}
                 </option>
               ))}
             </select>
@@ -3603,7 +4089,7 @@ function ProjectsTab({
       )}
 
       {/* accordion list */}
-      {projects.length === 0 ? (
+      {filteredProjects.length === 0 ? (
         <div
           style={{
             ...card,
@@ -3613,11 +4099,11 @@ function ProjectsTab({
             color: 'var(--color-text-tertiary)',
           }}
         >
-          No projects yet — create your first one above.
+          {projects.length === 0 ? 'No projects yet — create your first one above.' : 'No projects match.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {projects.map((p) => (
+          {pageProjects.map((p) => (
             <ProjectRow
               key={p.id}
               project={p}
@@ -3633,6 +4119,14 @@ function ProjectsTab({
               onDeleteItem={onDeleteChecklistItem}
             />
           ))}
+          {visible < filteredProjects.length && (
+            <button
+              style={{ ...ghostButton, width: '100%', marginTop: 4 }}
+              onClick={() => setVisible((v) => v + 12)}
+            >
+              Load more ({filteredProjects.length - visible} left)
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -3675,7 +4169,7 @@ function ProjectRow({
     const patch = {
       name: edit.name.trim(),
       type: edit.type,
-      platform: platformForProjectType(edit.type),
+      platform: projectTypeLabel(edit.type),
     };
     if (isAdmin) patch.team_id = edit.team || null;
     const ok = await onUpdate(project.id, patch);
@@ -3736,7 +4230,7 @@ function ProjectRow({
             </span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-            {platformLabel(project.platform)} · {releaseCount} release
+            {projectTypeLabel(project.type)} · {releaseCount} release
             {releaseCount === 1 ? '' : 's'} · {items.length} checklist item
             {items.length === 1 ? '' : 's'}
           </div>
@@ -3792,7 +4286,7 @@ function ProjectRow({
                 >
                   {PROJECT_TYPES.map((t) => (
                     <option key={t} value={t}>
-                      {t === 'mobile' ? 'Mobile (Android & iOS)' : 'Web'}
+                      {projectTypeLabel(t)}
                     </option>
                   ))}
                 </select>
@@ -4001,7 +4495,7 @@ function buildChangelog(project, releases) {
   if (done.length === 0) lines.push('_No QA-complete releases yet._');
   done.forEach((r) => {
     lines.push(`## v${r.version} — ${r.date}`);
-    lines.push(`Platform: ${r.platform} · Type: ${r.releaseType}`);
+    lines.push(`Platform: ${r.platform} · ${r.environment || 'Production'} · Type: ${r.releaseType}`);
     lines.push('');
     lines.push(r.releaseNotes || '_No notes_');
     lines.push('');
@@ -4086,7 +4580,7 @@ function HistoryModal({ project, releases, showToast, onClose }) {
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                  {r.date} · {r.submittedBy}
+                  {r.platform} · {r.environment || 'Production'} · {r.date} · {r.submittedBy}
                 </div>
               </div>
               <StatusBadge status={r.status} />

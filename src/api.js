@@ -36,6 +36,7 @@ export function mapRelease(r) {
     version: r.version,
     releaseType: r.release_type,
     platform: r.platform,
+    environment: r.environment || 'Production',
     fileUrl: r.file_url,
     linkUrl: r.link_url,
     submittedBy: r.submitted_by,
@@ -326,6 +327,19 @@ export async function fetchBugComments(bugId) {
 export async function createBugComment(payload) {
   const { error } = await supabase.from('bug_comments').insert(payload);
   if (error) throw error;
+}
+
+// Comment count per bug (for the badge on each bug's "Comments" toggle).
+export async function fetchBugCommentCounts(bugIds) {
+  if (!bugIds || bugIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from('bug_comments')
+    .select('bug_id')
+    .in('bug_id', bugIds);
+  if (error) throw error;
+  const m = {};
+  data.forEach((r) => (m[r.bug_id] = (m[r.bug_id] || 0) + 1));
+  return m;
 }
 
 export async function deleteBugComment(id) {

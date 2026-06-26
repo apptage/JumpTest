@@ -15,32 +15,42 @@ export const RELEASE_TYPES = {
 };
 export const RELEASE_TYPE_ORDER = ['apk', 'testflight', 'web'];
 
-/* Project types & platforms */
-export const PROJECT_TYPES = ['mobile', 'web'];
-export const PLATFORMS = ['Android', 'iOS', 'Web', 'Both'];
-
-/* A mobile project covers Android + iOS; a web project covers Web. */
-export function platformForProjectType(type) {
-  return type === 'web' ? 'Web' : 'Both';
+/* Project types — a project may have a web app, a mobile app, or both. */
+export const PROJECT_TYPES = ['web', 'mobile', 'both'];
+export function projectTypeLabel(type) {
+  if (type === 'both') return 'Web & Mobile';
+  if (type === 'web') return 'Web';
+  return 'Mobile';
 }
 
-/* Within a project, a release's platform follows how it's delivered. */
-export function platformForReleaseType(releaseType) {
-  if (releaseType === 'apk') return 'Android';
-  if (releaseType === 'testflight') return 'iOS';
-  return 'Web';
+/* The two platform contexts data is segregated by. */
+export const RELEASE_PLATFORMS = ['Web', 'Mobile'];
+
+/* Which platform contexts a project exposes. */
+export function platformsForProjectType(type) {
+  if (type === 'web') return ['Web'];
+  if (type === 'mobile') return ['Mobile'];
+  return ['Web', 'Mobile'];
 }
 
-/* Which release types make sense for each project type. */
-export const RELEASE_TYPES_BY_PROJECT = {
-  mobile: ['apk', 'testflight'],
-  web: ['web'],
+/* Which delivery types are valid within a platform context. */
+export const RELEASE_TYPES_BY_PLATFORM = {
+  Web: ['web'],
+  Mobile: ['apk', 'testflight'],
 };
 
-/* Friendly label — "Both" reads as "Android & iOS". */
-export function platformLabel(platform) {
-  return platform === 'Both' ? 'Android & iOS' : platform;
+/* A release's platform context follows how it's delivered. */
+export function platformForReleaseType(releaseType) {
+  return releaseType === 'web' ? 'Web' : 'Mobile';
 }
+
+/* release.platform is already 'Web' | 'Mobile' — show it as-is. */
+export function platformLabel(platform) {
+  return platform || '—';
+}
+
+/* Release environments */
+export const ENVIRONMENTS = ['Production', 'Staging'];
 
 /* Bug severity */
 export const SEVERITIES = {
