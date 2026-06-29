@@ -13,10 +13,23 @@ import {
   RELEASE_TYPES_BY_PLATFORM,
   platformForReleaseType,
   ENVIRONMENTS,
+  EDIT_WINDOW_HOURS,
+  withinEditWindow,
+  slaLevel,
+  bugSlaLevel,
+  SLA_COLORS,
+  SLA_HOURS,
+  BUG_SLA_DAYS,
+  humanizeSince,
   linkIssue,
   SEVERITIES,
   SEVERITY_ORDER,
   BUG_STATUSES,
+  BUG_STATUS_ORDER,
+  RELEASE_COMPONENTS,
+  BUG_TAGS,
+  BUG_FEATURES,
+  BUG_RESOLUTIONS,
   ROLES,
   TEAM_ASSIGNABLE_ROLES,
   ALLOWED_EMAIL_DOMAIN,
@@ -63,6 +76,10 @@ import {
   IconGlobe,
   IconDownload,
   IconExternal,
+  IconUsers,
+  IconGrid,
+  IconLayers,
+  IconCog,
 } from './icons.jsx';
 
 /* ================================================================== */
@@ -74,6 +91,7 @@ export default function ReleaseTracker() {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [profileMissing, setProfileMissing] = useState(false);
+  const [recovery, setRecovery] = useState(false);
 
   const [projects, setProjects] = useState([]);
   const [releases, setReleases] = useState([]);
@@ -92,9 +110,9 @@ export default function ReleaseTracker() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  const [page, setPage] = useState('dashboard');
   const [showSubmit, setShowSubmit] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false);
-  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [editingRelease, setEditingRelease] = useState(null);
   const [historyProject, setHistoryProject] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [showNotif, setShowNotif] = useState(false);
@@ -129,13 +147,18 @@ export default function ReleaseTracker() {
 
   /* ---- auth session ---- */
   useEffect(() => {
+    // a recovery link sets type=recovery in the URL hash
+    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
+      setRecovery(true);
+    }
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setAuthLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
-      setSession(s)
-    );
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+      setSession(s);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -305,6 +328,28 @@ export default function ReleaseTracker() {
     }, 'Signed in');
   }
 
+  async function handleResetRequest(email) {
+    await run(async () => {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
+    }, 'Reset link sent — check your email.');
+  }
+
+  async function handleSetPassword(password) {
+    const ok = await run(async () => {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+    }, 'Password updated — you are signed in.');
+    if (ok) {
+      setRecovery(false);
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
+  }
+
   async function handleSignUp({ name, email, password, role }) {
     setIsSubmitting(true);
     // only Developer / QA are allowed at signup; Admin & Team Lead are
@@ -354,6 +399,7 @@ export default function ReleaseTracker() {
         release_type: form.releaseType,
         platform: form.platform || platformForReleaseType(form.releaseType),
         environment: form.environment || 'Production',
+        component: form.component || '',
         file_url: '',
         link_url: form.linkUrl.trim(),
         submitted_by: user.name,
@@ -371,10 +417,18 @@ export default function ReleaseTracker() {
     }
   }
 
+  async function handleEditRelease(release, patch) {
+    const ok = await run(() => api.updateRelease(release.id, patch), 'Release updated');
+    if (ok) {
+      setEditingRelease(null);
+      refetchReleases();
+    }
+  }
+
   async function handleReleaseStatus(release, newStatus, qaNote) {
-    const patch = { status: newStatus, qa_note: qaNote };
-    if (newStatus === 'qa_complete')
-      patch.qa_completed_at = new Date().toISOString();
+    const now = new Date().toISOString();
+    const patch = { status: newStatus, qa_note: qaNote, status_changed_at: now };
+    if (newStatus === 'qa_complete') patch.qa_completed_at = now;
     const ok = await run(
       () => api.updateRelease(release.id, patch),
       'Release updated'
@@ -391,8 +445,11 @@ export default function ReleaseTracker() {
   }
 
   async function handleAssignQa(release, qaId) {
+    const patch = { assigned_qa: qaId || null };
+    // stamp the first time a tester is assigned (for cycle-time analytics)
+    if (qaId && !release.qaAssignedAt) patch.qa_assigned_at = new Date().toISOString();
     const ok = await run(
-      () => api.updateRelease(release.id, { assigned_qa: qaId || null }),
+      () => api.updateRelease(release.id, patch),
       'Tester assigned'
     );
     if (ok) refetchReleases();
@@ -422,6 +479,8 @@ export default function ReleaseTracker() {
         severity: form.severity,
         screenshot_url: screenshotUrl,
         status: 'open',
+        feature: form.feature || null,
+        tags: form.tags || [],
         created_by: user.name,
         created_by_id: user.id,
       });
@@ -438,7 +497,9 @@ export default function ReleaseTracker() {
 
   async function handleBugStatus(release, bug, newStatus) {
     const ok = await run(async () => {
-      await api.updateBugStatus(bug.id, newStatus);
+      const patch = { status: newStatus };
+      if (newStatus === 'verified') patch.resolution = 'Fixed';
+      await api.updateBug(bug.id, patch);
       if (newStatus === 'fixed') {
         await api.createNotification({
           user_id: bug.createdById,
@@ -447,7 +508,25 @@ export default function ReleaseTracker() {
           release_id: release.id,
         });
       }
+      if (newStatus === 'disputed') {
+        // ping the other side that clarification is needed
+        const other = bug.createdById === user.id ? release.submittedById : bug.createdById;
+        await api.createNotification({
+          user_id: other,
+          type: 'bug_disputed',
+          message: `${user.name} needs clarification on bug "${bug.title}" (v${release.version})`,
+          release_id: release.id,
+        });
+      }
     });
+    if (ok) refetchBugs();
+  }
+
+  async function handleBugResolve(release, bug, resolution) {
+    const ok = await run(
+      () => api.updateBug(bug.id, { status: 'verified', resolution }),
+      'Bug closed'
+    );
     if (ok) refetchBugs();
   }
 
@@ -560,6 +639,14 @@ export default function ReleaseTracker() {
   /* ---- render gates ---- */
   if (authLoading) return <CenteredMessage>Loading…</CenteredMessage>;
 
+  if (recovery)
+    return (
+      <>
+        <SetPasswordScreen isSubmitting={isSubmitting} onSetPassword={handleSetPassword} />
+        <Toast toast={toast} />
+      </>
+    );
+
   if (!session)
     return (
       <>
@@ -567,6 +654,7 @@ export default function ReleaseTracker() {
           isSubmitting={isSubmitting}
           onSignIn={handleSignIn}
           onSignUp={handleSignUp}
+          onResetRequest={handleResetRequest}
         />
         <Toast toast={toast} />
       </>
@@ -603,111 +691,229 @@ export default function ReleaseTracker() {
   const isManagerOfSelected =
     isAdmin || (isLead && selProjectTeam && selProjectTeam === myTeamId);
 
+  const teamsById = {};
+  teams.forEach((t) => (teamsById[t.id] = t));
+  const visibleProfiles = isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId);
+
   return (
-    <div style={{ minHeight: '100%' }}>
-      <Header
+    <div className="nav-layout">
+      <NavRail
+        page={page}
+        onNavigate={setPage}
         user={user}
         teamName={isAdmin ? null : myTeam?.name}
         canManage={canManage}
-        canSubmit={canSubmit}
-        unread={unread}
-        notifOpen={showNotif}
-        notifications={notifications}
-        onToggleNotif={handleOpenNotif}
-        onNotifClick={handleNotifClick}
-        onMarkAllRead={handleMarkAllRead}
-        onSubmitClick={() => setShowSubmit(true)}
-        onAdminClick={() => setShowAdmin(true)}
-        onAnalyticsClick={() => setShowAnalytics(true)}
-        onSignOut={handleSignOut}
+        isAdmin={isAdmin}
       />
 
-      <div className="app-shell">
-        {/* LEFT — project nav + quick stats */}
-        <aside className="shell-aside shell-left">
-          <Sidebar
-            projects={scopedProjects}
-            releases={scopedReleases}
-            teamName={isAdmin ? null : myTeam?.name}
-            openBugTotal={scopedBugs.filter((b) => b.status === 'open').length}
-            projectFilter={projectFilter}
-            platformFilter={platformFilter}
-            onSelect={(pid, plat) => {
-              setProjectFilter(pid);
-              setPlatformFilter(plat);
-            }}
-          />
-        </aside>
+      <div className="nav-main">
+        <Header
+          user={user}
+          page={page}
+          canSubmit={canSubmit}
+          canManage={canManage}
+          isAdmin={isAdmin}
+          unread={unread}
+          notifOpen={showNotif}
+          notifications={notifications}
+          projects={scopedProjects}
+          releases={scopedReleases}
+          bugs={scopedBugs}
+          projectsById={projectsById}
+          onToggleNotif={handleOpenNotif}
+          onNotifClick={(n) => {
+            handleNotifClick(n);
+            if (n.releaseId) setPage('dashboard');
+          }}
+          onMarkAllRead={handleMarkAllRead}
+          onSubmitClick={() => setShowSubmit(true)}
+          onNewProject={() => setPage('projects')}
+          onInviteUser={() => setPage('users')}
+          onOpenRelease={(id) => {
+            setSelectedId(id);
+            setPage('dashboard');
+          }}
+          onNavigate={setPage}
+          onSettings={() => setPage('settings')}
+          onSignOut={handleSignOut}
+        />
 
-        {/* CENTER — KPIs + release list */}
-        <main style={{ minWidth: 0 }}>
-          <div style={{ marginBottom: 18 }}>
-            <h1 style={{ fontSize: 23, fontWeight: 700, margin: 0 }}>
-              {greeting()}, {user.name.split(/[\s_]+/)[0]}
-            </h1>
-            <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
-              {scopedReleases.length} release{scopedReleases.length === 1 ? '' : 's'} ·{' '}
-              {scopedProjects.length} project{scopedProjects.length === 1 ? '' : 's'} ·{' '}
-              {scopedBugs.filter((b) => b.status === 'open').length} open bug
-              {scopedBugs.filter((b) => b.status === 'open').length === 1 ? '' : 's'}
-            </p>
+        {page === 'dashboard' && (
+          <div className="app-shell">
+            <aside className="shell-aside shell-left">
+              <Sidebar
+                projects={scopedProjects}
+                releases={scopedReleases}
+                teamName={isAdmin ? null : myTeam?.name}
+                openBugTotal={scopedBugs.filter((b) => b.status === 'open').length}
+                disputedTotal={scopedBugs.filter((b) => b.status === 'disputed').length}
+                projectFilter={projectFilter}
+                platformFilter={platformFilter}
+                onSelect={(pid, plat) => {
+                  setProjectFilter(pid);
+                  setPlatformFilter(plat);
+                }}
+              />
+            </aside>
+
+            <main style={{ minWidth: 0 }}>
+              <div style={{ marginBottom: 18 }}>
+                <h1 style={{ fontSize: 23, fontWeight: 700, margin: 0 }}>
+                  {greeting()}, {user.name.split(/[\s_]+/)[0]}
+                </h1>
+                <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
+                  {scopedReleases.length} release{scopedReleases.length === 1 ? '' : 's'} ·{' '}
+                  {scopedProjects.length} project{scopedProjects.length === 1 ? '' : 's'} ·{' '}
+                  {scopedBugs.filter((b) => b.status === 'open').length} open bug
+                  {scopedBugs.filter((b) => b.status === 'open').length === 1 ? '' : 's'}
+                </p>
+              </div>
+
+              <StatCards counts={counts} />
+
+              <FilterBar
+                projects={scopedProjects}
+                projectFilter={projectFilter}
+                platformFilter={platformFilter}
+                typeFilter={typeFilter}
+                statusFilter={statusFilter}
+                onProject={setProjectFilter}
+                onPlatform={setPlatformFilter}
+                onType={setTypeFilter}
+                onStatus={setStatusFilter}
+                count={filtered.length}
+              />
+
+              {loading ? (
+                <Empty>Loading releases…</Empty>
+              ) : filtered.length === 0 ? (
+                <Empty>
+                  {scopedReleases.length === 0
+                    ? 'No releases yet — submit your first build.'
+                    : 'No releases match your filters.'}
+                </Empty>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {filtered.map((r) => (
+                    <ReleaseCard
+                      key={r.id}
+                      release={r}
+                      project={projectsById[r.projectId]}
+                      openBugs={openBugCountByRelease[r.id] || 0}
+                      assignedName={r.assignedQa ? profilesById[r.assignedQa]?.name : null}
+                      onClick={() => setSelectedId(r.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </main>
+
+            <aside className="shell-aside shell-right">
+              <RightPanel
+                releases={scopedReleases}
+                bugs={scopedBugs}
+                canSubmit={canSubmit}
+                canManage={canManage}
+                onSubmit={() => setShowSubmit(true)}
+                onAdmin={() => setPage('projects')}
+                onAnalytics={() => setPage('analytics')}
+                onOpenRelease={(id) => setSelectedId(id)}
+              />
+            </aside>
           </div>
+        )}
 
-          <StatCards counts={counts} />
-
-          <FilterBar
-            projects={scopedProjects}
-            projectFilter={projectFilter}
-            platformFilter={platformFilter}
-            typeFilter={typeFilter}
-            statusFilter={statusFilter}
-            onProject={setProjectFilter}
-            onPlatform={setPlatformFilter}
-            onType={setTypeFilter}
-            onStatus={setStatusFilter}
-            count={filtered.length}
-          />
-
-          {loading ? (
-            <Empty>Loading releases…</Empty>
-          ) : filtered.length === 0 ? (
-            <Empty>
-              {scopedReleases.length === 0
-                ? 'No releases yet — submit your first build.'
-                : 'No releases match your filters.'}
-            </Empty>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {filtered.map((r) => (
-                <ReleaseCard
-                  key={r.id}
-                  release={r}
-                  project={projectsById[r.projectId]}
-                  openBugs={openBugCountByRelease[r.id] || 0}
-                  assignedName={
-                    r.assignedQa ? profilesById[r.assignedQa]?.name : null
-                  }
-                  onClick={() => setSelectedId(r.id)}
+        {page !== 'dashboard' && (
+          <div className="page-area anim-in">
+            {page === 'projects' && canManage && (
+              <>
+                <PageHeader title="Projects" subtitle="Create and manage projects and QA checklists" />
+                <ProjectsTab
+                  isAdmin={isAdmin}
+                  myTeamId={myTeamId}
+                  teams={teams}
+                  teamsById={teamsById}
+                  projects={scopedProjects}
+                  releases={scopedReleases}
+                  checklistItems={checklistItems}
+                  isSubmitting={isSubmitting}
+                  onCreateProject={handleCreateProject}
+                  onUpdateProject={handleUpdateProject}
+                  onDeleteProject={handleDeleteProject}
+                  onAddChecklistItem={handleAddChecklistItem}
+                  onDeleteChecklistItem={handleDeleteChecklistItem}
                 />
-              ))}
-            </div>
-          )}
-        </main>
+              </>
+            )}
 
-        {/* RIGHT — activity, platform mix, quick actions */}
-        <aside className="shell-aside shell-right">
-          <RightPanel
-            releases={scopedReleases}
-            bugs={scopedBugs}
-            canSubmit={canSubmit}
-            canManage={canManage}
-            onSubmit={() => setShowSubmit(true)}
-            onAdmin={() => setShowAdmin(true)}
-            onAnalytics={() => setShowAnalytics(true)}
-            onOpenRelease={(id) => setSelectedId(id)}
-          />
-        </aside>
-      </div>
+            {page === 'bugs' && (
+              <BugsPage
+                bugs={scopedBugs}
+                releases={scopedReleases}
+                projects={scopedProjects}
+                projectsById={projectsById}
+                profilesById={profilesById}
+                profiles={profiles}
+                teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
+                isAdmin={isAdmin}
+                onOpenRelease={(id) => {
+                  setSelectedId(id);
+                  setPage('dashboard');
+                }}
+              />
+            )}
+
+            {page === 'analytics' && canManage && (
+              <AnalyticsModal
+                embedded
+                projects={scopedProjects}
+                releases={scopedReleases}
+                bugs={scopedBugs}
+                profiles={profiles}
+                teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
+                isAdmin={isAdmin}
+                onOpenHistory={(p) => setHistoryProject(p)}
+              />
+            )}
+
+            {page === 'users' && canManage && (
+              <>
+                <PageHeader title={isAdmin ? 'Users' : 'Team members'} subtitle="Manage roles, teams and accounts" />
+                <UsersTab
+                  currentUser={user}
+                  isAdmin={isAdmin}
+                  myTeamId={myTeamId}
+                  profiles={visibleProfiles}
+                  teams={teams}
+                  teamsById={teamsById}
+                  isSubmitting={isSubmitting}
+                  showToast={showToast}
+                  onUpdateMember={handleUpdateMember}
+                  onCreateUser={handleCreateUser}
+                  refetchProfiles={refetchProfiles}
+                />
+              </>
+            )}
+
+            {page === 'teams' && isAdmin && (
+              <>
+                <PageHeader title="Teams" subtitle="Create teams and assign leads" />
+                <TeamsTab
+                  teams={teams}
+                  profiles={profiles}
+                  projects={projects}
+                  isSubmitting={isSubmitting}
+                  onCreateTeam={handleCreateTeam}
+                  onDeleteTeam={handleDeleteTeam}
+                />
+              </>
+            )}
+
+            {page === 'settings' && (
+              <SettingsPage user={user} team={myTeam} onSignOut={handleSignOut} />
+            )}
+          </div>
+        )}
 
       {showSubmit && (
         <SubmitModal
@@ -718,42 +924,13 @@ export default function ReleaseTracker() {
         />
       )}
 
-      {showAdmin && (
-        <AdminPanel
-          currentUser={user}
-          isAdmin={isAdmin}
-          myTeamId={myTeamId}
-          teams={teams}
-          profiles={profiles}
-          projects={projects}
-          releases={releases}
-          checklistItems={checklistItems}
+      {editingRelease && (
+        <EditReleaseModal
+          release={editingRelease}
+          project={projectsById[editingRelease.projectId]}
           isSubmitting={isSubmitting}
-          showToast={showToast}
-          onCreateTeam={handleCreateTeam}
-          onDeleteTeam={handleDeleteTeam}
-          onUpdateMember={handleUpdateMember}
-          onCreateUser={handleCreateUser}
-          onCreateProject={handleCreateProject}
-          onUpdateProject={handleUpdateProject}
-          onDeleteProject={handleDeleteProject}
-          onAddChecklistItem={handleAddChecklistItem}
-          onDeleteChecklistItem={handleDeleteChecklistItem}
-          refetchProfiles={refetchProfiles}
-          onClose={() => setShowAdmin(false)}
-        />
-      )}
-
-      {showAnalytics && (
-        <AnalyticsModal
-          projects={scopedProjects}
-          releases={scopedReleases}
-          bugs={scopedBugs}
-          onClose={() => setShowAnalytics(false)}
-          onOpenHistory={(p) => {
-            setShowAnalytics(false);
-            setHistoryProject(p);
-          }}
+          onClose={() => setEditingRelease(null)}
+          onSave={(patch) => handleEditRelease(editingRelease, patch)}
         />
       )}
 
@@ -785,15 +962,18 @@ export default function ReleaseTracker() {
           onSaveNote={handleSaveNote}
           onAssignQa={handleAssignQa}
           onDelete={handleDeleteRelease}
+          onEdit={(r) => setEditingRelease(r)}
           onAddBug={handleAddBug}
           onBugStatus={handleBugStatus}
+          onBugResolve={handleBugResolve}
           onDeleteBug={handleDeleteBug}
           onAddComment={handleAddComment}
           onDeleteComment={handleDeleteComment}
         />
       )}
 
-      <Toast toast={toast} />
+        <Toast toast={toast} />
+      </div>
     </div>
   );
 }
@@ -831,10 +1011,409 @@ function Empty({ children }) {
 }
 
 /* ================================================================== */
+/* Navigation rail + pages                                            */
+/* ================================================================== */
+
+function NavRail({ page, onNavigate, teamName, canManage, isAdmin }) {
+  const items = [
+    { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: true },
+    { key: 'bugs', label: 'Bugs', Icon: IconBug, show: true },
+    { key: 'projects', label: 'Projects', Icon: IconFolder, show: canManage },
+    { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
+    { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
+    { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
+    { key: 'settings', label: 'Settings', Icon: IconCog, show: true },
+  ].filter((i) => i.show);
+
+  return (
+    <nav className="nav-rail">
+      <div style={{ padding: '2px 8px 14px', display: 'flex', alignItems: 'center', gap: 9 }}>
+        <Logo size={26} />
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15.5 }}>
+          Jump<span style={{ color: 'var(--brand)' }}>Test</span>
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {items.map((it) => {
+          const active = page === it.key;
+          return (
+            <button
+              key={it.key}
+              onClick={() => onNavigate(it.key)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '9px 11px',
+                borderRadius: 8,
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: 13,
+                fontWeight: active ? 600 : 500,
+                textAlign: 'left',
+                background: active ? 'var(--brand-soft)' : 'transparent',
+                color: active ? 'var(--brand)' : 'var(--color-text-secondary)',
+              }}
+            >
+              <it.Icon size={17} />
+              {it.label}
+            </button>
+          );
+        })}
+      </div>
+      {teamName && (
+        <div
+          style={{
+            marginTop: 14,
+            fontSize: 11,
+            color: 'var(--color-text-tertiary)',
+            padding: '0 11px',
+          }}
+        >
+          Team · <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>{teamName}</span>
+        </div>
+      )}
+    </nav>
+  );
+}
+
+function PageHeader({ title, subtitle }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{title}</h1>
+      {subtitle && (
+        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>{subtitle}</p>
+      )}
+    </div>
+  );
+}
+
+function BugsPage({ bugs, releases, projects, projectsById, profilesById, profiles, teams, isAdmin, onOpenRelease }) {
+  const relById = useMemo(() => {
+    const m = {};
+    releases.forEach((r) => (m[r.id] = r));
+    return m;
+  }, [releases]);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('all');
+  const [sev, setSev] = useState('all');
+  const [platform, setPlatform] = useState('all');
+  const [tag, setTag] = useState('all');
+  const [feature, setFeature] = useState('all');
+  const [project, setProject] = useState('all');
+  const [team, setTeam] = useState('all');
+  const [developer, setDeveloper] = useState('all');
+  const [qa, setQa] = useState('all');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [sort, setSort] = useState('newest');
+  const [visible, setVisible] = useState(20);
+
+  const devs = (profiles || []).filter((p) => p.role !== 'QA');
+  const qas = (profiles || []).filter((p) => p.role === 'QA');
+
+  const term = q.trim().toLowerCase();
+  const filtered = bugs
+    .filter((b) => {
+      const rel = relById[b.releaseId];
+      if (!rel) return false;
+      const proj = projectsById[rel.projectId];
+      if (status !== 'all' && b.status !== status) return false;
+      if (sev !== 'all' && b.severity !== sev) return false;
+      if (platform !== 'all' && rel.platform !== platform) return false;
+      if (tag !== 'all' && !b.tags.includes(tag)) return false;
+      if (feature !== 'all' && (b.feature || 'Unassigned') !== feature) return false;
+      if (project !== 'all' && rel.projectId !== project) return false;
+      if (team !== 'all' && (proj?.teamId || '') !== team) return false;
+      if (developer !== 'all' && rel.submittedById !== developer) return false;
+      if (qa !== 'all' && rel.assignedQa !== qa) return false;
+      if (from && (b.createdAt || '').slice(0, 10) < from) return false;
+      if (to && (b.createdAt || '').slice(0, 10) > to) return false;
+      if (term) {
+        const name = proj?.name || '';
+        if (!b.title.toLowerCase().includes(term) && !name.toLowerCase().includes(term)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) =>
+      sort === 'oldest'
+        ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  const pageBugs = filtered.slice(0, visible);
+
+  // aging: open bugs sorted oldest-first, those at/over SLA highlighted
+  const aging = bugs
+    .filter((b) => {
+      const rel = relById[b.releaseId];
+      return rel && b.status !== 'verified' && bugSlaLevel(b.status, b.createdAt);
+    })
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(0, 6);
+
+  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+  const th = {
+    textAlign: 'left',
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--color-text-secondary)',
+    padding: '8px 10px',
+    borderBottom: '1px solid var(--color-border-primary)',
+  };
+  const td = { fontSize: 12.5, padding: '10px', borderBottom: '1px solid var(--color-border-primary)' };
+
+  return (
+    <>
+      <PageHeader title="Bugs" subtitle={`${filtered.length} bug${filtered.length === 1 ? '' : 's'} across your releases`} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+        <input
+          style={{ ...inputStyle, flex: '1 1 200px', width: 'auto' }}
+          value={q}
+          placeholder="Search bugs or projects…"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setVisible(20);
+          }}
+        />
+        <select style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="all">All statuses</option>
+          {BUG_STATUS_ORDER.map((s) => (
+            <option key={s} value={s}>
+              {BUG_STATUSES[s].label}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={sev} onChange={(e) => setSev(e.target.value)}>
+          <option value="all">All severities</option>
+          {SEVERITY_ORDER.map((s) => (
+            <option key={s} value={s}>
+              {SEVERITIES[s].label}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          <option value="all">All platforms</option>
+          {RELEASE_PLATFORMS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={tag} onChange={(e) => setTag(e.target.value)}>
+          <option value="all">All tags</option>
+          {BUG_TAGS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={feature} onChange={(e) => setFeature(e.target.value)}>
+          <option value="all">All features</option>
+          {BUG_FEATURES.map((ft) => (
+            <option key={ft} value={ft}>
+              {ft}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={project} onChange={(e) => setProject(e.target.value)}>
+          <option value="all">All projects</option>
+          {(projects || []).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        {isAdmin && (
+          <select style={fSel} value={team} onChange={(e) => setTeam(e.target.value)}>
+            <option value="all">All teams</option>
+            {(teams || []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <select style={fSel} value={developer} onChange={(e) => setDeveloper(e.target.value)}>
+          <option value="all">All developers</option>
+          {devs.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={qa} onChange={(e) => setQa(e.target.value)}>
+          <option value="all">All QA</option>
+          {qas.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <input style={fSel} type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
+        <input style={fSel} type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
+        <select style={fSel} value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+        </select>
+      </div>
+
+      {aging.length > 0 && (
+        <div style={{ ...card, padding: 14, marginBottom: 16 }}>
+          <div style={{ ...sideHead, marginBottom: 10, color: 'var(--danger)' }}>
+            Aging issues — needs immediate attention
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {aging.map((b) => {
+              const rel = relById[b.releaseId];
+              return (
+                <div
+                  key={b.id}
+                  onClick={() => onOpenRelease(b.releaseId)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 9,
+                    padding: '9px 11px',
+                    background: 'var(--color-background-secondary)',
+                    border: '1px solid var(--color-border-tertiary)',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <SlaBadge level={bugSlaLevel(b.status, b.createdAt)} />
+                  <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0 }}>{b.title}</span>
+                  <SeverityBadge severity={b.severity} />
+                  <BugStatusBadge status={b.status} />
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                    open {humanizeSince(b.createdAt)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <Empty>No bugs match your filters.</Empty>
+      ) : (
+        <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={th}>Bug</th>
+                <th style={th}>Severity</th>
+                <th style={th}>Status</th>
+                <th style={th}>Feature · Tags</th>
+                <th style={th}>Project · Platform</th>
+                <th style={th}>Release</th>
+                <th style={th}>Reported</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageBugs.map((b) => {
+                const rel = relById[b.releaseId];
+                const proj = projectsById[rel.projectId];
+                return (
+                  <tr
+                    key={b.id}
+                    onClick={() => onOpenRelease(b.releaseId)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td style={{ ...td, fontWeight: 500 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                        <SlaBadge level={bugSlaLevel(b.status, b.createdAt)} />
+                        {b.title}
+                      </span>
+                    </td>
+                    <td style={td}>
+                      <SeverityBadge severity={b.severity} />
+                    </td>
+                    <td style={td}>
+                      <BugStatusBadge status={b.status} />
+                    </td>
+                    <td style={td}>
+                      <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+                        {b.feature && <TagChip label={b.feature} tone="brand" />}
+                        {b.tags.slice(0, 2).map((t) => (
+                          <TagChip key={t} label={t} />
+                        ))}
+                        {b.tags.length > 2 && (
+                          <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+                            +{b.tags.length - 2}
+                          </span>
+                        )}
+                        {!b.feature && b.tags.length === 0 && (
+                          <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>
+                        )}
+                      </span>
+                    </td>
+                    <td style={td}>
+                      {proj?.name || '—'} · {rel.platform}
+                    </td>
+                    <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>v{rel.version}</td>
+                    <td style={td}>{humanizeSince(b.createdAt)} ago</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {visible < filtered.length && (
+            <div style={{ padding: 10 }}>
+              <button style={{ ...ghostButton, width: '100%' }} onClick={() => setVisible((v) => v + 20)}>
+                Load more ({filtered.length - visible} left)
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function SettingsPage({ user, team, onSignOut }) {
+  const row = (label, value) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 0', borderBottom: '1px solid var(--color-border-primary)' }}>
+      <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+  return (
+    <>
+      <PageHeader title="Settings" subtitle="Your account and workspace" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
+        <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...sideHead, marginBottom: 10 }}>Profile</div>
+          {row('Name', user.name)}
+          {row('Email', user.email)}
+          {row('Role', user.role)}
+          {row('Team', team ? team.name : '—')}
+          <button
+            style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644', marginTop: 14 }}
+            onClick={onSignOut}
+          >
+            Sign out
+          </button>
+        </div>
+        <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...sideHead, marginBottom: 10 }}>About SLAs</div>
+          <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.6, margin: 0 }}>
+            Releases pending more than {SLA_HOURS.pending}h or in QA beyond {SLA_HOURS.in_qa}h, and bugs open longer
+            than {BUG_SLA_DAYS} days, are flagged with amber (approaching) or red (overdue) indicators across the app.
+            Developers can edit or delete their own releases for {EDIT_WINDOW_HOURS}h after submission.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ================================================================== */
 /* Auth                                                               */
 /* ================================================================== */
 
-function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
+function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest }) {
   const [mode, setMode] = useState('signin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -842,16 +1421,16 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
   const [role, setRole] = useState('Developer');
 
   const isSignup = mode === 'signup';
+  const isReset = mode === 'reset';
   const domainBad = email.trim().length > 0 && !emailDomainOk(email);
-  const invalid =
-    !email.trim() ||
-    domainBad ||
-    password.length < 6 ||
-    (isSignup && !name.trim());
+  const invalid = isReset
+    ? !email.trim() || domainBad
+    : !email.trim() || domainBad || password.length < 6 || (isSignup && !name.trim());
 
   function submit() {
     if (invalid || isSubmitting) return;
-    if (isSignup) onSignUp({ name, email, password, role });
+    if (isReset) onResetRequest(email);
+    else if (isSignup) onSignUp({ name, email, password, role });
     else onSignIn({ email, password });
   }
 
@@ -947,7 +1526,7 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
         {/* form panel */}
         <div style={{ flex: '1 1 360px', minWidth: 0, padding: 36 }}>
           <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 4, letterSpacing: '-0.02em' }}>
-            {isSignup ? 'Create your account' : 'Welcome back'}
+            {isReset ? 'Reset password' : isSignup ? 'Create your account' : 'Welcome back'}
           </div>
           <div
             style={{
@@ -956,23 +1535,29 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
               marginBottom: 20,
             }}
           >
-            {isSignup ? 'Join your team on JumpTest' : 'Sign in to continue'}
+            {isReset
+              ? 'We’ll email you a link to set a new password.'
+              : isSignup
+              ? 'Join your team on JumpTest'
+              : 'Sign in to continue'}
           </div>
 
-          <div
-            style={{
-              display: 'flex',
-              marginBottom: 20,
-              borderBottom: '0.5px solid var(--color-border-tertiary)',
-            }}
-          >
-            <div style={tab(!isSignup)} onClick={() => setMode('signin')}>
-              Sign in
+          {!isReset && (
+            <div
+              style={{
+                display: 'flex',
+                marginBottom: 20,
+                borderBottom: '0.5px solid var(--color-border-tertiary)',
+              }}
+            >
+              <div style={tab(!isSignup)} onClick={() => setMode('signin')}>
+                Sign in
+              </div>
+              <div style={tab(isSignup)} onClick={() => setMode('signup')}>
+                Create account
+              </div>
             </div>
-            <div style={tab(isSignup)} onClick={() => setMode('signup')}>
-              Create account
-            </div>
-          </div>
+          )}
 
         {isSignup && (
           <Field label="Name">
@@ -1008,16 +1593,18 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
           />
         </Field>
 
-        <Field label="Password">
-          <input
-            style={inputStyle}
-            type="password"
-            value={password}
-            placeholder="At least 6 characters"
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-          />
-        </Field>
+        {!isReset && (
+          <Field label="Password">
+            <input
+              style={inputStyle}
+              type="password"
+              value={password}
+              placeholder="At least 6 characters"
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+            />
+          </Field>
+        )}
 
         <div
           style={{
@@ -1029,7 +1616,7 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
         >
           {domainBad
             ? `Use your @${ALLOWED_EMAIL_DOMAIN} email address.`
-            : password.length > 0 && password.length < 6
+            : !isReset && password.length > 0 && password.length < 6
             ? 'Password must be at least 6 characters.'
             : ''}
         </div>
@@ -1041,15 +1628,42 @@ function AuthScreen({ isSubmitting, onSignIn, onSignUp }) {
           >
             {isSubmitting
               ? 'Please wait…'
+              : isReset
+              ? 'Send reset link'
               : isSignup
               ? 'Create account'
               : 'Sign in'}
           </button>
+
+          <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12.5 }}>
+            {isReset ? (
+              <button onClick={() => setMode('signin')} style={authLink}>
+                ← Back to sign in
+              </button>
+            ) : (
+              !isSignup && (
+                <button onClick={() => setMode('reset')} style={authLink}>
+                  Forgot password?
+                </button>
+              )
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+const authLink = {
+  background: 'none',
+  border: 'none',
+  padding: 0,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: 12.5,
+  fontWeight: 600,
+  color: 'var(--brand)',
+};
 
 function Field({ label, children }) {
   return (
@@ -1060,26 +1674,276 @@ function Field({ label, children }) {
   );
 }
 
+function SetPasswordScreen({ isSubmitting, onSetPassword }) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const mismatch = pw2.length > 0 && pw !== pw2;
+  const invalid = pw.length < 6 || pw !== pw2;
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+      }}
+    >
+      <div className="anim-in" style={{ ...card, width: '100%', maxWidth: 380, padding: 32, boxShadow: 'var(--shadow-lg)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+          <Logo size={28} />
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16 }}>
+            Jump<span style={{ color: 'var(--brand)' }}>Test</span>
+          </span>
+        </div>
+        <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 4 }}>Set a new password</div>
+        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 20 }}>
+          Choose a new password for your account.
+        </div>
+        <Field label="New password">
+          <input
+            style={inputStyle}
+            type="password"
+            value={pw}
+            autoFocus
+            placeholder="At least 6 characters"
+            onChange={(e) => setPw(e.target.value)}
+          />
+        </Field>
+        <Field label="Confirm password">
+          <input
+            style={{ ...inputStyle, borderColor: mismatch ? '#dc2626' : 'var(--color-border-tertiary)' }}
+            type="password"
+            value={pw2}
+            placeholder="Re-enter password"
+            onChange={(e) => setPw2(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !invalid && onSetPassword(pw)}
+          />
+        </Field>
+        <div style={{ fontSize: 11, color: '#dc2626', marginBottom: 14, minHeight: 14 }}>
+          {mismatch ? 'Passwords do not match.' : pw.length > 0 && pw.length < 6 ? 'At least 6 characters.' : ''}
+        </div>
+        <button
+          style={{ ...primaryButton(invalid || isSubmitting), width: '100%', padding: '11px 16px' }}
+          disabled={invalid || isSubmitting}
+          onClick={() => onSetPassword(pw)}
+        >
+          {isSubmitting ? 'Updating…' : 'Update password'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* Public client dashboard (read-only, no login)                      */
+/* ================================================================== */
+
+const CLIENT_STATUS = {
+  pending: { label: 'In development', color: '#d97706' },
+  in_qa: { label: 'In testing', color: '#2563eb' },
+  qa_complete: { label: 'Completed', color: '#16a34a' },
+  bug_repeat: { label: 'Resolving issues', color: '#dc2626' },
+};
+
+export function ClientDashboard({ token }) {
+  const [data, setData] = useState(undefined); // undefined=loading, null=invalid
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .fetchPublicStatus(token)
+      .then((d) => !cancelled && setData(d))
+      .catch((e) => !cancelled && setError(e.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  if (data === undefined && !error) return <CenteredMessage>Loading project status…</CenteredMessage>;
+  if (error || data === null)
+    return (
+      <CenteredMessage>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Link not found</div>
+        <div>This client link is invalid or has been revoked.</div>
+      </CenteredMessage>
+    );
+
+  const releases = data.releases || [];
+  const total = releases.length;
+  const completed = releases.filter((r) => r.status === 'qa_complete');
+  const inProgress = releases.filter((r) => r.status !== 'qa_complete');
+  const pct = total ? Math.round((completed.length / total) * 100) : 0;
+  const current = inProgress[0]; // most recent non-complete
+  const cs = (s) => CLIENT_STATUS[s] || { label: s, color: '#64748b' };
+
+  const statCard = (label, value, color) => (
+    <div style={{ ...card, padding: 16, flex: '1 1 150px' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
+    </div>
+  );
+
+  const relRow = (r, i, arr) => (
+    <div
+      key={i}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '11px 0',
+        borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)',
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+          v{r.version}{' '}
+          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+            {r.platform}
+            {r.component ? ` · ${r.component}` : ''} · {r.environment}
+          </span>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
+      </div>
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: cs(r.status).color,
+          background: `${cs(r.status).color}1a`,
+          padding: '3px 10px',
+          borderRadius: 999,
+        }}
+      >
+        {cs(r.status).label}
+      </span>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--color-app-bg)' }}>
+      <header
+        style={{
+          background: 'var(--ink)',
+          borderBottom: '1px solid var(--ink-border)',
+          padding: '14px 0',
+        }}
+      >
+        <div style={{ maxWidth: 880, margin: '0 auto', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Logo size={28} />
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16 }}>
+            Jump<span style={{ color: 'var(--brand)' }}>Test</span>
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>Client portal</span>
+        </div>
+      </header>
+
+      <div style={{ maxWidth: 880, margin: '0 auto', padding: '28px 20px 64px' }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{data.project.name}</h1>
+        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 20px' }}>
+          Project status overview
+        </p>
+
+        {/* progress */}
+        <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
+          </div>
+          <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+            <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
+          </div>
+          {current && (
+            <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 12 }}>
+              Current: <strong>v{current.version}</strong> — {cs(current.status).label}
+            </div>
+          )}
+        </div>
+
+        {/* summary */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
+          {statCard('Completed', completed.length, 'var(--success)')}
+          {statCard('In progress', inProgress.length, 'var(--warning)')}
+          {statCard('Resolved bugs', data.bugs?.resolved ?? 0, 'var(--success)')}
+          {data.showOpenBugs && statCard('Open bugs', data.bugs?.open ?? 0, (data.bugs?.open ?? 0) ? 'var(--danger)' : undefined)}
+        </div>
+
+        {inProgress.length > 0 && (
+          <section style={{ marginBottom: 24 }}>
+            <div style={{ ...sideHead, marginBottom: 10 }}>In progress</div>
+            <div style={{ ...card, padding: '4px 16px' }}>{inProgress.map(relRow)}</div>
+          </section>
+        )}
+
+        {completed.length > 0 && (
+          <section style={{ marginBottom: 24 }}>
+            <div style={{ ...sideHead, marginBottom: 10 }}>Completed</div>
+            <div style={{ ...card, padding: '4px 16px' }}>{completed.map(relRow)}</div>
+          </section>
+        )}
+
+        <section>
+          <div style={{ ...sideHead, marginBottom: 10 }}>Release history</div>
+          {releases.length === 0 ? (
+            <div style={{ ...card, padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+              No releases yet.
+            </div>
+          ) : (
+            <div style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
+          )}
+        </section>
+
+        <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
+          Read-only project status · powered by JumpTest
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ================================================================== */
 /* Header + notifications                                             */
 /* ================================================================== */
 
+const PAGE_TITLES = {
+  dashboard: 'Dashboard',
+  bugs: 'Bugs',
+  projects: 'Projects',
+  analytics: 'Analytics',
+  users: 'Users',
+  teams: 'Teams',
+  settings: 'Settings',
+};
+
 function Header({
   user,
-  teamName,
-  canManage,
+  page,
   canSubmit,
+  canManage,
+  isAdmin,
   unread,
   notifOpen,
   notifications,
+  projects,
+  releases,
+  bugs,
+  projectsById,
   onToggleNotif,
   onNotifClick,
   onMarkAllRead,
   onSubmitClick,
-  onAdminClick,
-  onAnalyticsClick,
+  onNewProject,
+  onInviteUser,
+  onOpenRelease,
+  onNavigate,
+  onSettings,
   onSignOut,
 }) {
+  const [actionsOpen, setActionsOpen] = useState(false);
   const inkGhost = {
     padding: '8px 13px',
     fontSize: 13,
@@ -1090,6 +1954,22 @@ function Header({
     borderRadius: 'var(--r-input)',
     cursor: 'pointer',
     fontFamily: 'inherit',
+  };
+  const menuItem = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 9,
+    width: '100%',
+    padding: '9px 11px',
+    fontSize: 13,
+    fontWeight: 500,
+    color: 'var(--color-text-primary)',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+    borderRadius: 6,
   };
   return (
     <header
@@ -1103,32 +1983,31 @@ function Header({
     >
       <div
         style={{
-          maxWidth: 980,
           margin: '0 auto',
-          padding: '11px 16px',
+          padding: '11px 22px',
           display: 'flex',
           alignItems: 'center',
-          gap: 9,
+          gap: 10,
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Wordmark size={30} tone="ink" />
-          {teamName && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: 'var(--color-text-secondary)',
-                background: 'var(--color-background-secondary)',
-                border: '1px solid var(--color-border-tertiary)',
-                padding: '3px 9px',
-                borderRadius: 999,
-              }}
-            >
-              {teamName}
-            </span>
-          )}
+        {/* breadcrumb */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13.5 }}>
+          <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>JumpTest</span>
+          <span style={{ color: 'var(--color-text-tertiary)' }}>/</span>
+          <span style={{ fontWeight: 700 }}>{PAGE_TITLES[page] || 'Dashboard'}</span>
+        </div>
+
+        {/* global search */}
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 180 }}>
+          <GlobalSearch
+            projects={projects}
+            releases={releases}
+            bugs={bugs}
+            projectsById={projectsById}
+            onNavigate={onNavigate}
+            onOpenRelease={onOpenRelease}
+          />
         </div>
 
         {/* bell */}
@@ -1154,26 +2033,71 @@ function Header({
           )}
         </div>
 
-        <button style={inkGhost} onClick={onAnalyticsClick}>
-          Analytics
-        </button>
-        {canManage && (
-          <button style={inkGhost} onClick={onAdminClick}>
-            Manage
-          </button>
-        )}
-        {canSubmit && (
+        {/* quick actions */}
+        <div style={{ position: 'relative' }}>
           <button
             style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            onClick={onSubmitClick}
+            onClick={() => setActionsOpen((v) => !v)}
           >
             <IconPlus size={15} />
-            Submit release
+            New
           </button>
-        )}
+          {actionsOpen && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setActionsOpen(false)} />
+              <div
+                style={{
+                  ...card,
+                  position: 'absolute',
+                  top: 42,
+                  right: 0,
+                  width: 210,
+                  zIndex: 40,
+                  padding: 4,
+                  boxShadow: 'var(--shadow-md)',
+                }}
+              >
+                {canSubmit && (
+                  <button
+                    style={menuItem}
+                    onClick={() => {
+                      setActionsOpen(false);
+                      onSubmitClick();
+                    }}
+                  >
+                    <IconUpload size={15} /> Submit release
+                  </button>
+                )}
+                {canManage && (
+                  <button
+                    style={menuItem}
+                    onClick={() => {
+                      setActionsOpen(false);
+                      onNewProject();
+                    }}
+                  >
+                    <IconFolder size={15} /> New project
+                  </button>
+                )}
+                {canManage && (
+                  <button
+                    style={menuItem}
+                    onClick={() => {
+                      setActionsOpen(false);
+                      onInviteUser();
+                    }}
+                  >
+                    <IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         {/* user chip */}
         <div
+          onClick={onSettings}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -1182,6 +2106,7 @@ function Header({
             background: 'var(--color-background-secondary)',
             border: '1px solid var(--color-border-tertiary)',
             borderRadius: 999,
+            cursor: 'pointer',
           }}
         >
           <Avatar name={user.name} size={26} />
@@ -1201,6 +2126,123 @@ function Header({
         </button>
       </div>
     </header>
+  );
+}
+
+function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOpenRelease }) {
+  const [q, setQ] = useState('');
+  const [focused, setFocused] = useState(false);
+  const term = q.trim().toLowerCase();
+
+  const results =
+    term.length >= 2
+      ? [
+          ...releases
+            .filter(
+              (r) =>
+                `v${r.version}`.toLowerCase().includes(term) ||
+                (projectsById[r.projectId]?.name || '').toLowerCase().includes(term)
+            )
+            .slice(0, 5)
+            .map((r) => ({
+              key: 'r' + r.id,
+              type: 'release',
+              id: r.id,
+              label: `v${r.version} · ${projectsById[r.projectId]?.name || ''}`,
+              sub: `${r.platform} release`,
+            })),
+          ...bugs
+            .filter((b) => b.title.toLowerCase().includes(term))
+            .slice(0, 5)
+            .map((b) => ({ key: 'b' + b.id, type: 'bug', id: b.releaseId, label: b.title, sub: 'Bug' })),
+          ...projects
+            .filter((p) => p.name.toLowerCase().includes(term))
+            .slice(0, 4)
+            .map((p) => ({ key: 'p' + p.id, type: 'project', id: p.id, label: p.name, sub: 'Project' })),
+        ]
+      : [];
+
+  function pick(r) {
+    setQ('');
+    setFocused(false);
+    if (r.type === 'project') onNavigate('projects');
+    else onOpenRelease(r.id);
+  }
+
+  return (
+    <div style={{ position: 'relative', width: '100%', maxWidth: 440 }}>
+      <span
+        style={{
+          position: 'absolute',
+          left: 11,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          color: 'var(--color-text-tertiary)',
+          pointerEvents: 'none',
+        }}
+      >
+        <IconSearch size={15} />
+      </span>
+      <input
+        value={q}
+        placeholder="Search releases, bugs, projects…"
+        onChange={(e) => setQ(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+        style={{ ...inputStyle, paddingLeft: 34, height: 36 }}
+      />
+      {focused && results.length > 0 && (
+        <div
+          style={{
+            ...card,
+            position: 'absolute',
+            top: 42,
+            left: 0,
+            right: 0,
+            zIndex: 40,
+            padding: 4,
+            maxHeight: 360,
+            overflowY: 'auto',
+            boxShadow: 'var(--shadow-md)',
+          }}
+        >
+          {results.map((r) => (
+            <div
+              key={r.key}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(r);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 9,
+                padding: '8px 10px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 13,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-secondary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ color: 'var(--color-text-tertiary)', display: 'inline-flex' }}>
+                {r.type === 'bug' ? (
+                  <IconBug size={15} />
+                ) : r.type === 'project' ? (
+                  <IconFolder size={15} />
+                ) : (
+                  <IconUpload size={15} />
+                )}
+              </span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {r.label}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{r.sub}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1432,6 +2474,50 @@ function FilterBar({
 /* Release card                                                       */
 /* ================================================================== */
 
+function statusSince(release) {
+  return release.statusChangedAt || release.createdAt || release.date;
+}
+
+// small amber/red SLA dot; renders nothing when within SLA
+function SlaBadge({ level, title }) {
+  if (!level) return null;
+  return (
+    <span
+      title={title}
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+        background: SLA_COLORS[level],
+        boxShadow: level === 'over' ? `0 0 0 3px ${SLA_COLORS.over}22` : 'none',
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function StatusAge({ release }) {
+  const since = statusSince(release);
+  const level = slaLevel(release.status, since);
+  const color = level ? SLA_COLORS[level] : 'var(--color-text-tertiary)';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color }}>
+      <SlaBadge
+        level={level}
+        title={
+          level === 'over'
+            ? 'Past SLA — needs attention'
+            : level === 'warn'
+            ? 'Approaching SLA'
+            : ''
+        }
+      />
+      {humanizeSince(since)} in {STATUSES[release.status]?.label || release.status}
+    </span>
+  );
+}
+
 function EnvBadge({ environment }) {
   const env = environment || 'Production';
   const color = env === 'Staging' ? 'var(--warning)' : 'var(--success)';
@@ -1478,6 +2564,7 @@ function ReleaseCard({ release, project, openBugs, assignedName, onClick }) {
           v{release.version}
         </span>
         <StatusBadge status={release.status} />
+        <StatusAge release={release} />
         {project && (
           <span
             style={{
@@ -1650,6 +2737,7 @@ function Sidebar({
   releases,
   teamName,
   openBugTotal,
+  disputedTotal,
   projectFilter,
   platformFilter,
   onSelect,
@@ -1662,6 +2750,7 @@ function Sidebar({
   const shown = projects.filter((p) =>
     p.name.toLowerCase().includes(q.trim().toLowerCase())
   );
+  const atRisk = releases.filter((r) => slaLevel(r.status, statusSince(r))).length;
   const stat = (label, value, color) => (
     <div
       style={{
@@ -1766,6 +2855,8 @@ function Sidebar({
         {stat('Releases', releases.length)}
         {stat('Projects', projects.length)}
         {stat('Open bugs', openBugTotal, openBugTotal ? '#dc2626' : undefined)}
+        {stat('Needs clarification', disputedTotal, disputedTotal ? '#7c3aed' : undefined)}
+        {stat('Needs attention', atRisk, atRisk ? '#dc2626' : undefined)}
       </div>
     </div>
   );
@@ -1959,6 +3050,8 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
     version: '',
     releaseType: RELEASE_TYPES_BY_PLATFORM[initPlatform][0],
     environment: 'Production',
+    component: 'Web Application',
+    componentOther: '',
     linkUrl: '',
     releaseNotes: '',
   });
@@ -1995,15 +3088,24 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
     }));
   }
 
+  const isWeb = form.platform === 'Web';
+  const componentBad =
+    isWeb && form.component === 'Other' && !form.componentOther.trim();
   const invalid =
     !form.projectId ||
     !form.version.trim() ||
     !form.releaseNotes.trim() ||
+    componentBad ||
     !!linkErr;
 
   function submit() {
     if (invalid) return;
-    onSubmit(form);
+    const component = isWeb
+      ? form.component === 'Other'
+        ? form.componentOther.trim()
+        : form.component
+      : '';
+    onSubmit({ ...form, component });
   }
 
   if (projects.length === 0) {
@@ -2109,6 +3211,26 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
         </select>
       </Field>
 
+      {isWeb && (
+        <Field label="Component">
+          <select style={inputStyle} value={form.component} onChange={(e) => set('component', e.target.value)}>
+            {RELEASE_COMPONENTS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          {form.component === 'Other' && (
+            <input
+              style={{ ...inputStyle, marginTop: 8 }}
+              value={form.componentOther}
+              placeholder="Custom component name"
+              onChange={(e) => set('componentOther', e.target.value)}
+            />
+          )}
+        </Field>
+      )}
+
       <Field label={linkLabel}>
         <input
           style={{
@@ -2161,6 +3283,107 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
   );
 }
 
+function EditReleaseModal({ release, project, isSubmitting, onClose, onSave }) {
+  const allowedTypes = RELEASE_TYPES_BY_PLATFORM[release.platform] || RELEASE_TYPE_ORDER;
+  const [form, setForm] = useState({
+    version: release.version,
+    environment: release.environment || 'Production',
+    releaseType: release.releaseType,
+    linkUrl: release.linkUrl || '',
+    releaseNotes: release.releaseNotes || '',
+  });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const linkErr = linkIssue(form.linkUrl);
+  const invalid = !form.version.trim() || !form.releaseNotes.trim() || !!linkErr;
+  const linkLabel =
+    form.releaseType === 'apk'
+      ? 'APK download link'
+      : form.releaseType === 'testflight'
+      ? 'TestFlight link'
+      : 'Web link';
+
+  function save() {
+    if (invalid) return;
+    onSave({
+      version: form.version.trim(),
+      environment: form.environment,
+      release_type: form.releaseType,
+      link_url: form.linkUrl.trim(),
+      release_notes: form.releaseNotes.trim(),
+    });
+  }
+
+  return (
+    <ModalShell onClose={onClose} title="Edit release">
+      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
+        {project ? project.name : 'Project'} · {release.platform} · v{release.version}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <Field label="Version">
+            <input style={inputStyle} value={form.version} onChange={(e) => set('version', e.target.value)} />
+          </Field>
+        </div>
+        <div style={{ flex: 1 }}>
+          <Field label="Environment">
+            <select style={inputStyle} value={form.environment} onChange={(e) => set('environment', e.target.value)}>
+              {ENVIRONMENTS.map((env) => (
+                <option key={env} value={env}>
+                  {env}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </div>
+
+      <Field label="Release type">
+        <select style={inputStyle} value={form.releaseType} onChange={(e) => set('releaseType', e.target.value)}>
+          {allowedTypes.map((t) => (
+            <option key={t} value={t}>
+              {RELEASE_TYPES[t].label}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label={linkLabel}>
+        <input
+          style={{
+            ...inputStyle,
+            borderColor: form.linkUrl && linkErr ? '#dc2626' : 'var(--color-border-tertiary)',
+          }}
+          value={form.linkUrl}
+          placeholder="https://…"
+          onChange={(e) => set('linkUrl', e.target.value)}
+        />
+        {form.linkUrl && linkErr && (
+          <div style={{ fontSize: 11, marginTop: 5, color: '#dc2626' }}>{linkErr}</div>
+        )}
+      </Field>
+
+      <Field label="Release notes">
+        <textarea
+          style={{ ...inputStyle, resize: 'vertical' }}
+          rows={4}
+          value={form.releaseNotes}
+          onChange={(e) => set('releaseNotes', e.target.value)}
+        />
+      </Field>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button style={ghostButton} onClick={onClose}>
+          Cancel
+        </button>
+        <button style={primaryButton(invalid || isSubmitting)} disabled={invalid || isSubmitting} onClick={save}>
+          {isSubmitting ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 /* ================================================================== */
 /* Detail modal (tabs: Details / Bugs / Comments / Checklist)         */
 /* ================================================================== */
@@ -2181,8 +3404,10 @@ function DetailModal({
   onSaveNote,
   onAssignQa,
   onDelete,
+  onEdit,
   onAddBug,
   onBugStatus,
+  onBugResolve,
   onDeleteBug,
   onAddComment,
   onDeleteComment,
@@ -2197,7 +3422,13 @@ function DetailModal({
     isManager ||
     (user.role === 'QA' &&
       (!release.assignedQa || release.assignedQa === user.id));
-  const canDelete = isManager || release.submittedBy === user.name;
+  // developers may edit/delete their own release only within the 8h window
+  const isOwner =
+    release.submittedById === user.id || release.submittedBy === user.name;
+  const ownerWindow = isOwner && withinEditWindow(release);
+  const canEdit = isManager || ownerWindow;
+  const canDelete = isManager || ownerWindow;
+  const ownerLocked = isOwner && !isManager && !withinEditWindow(release);
 
   const loadChecks = useCallback(async () => {
     try {
@@ -2312,6 +3543,8 @@ function DetailModal({
           isQA={isQA}
           canDoQA={canDoQA}
           canDelete={canDelete}
+          canEdit={canEdit}
+          ownerLocked={ownerLocked}
           isAdmin={isManager}
           qaList={qaList}
           profilesById={profilesById}
@@ -2320,6 +3553,7 @@ function DetailModal({
           onSaveNote={() => onSaveNote(release, note)}
           onAssignQa={(id) => onAssignQa(release, id)}
           onDelete={() => onDelete(release)}
+          onEdit={() => onEdit(release)}
         />
       )}
 
@@ -2335,6 +3569,7 @@ function DetailModal({
           isSubmitting={isSubmitting}
           onAddBug={onAddBug}
           onBugStatus={onBugStatus}
+          onBugResolve={onBugResolve}
           onDeleteBug={onDeleteBug}
         />
       )}
@@ -2374,6 +3609,8 @@ function DetailsTab({
   isQA,
   canDoQA,
   canDelete,
+  canEdit,
+  ownerLocked,
   isAdmin,
   qaList,
   profilesById,
@@ -2382,6 +3619,7 @@ function DetailsTab({
   onSaveNote,
   onAssignQa,
   onDelete,
+  onEdit,
 }) {
   const assigned = release.assignedQa ? profilesById[release.assignedQa] : null;
   const soleQa = qaList.length === 1 ? qaList[0] : null;
@@ -2416,9 +3654,19 @@ function DetailsTab({
       >
         <Info label="Platform" value={release.platform} />
         <Info label="Environment" value={release.environment || 'Production'} />
+        {release.component && <Info label="Component" value={release.component} />}
         <Info label="Date" value={release.date} />
         <Info label="Submitted by" value={release.submittedBy} />
         <Info label="Assigned QA" value={assigned ? assigned.name : '—'} />
+        <Info
+          label="Time in status"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <SlaBadge level={slaLevel(release.status, statusSince(release))} />
+              {humanizeSince(statusSince(release))} in {STATUSES[release.status]?.label}
+            </span>
+          }
+        />
       </div>
 
       {/* artifact */}
@@ -2596,21 +3844,38 @@ function DetailsTab({
         </div>
       )}
 
-      {canDelete && (
+      {(canEdit || canDelete || ownerLocked) && (
         <div
           style={{
             borderTop: '0.5px solid var(--color-border-primary)',
             paddingTop: 14,
             marginTop: 14,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
           }}
         >
-          <button
-            disabled={isSubmitting}
-            onClick={onDelete}
-            style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644' }}
-          >
-            Delete release
-          </button>
+          {canEdit && (
+            <button style={ghostButton} disabled={isSubmitting} onClick={onEdit}>
+              Edit release
+            </button>
+          )}
+          {canDelete && (
+            <button
+              disabled={isSubmitting}
+              onClick={onDelete}
+              style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644' }}
+            >
+              Delete release
+            </button>
+          )}
+          {ownerLocked && (
+            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+              Editing closed — releases can only be changed within{' '}
+              {EDIT_WINDOW_HOURS}h of submission.
+            </span>
+          )}
         </div>
       )}
     </>
@@ -2630,13 +3895,25 @@ function BugsTab({
   isSubmitting,
   onAddBug,
   onBugStatus,
+  onBugResolve,
   onDeleteBug,
 }) {
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', severity: 'major' });
+  const [form, setForm] = useState({
+    title: '',
+    description: '',
+    severity: 'major',
+    feature: '',
+    tags: [],
+  });
   const [file, setFile] = useState(null);
   const [commentCounts, setCommentCounts] = useState({});
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const toggleTag = (t) =>
+    setForm((f) => ({
+      ...f,
+      tags: f.tags.includes(t) ? f.tags.filter((x) => x !== t) : [...f.tags, t],
+    }));
 
   const isDev = user.role === 'Developer' || user.role === 'Admin';
   const invalid = !form.title.trim();
@@ -2667,7 +3944,7 @@ function BugsTab({
   function submit() {
     if (invalid) return;
     onAddBug(release, form, file);
-    setForm({ title: '', description: '', severity: 'major' });
+    setForm({ title: '', description: '', severity: 'major', feature: '', tags: [] });
     setFile(null);
     setShow(false);
   }
@@ -2705,18 +3982,57 @@ function BugsTab({
                   onChange={(e) => set('description', e.target.value)}
                 />
               </Field>
-              <Field label="Severity">
-                <select
-                  style={inputStyle}
-                  value={form.severity}
-                  onChange={(e) => set('severity', e.target.value)}
-                >
-                  {SEVERITY_ORDER.map((s) => (
-                    <option key={s} value={s}>
-                      {SEVERITIES[s].label}
-                    </option>
-                  ))}
-                </select>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Severity">
+                    <select style={inputStyle} value={form.severity} onChange={(e) => set('severity', e.target.value)}>
+                      {SEVERITY_ORDER.map((s) => (
+                        <option key={s} value={s}>
+                          {SEVERITIES[s].label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="Feature / Epic">
+                    <select style={inputStyle} value={form.feature} onChange={(e) => set('feature', e.target.value)}>
+                      <option value="">— none —</option>
+                      {BUG_FEATURES.map((ft) => (
+                        <option key={ft} value={ft}>
+                          {ft}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              </div>
+              <Field label="Component tags">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {BUG_TAGS.map((t) => {
+                    const on = form.tags.includes(t);
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => toggleTag(t)}
+                        style={{
+                          padding: '4px 9px',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          borderRadius: 999,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          border: `1px solid ${on ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+                          background: on ? 'var(--brand-soft)' : 'var(--color-background-primary)',
+                          color: on ? 'var(--brand)' : 'var(--color-text-secondary)',
+                        }}
+                      >
+                        {t}
+                      </button>
+                    );
+                  })}
+                </div>
               </Field>
               <Field label="Screenshot (optional)">
                 <input
@@ -2748,27 +4064,92 @@ function BugsTab({
           No bugs reported.
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {bugs.map((bug) => (
-            <BugRow
-              key={bug.id}
-              bug={bug}
-              user={user}
-              showToast={showToast}
-              taggable={taggable}
-              commentCount={commentCounts[bug.id] || 0}
-              onCommentsChanged={refreshCounts}
-              isDev={isDev}
-              isQA={isQA}
-              canDelete={user.role === 'Admin' || bug.createdById === user.id}
-              isSubmitting={isSubmitting}
-              onStatus={(st) => onBugStatus(release, bug, st)}
-              onDelete={() => onDeleteBug(bug)}
-            />
-          ))}
-        </div>
+        <>
+          <FeatureSummary bugs={bugs} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {bugs.map((bug) => (
+              <BugRow
+                key={bug.id}
+                bug={bug}
+                user={user}
+                showToast={showToast}
+                taggable={taggable}
+                commentCount={commentCounts[bug.id] || 0}
+                onCommentsChanged={refreshCounts}
+                isDev={isDev}
+                isQA={isQA}
+                canDelete={user.role === 'Admin' || bug.createdById === user.id}
+                isSubmitting={isSubmitting}
+                onStatus={(st) => onBugStatus(release, bug, st)}
+                onResolve={(res) => onBugResolve(release, bug, res)}
+                onDelete={() => onDeleteBug(bug)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </>
+  );
+}
+
+function FeatureSummary({ bugs }) {
+  const groups = {};
+  bugs.forEach((b) => {
+    const key = b.feature || 'Unassigned';
+    if (!groups[key]) groups[key] = { total: 0, resolved: 0 };
+    groups[key].total += 1;
+    if (b.status === 'verified') groups[key].resolved += 1;
+  });
+  const entries = Object.entries(groups).sort(
+    (a, b) => b[1].total - b[1].resolved - (a[1].total - a[1].resolved)
+  );
+  if (entries.length <= 1 && entries[0]?.[0] === 'Unassigned') return null;
+  return (
+    <div style={{ ...card, padding: 12, marginBottom: 12 }}>
+      <div style={{ ...sideHead, marginBottom: 8 }}>Feature health</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {entries.map(([feat, g]) => {
+          const open = g.total - g.resolved;
+          return (
+            <div key={feat} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, flex: '0 0 130px' }}>{feat}</span>
+              <div style={{ flex: 1, height: 6, borderRadius: 999, background: 'var(--color-background-secondary)' }}>
+                <div
+                  style={{
+                    width: `${(g.resolved / g.total) * 100}%`,
+                    height: '100%',
+                    borderRadius: 999,
+                    background: 'var(--success)',
+                  }}
+                />
+              </div>
+              <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', flex: '0 0 auto' }}>
+                {g.total} bug{g.total === 1 ? '' : 's'} · {g.resolved} resolved
+                {open > 0 && <span style={{ color: 'var(--danger)', fontWeight: 600 }}> · {open} open</span>}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TagChip({ label, tone }) {
+  return (
+    <span
+      style={{
+        fontSize: 10.5,
+        fontWeight: 600,
+        padding: '2px 8px',
+        borderRadius: 999,
+        color: tone === 'brand' ? 'var(--brand)' : 'var(--color-text-secondary)',
+        background: tone === 'brand' ? 'var(--brand-soft)' : 'var(--color-background-secondary)',
+        border: '1px solid var(--color-border-tertiary)',
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -2784,6 +4165,7 @@ function BugRow({
   canDelete,
   isSubmitting,
   onStatus,
+  onResolve,
   onDelete,
 }) {
   const [showThread, setShowThread] = useState(false);
@@ -2791,21 +4173,53 @@ function BugRow({
   const actions = [];
   if (isDev) {
     if (bug.status === 'open') actions.push(['in_progress', 'Start']);
-    if (bug.status === 'in_progress' || bug.status === 'open')
+    if (['in_progress', 'open', 'disputed'].includes(bug.status))
       actions.push(['fixed', 'Mark fixed']);
   }
   if (isQA) {
     if (bug.status === 'fixed') actions.push(['verified', 'Verify']);
     if (bug.status !== 'open') actions.push(['open', 'Reopen']);
   }
+  // either side can flag for clarification
+  if (bug.status !== 'verified' && bug.status !== 'disputed')
+    actions.push(['disputed', 'Needs clarification']);
 
   return (
     <div style={{ ...card, padding: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{bug.title}</span>
+        <SlaBadge
+          level={bugSlaLevel(bug.status, bug.createdAt)}
+          title="This bug is aging — resolve or escalate"
+        />
         <SeverityBadge severity={bug.severity} />
         <BugStatusBadge status={bug.status} />
       </div>
+
+      {(bug.feature || bug.tags.length > 0 || (bug.resolution && bug.resolution !== 'Fixed')) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+          {bug.feature && <TagChip label={bug.feature} tone="brand" />}
+          {bug.tags.map((t) => (
+            <TagChip key={t} label={t} />
+          ))}
+          {bug.resolution && bug.resolution !== 'Fixed' && (
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 700,
+                padding: '2px 8px',
+                borderRadius: 999,
+                color: 'var(--warning)',
+                background: 'var(--color-background-secondary)',
+                border: '1px solid var(--color-border-tertiary)',
+              }}
+            >
+              {bug.resolution}
+            </span>
+          )}
+        </div>
+      )}
+
       {bug.description && (
         <div
           style={{
@@ -2845,8 +4259,8 @@ function BugRow({
           />
         </a>
       )}
-      {(actions.length > 0 || canDelete) && (
-        <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+      {(actions.length > 0 || canDelete || (isQA && bug.status !== 'verified')) && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           {actions.map(([st, label]) => (
             <button
               key={st}
@@ -2863,6 +4277,22 @@ function BugRow({
               {label}
             </button>
           ))}
+          {isQA && bug.status !== 'verified' && (
+            <select
+              value=""
+              disabled={isSubmitting}
+              onChange={(e) => e.target.value && onResolve(e.target.value)}
+              style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}
+              title="Close without a code fix"
+            >
+              <option value="">Close as…</option>
+              {BUG_RESOLUTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          )}
           {canDelete && (
             <button
               disabled={isSubmitting}
@@ -4421,7 +5851,85 @@ function ProjectRow({
               </button>
             </div>
           </div>
+
+          {isAdmin && <ClientLinkSection projectId={project.id} />}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ClientLinkSection({ projectId }) {
+  const [link, setLink] = useState(undefined); // undefined=loading, null=none
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .fetchClientLink(projectId)
+      .then((l) => !cancelled && setLink(l || null))
+      .catch(() => !cancelled && setLink(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const url = link ? `${window.location.origin}/?client=${link.token}` : '';
+
+  async function create() {
+    setBusy(true);
+    try {
+      setLink(await api.createClientLink(projectId));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function toggle() {
+    if (!link) return;
+    const v = !link.show_open_bugs;
+    await api.updateClientLink(link.id, { show_open_bugs: v });
+    setLink({ ...link, show_open_bugs: v });
+  }
+  async function revoke() {
+    if (!link || !window.confirm('Revoke this client link? The shared URL will stop working.')) return;
+    await api.deleteClientLink(link.id);
+    setLink(null);
+  }
+  function copy() {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--color-border-primary)' }}>
+      <div style={{ ...labelStyle, marginBottom: 8 }}>Client portal link</div>
+      {link === undefined ? (
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+      ) : !link ? (
+        <button style={ghostButton} disabled={busy} onClick={create}>
+          {busy ? 'Creating…' : 'Create client link'}
+        </button>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input readOnly value={url} style={{ ...inputStyle, flex: 1, fontSize: 11.5 }} onFocus={(e) => e.target.select()} />
+            <button style={ghostButton} onClick={copy}>
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12.5, cursor: 'pointer' }}>
+            <input type="checkbox" checked={link.show_open_bugs} onChange={toggle} />
+            Show open bug count to the client
+          </label>
+          <button
+            onClick={revoke}
+            style={{ ...ghostButton, marginTop: 10, padding: '5px 10px', fontSize: 12, color: '#dc2626', borderColor: '#dc262644' }}
+          >
+            Revoke link
+          </button>
+        </>
       )}
     </div>
   );
@@ -4431,97 +5939,691 @@ function ProjectRow({
 /* Analytics                                                          */
 /* ================================================================== */
 
-function AnalyticsModal({ projects, releases, bugs, onClose, onOpenHistory }) {
-  const bugsByRelease = useMemo(() => {
+const DAY = 86_400_000;
+function avgDaysBetween(items, startKey, endKey) {
+  const vals = items
+    .map((r) => {
+      const s = r[startKey] ? new Date(r[startKey]).getTime() : null;
+      const e = r[endKey] ? new Date(r[endKey]).getTime() : null;
+      return s && e && e >= s ? e - s : null;
+    })
+    .filter((v) => v != null);
+  if (!vals.length) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length / DAY;
+}
+
+function AnSection({ title, children }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ ...sideHead, marginBottom: 10 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub, color }) {
+  return (
+    <div style={{ ...card, padding: 12, flex: '1 1 120px', minWidth: 110 }}>
+      <div
+        style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 22,
+          fontWeight: 700,
+          color: color || 'var(--color-text-primary)',
+        }}
+      >
+        {value}
+      </div>
+      <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+        {label}
+      </div>
+      {sub && <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function DistBars({ items }) {
+  const max = Math.max(1, ...items.map((i) => i.n));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {items.map((i) => (
+        <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, flex: '0 0 110px' }}>{i.label}</span>
+          <div style={{ flex: 1, height: 8, borderRadius: 999, background: 'var(--color-background-secondary)' }}>
+            <div style={{ width: `${(i.n / max) * 100}%`, height: '100%', borderRadius: 999, background: i.color }} />
+          </div>
+          <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-secondary)', flex: '0 0 28px', textAlign: 'right' }}>
+            {i.n}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, embedded, onClose, onOpenHistory }) {
+  const projectsById = useMemo(() => {
     const m = {};
-    bugs.forEach((b) => {
-      m[b.releaseId] = (m[b.releaseId] || 0) + 1;
-    });
+    projects.forEach((p) => (m[p.id] = p));
     return m;
-  }, [bugs]);
+  }, [projects]);
+  const profilesById = useMemo(() => {
+    const m = {};
+    profiles.forEach((p) => (m[p.id] = p));
+    return m;
+  }, [profiles]);
 
-  const rows = projects.map((p) => {
-    const rel = releases.filter((r) => r.projectId === p.id);
-    const bugCount = rel.reduce((sum, r) => sum + (bugsByRelease[r.id] || 0), 0);
-
-    const completed = rel.filter((r) => r.status === 'qa_complete' && r.qaCompletedAt);
-    let avgDays = null;
-    if (completed.length) {
-      const total = completed.reduce((sum, r) => {
-        const start = new Date(r.date).getTime();
-        const end = new Date(r.qaCompletedAt).getTime();
-        return sum + Math.max(0, end - start);
-      }, 0);
-      avgDays = total / completed.length / (1000 * 60 * 60 * 24);
-    }
-
-    const repeats = rel.filter((r) => r.status === 'bug_repeat').length;
-    const repeatRate = rel.length ? (repeats / rel.length) * 100 : 0;
-
-    return { project: p, releaseCount: rel.length, bugCount, avgDays, repeatRate };
+  const [f, setF] = useState({
+    team: 'all',
+    project: 'all',
+    platform: 'all',
+    environment: 'all',
+    developer: 'all',
+    qa: 'all',
+    version: '',
+    from: '',
+    to: '',
   });
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const reset = () =>
+    setF({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
 
+  const relF = releases.filter((r) => {
+    const proj = projectsById[r.projectId];
+    if (f.team !== 'all' && (proj?.teamId || '') !== f.team) return false;
+    if (f.project !== 'all' && r.projectId !== f.project) return false;
+    if (f.platform !== 'all' && r.platform !== f.platform) return false;
+    if (f.environment !== 'all' && (r.environment || 'Production') !== f.environment) return false;
+    if (f.developer !== 'all' && r.submittedById !== f.developer) return false;
+    if (f.qa !== 'all' && r.assignedQa !== f.qa) return false;
+    if (f.version.trim() && !r.version.toLowerCase().includes(f.version.trim().toLowerCase())) return false;
+    if (f.from && r.date < f.from) return false;
+    if (f.to && r.date > f.to) return false;
+    return true;
+  });
+  const relIds = new Set(relF.map((r) => r.id));
+  const bugsF = bugs.filter((b) => relIds.has(b.releaseId));
+
+  // ---- QA quality ----
+  const submitted = relF.length;
+  const approved = relF.filter((r) => r.status === 'qa_complete').length;
+  const rejected = relF.filter((r) => r.status === 'bug_repeat').length;
+  const decided = approved + rejected;
+  const passRate = decided ? Math.round((approved / decided) * 100) : 0;
+  const rejRate = decided ? Math.round((rejected / decided) * 100) : 0;
+
+  // ---- velocity ----
+  const completed = relF.filter((r) => r.status === 'qa_complete' && r.qaCompletedAt);
+  const cycleDays = avgDaysBetween(completed, 'createdAt', 'qaCompletedAt');
+  const toAssign = avgDaysBetween(
+    relF.filter((r) => r.qaAssignedAt),
+    'createdAt',
+    'qaAssignedAt'
+  );
+  const assignToDone = avgDaysBetween(
+    completed.filter((r) => r.qaAssignedAt),
+    'qaAssignedAt',
+    'qaCompletedAt'
+  );
+
+  // completed per month (last 6)
+  const months = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    months.push({ key, label: d.toLocaleString(undefined, { month: 'short' }), n: 0 });
+  }
+  completed.forEach((r) => {
+    const k = (r.qaCompletedAt || '').slice(0, 7);
+    const m = months.find((x) => x.key === k);
+    if (m) m.n += 1;
+  });
+  const maxMonth = Math.max(1, ...months.map((m) => m.n));
+
+  // ---- defect leakage ----
+  const prodBugs = bugsF.filter((b) => (relById(b.releaseId)?.environment || 'Production') === 'Production').length;
+  const stagingBugs = bugsF.length - prodBugs;
+  const leakage = bugsF.length ? Math.round((prodBugs / bugsF.length) * 100) : 0;
+  function relById(id) {
+    return relF.find((r) => r.id === id);
+  }
+
+  // ---- workload ----
+  const wlMembers = profiles
+    .filter((p) => p.role !== 'Admin' && (f.team === 'all' || p.teamId === f.team))
+    .map((m) => {
+      const mine = new Set(relF.filter((r) => r.submittedById === m.id).map((r) => r.id));
+      return {
+        m,
+        activeReleases: relF.filter((r) => r.submittedById === m.id && r.status !== 'qa_complete').length,
+        pendingReviews: relF.filter(
+          (r) => r.assignedQa === m.id && (r.status === 'pending' || r.status === 'in_qa')
+        ).length,
+        openBugs: bugsF.filter(
+          (b) => (b.createdById === m.id || mine.has(b.releaseId)) && b.status !== 'verified'
+        ).length,
+      };
+    })
+    .filter((w) => w.activeReleases || w.pendingReviews || w.openBugs)
+    .sort((a, b) => b.pendingReviews + b.activeReleases - (a.pendingReviews + a.activeReleases));
+
+  // ---- bottlenecks ----
+  const bottlenecks = [];
+  const overSla = relF.filter((r) => slaLevel(r.status, statusSince(r)) === 'over');
+  if (overSla.length)
+    bottlenecks.push({ level: 'over', text: `${overSla.length} release(s) past their SLA (Pending/In QA).` });
+  const reviewerLoad = {};
+  relF.forEach((r) => {
+    if (r.assignedQa && (r.status === 'pending' || r.status === 'in_qa'))
+      reviewerLoad[r.assignedQa] = (reviewerLoad[r.assignedQa] || 0) + 1;
+  });
+  Object.entries(reviewerLoad)
+    .filter(([, n]) => n > 3)
+    .forEach(([id, n]) =>
+      bottlenecks.push({
+        level: 'warn',
+        text: `${profilesById[id]?.name || 'A tester'} has ${n} active reviews — possibly overloaded.`,
+      })
+    );
+  const qaCountByTeam = {};
+  profiles.forEach((p) => {
+    if (p.role === 'QA') qaCountByTeam[p.teamId] = (qaCountByTeam[p.teamId] || 0) + 1;
+  });
+  (f.team === 'all' ? teams : teams.filter((t) => t.id === f.team)).forEach((t) => {
+    const waiting = relF.some(
+      (r) => projectsById[r.projectId]?.teamId === t.id && (r.status === 'pending' || r.status === 'in_qa')
+    );
+    if (waiting && !qaCountByTeam[t.id])
+      bottlenecks.push({ level: 'over', text: `${t.name} has releases waiting but no QA testers.` });
+  });
+  const disputedBugs = bugsF.filter((b) => b.status === 'disputed');
+  if (disputedBugs.length) {
+    const rels = new Set(disputedBugs.map((b) => b.releaseId)).size;
+    bottlenecks.push({
+      level: 'warn',
+      text: `${disputedBugs.length} bug(s) need clarification across ${rels} release(s) — blocked communication.`,
+    });
+  }
+
+  // ---- QA quality (resolution outcomes) ----
+  const resCounts = {};
+  BUG_RESOLUTIONS.forEach((r) => (resCounts[r] = 0));
+  bugsF.forEach((b) => {
+    if (b.resolution && resCounts[b.resolution] !== undefined) resCounts[b.resolution] += 1;
+  });
+  const totalBugs = bugsF.length;
+  const invalidTotal = BUG_RESOLUTIONS.reduce((s, r) => s + resCounts[r], 0);
+  const invalidPct = totalBugs ? Math.round((invalidTotal / totalBugs) * 100) : 0;
+
+  // ---- distributions (charts) ----
+  const sevDist = SEVERITY_ORDER.map((s) => ({
+    key: s,
+    label: SEVERITIES[s].label,
+    color: SEVERITIES[s].color,
+    n: bugsF.filter((b) => b.severity === s).length,
+  }));
+  const statusDist = BUG_STATUS_ORDER.map((s) => ({
+    key: s,
+    label: BUG_STATUSES[s].label,
+    color: BUG_STATUSES[s].color,
+    n: bugsF.filter((b) => b.status === s).length,
+  }));
+  const closedBugs = bugsF.filter((b) => b.status === 'verified').length;
+  const openBugsCount = bugsF.length - closedBugs;
+
+  // ---- developer & QA performance ----
+  const relSubmitter = {};
+  relF.forEach((r) => (relSubmitter[r.id] = r.submittedById));
+  const devPerf = profiles
+    .filter((p) => p.role !== 'QA' && (f.team === 'all' || p.teamId === f.team))
+    .map((d) => {
+      const myRel = relF.filter((r) => r.submittedById === d.id);
+      const myRelIds = new Set(myRel.map((r) => r.id));
+      const onMyRel = bugsF.filter((b) => myRelIds.has(b.releaseId));
+      return {
+        id: d.id,
+        name: d.name,
+        submitted: myRel.length,
+        fixed: onMyRel.filter((b) => b.status === 'fixed' || b.status === 'verified').length,
+        active: myRel.filter((r) => r.status !== 'qa_complete').length,
+        openBugs: onMyRel.filter((b) => b.status !== 'verified').length,
+      };
+    })
+    .filter((d) => d.submitted || d.openBugs)
+    .sort((a, b) => b.submitted - a.submitted);
+
+  const qaPerf = profiles
+    .filter((p) => p.role === 'QA' && (f.team === 'all' || p.teamId === f.team))
+    .map((q) => {
+      const assigned = relF.filter((r) => r.assignedQa === q.id);
+      const appr = assigned.filter((r) => r.status === 'qa_complete').length;
+      const rej = assigned.filter((r) => r.status === 'bug_repeat').length;
+      const dec = appr + rej;
+      return {
+        id: q.id,
+        name: q.name,
+        tested: assigned.length,
+        reported: bugsF.filter((b) => b.createdById === q.id).length,
+        approveRate: dec ? Math.round((appr / dec) * 100) : 0,
+        rejectRate: dec ? Math.round((rej / dec) * 100) : 0,
+        active: assigned.filter((r) => r.status === 'pending' || r.status === 'in_qa').length,
+      };
+    })
+    .filter((q) => q.tested || q.reported)
+    .sort((a, b) => b.tested - a.tested);
+
+  // ---- per-project table ----
+  const rows = projects
+    .filter((p) => f.team === 'all' || p.teamId === f.team)
+    .map((p) => {
+      const rel = relF.filter((r) => r.projectId === p.id);
+      const bugCount = bugsF.filter((b) => relById(b.releaseId)?.projectId === p.id).length;
+      const avg = avgDaysBetween(
+        rel.filter((r) => r.status === 'qa_complete' && r.qaCompletedAt),
+        'createdAt',
+        'qaCompletedAt'
+      );
+      const reps = rel.filter((r) => r.status === 'bug_repeat').length;
+      return { project: p, n: rel.length, bugCount, avg, rejRate: rel.length ? Math.round((reps / rel.length) * 100) : 0 };
+    })
+    .filter((r) => r.n > 0);
+
+  const fSel = { ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 };
+  const devs = profiles.filter((p) => p.role !== 'QA');
+  const qas = profiles.filter((p) => p.role === 'QA');
   const th = {
     textAlign: 'left',
     fontSize: 11,
-    fontWeight: 500,
+    fontWeight: 600,
     color: 'var(--color-text-secondary)',
-    padding: '8px 8px',
-    borderBottom: '0.5px solid var(--color-border-primary)',
+    padding: '7px 8px',
+    borderBottom: '1px solid var(--color-border-primary)',
   };
-  const td = { fontSize: 12, padding: '10px 8px', borderBottom: '0.5px solid var(--color-border-primary)' };
+  const td = { fontSize: 12, padding: '8px 8px', borderBottom: '1px solid var(--color-border-primary)' };
+
+  const body = (
+    <>
+      {/* filters */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
+        {isAdmin && (
+          <select style={fSel} value={f.team} onChange={(e) => set('team', e.target.value)}>
+            <option value="all">All teams</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <select style={fSel} value={f.project} onChange={(e) => set('project', e.target.value)}>
+          <option value="all">All projects</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={f.platform} onChange={(e) => set('platform', e.target.value)}>
+          <option value="all">All platforms</option>
+          {RELEASE_PLATFORMS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={f.environment} onChange={(e) => set('environment', e.target.value)}>
+          <option value="all">All environments</option>
+          {ENVIRONMENTS.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={f.developer} onChange={(e) => set('developer', e.target.value)}>
+          <option value="all">All developers</option>
+          {devs.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select style={fSel} value={f.qa} onChange={(e) => set('qa', e.target.value)}>
+          <option value="all">All QA</option>
+          {qas.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <input
+          style={{ ...fSel, width: 110 }}
+          value={f.version}
+          placeholder="Version…"
+          onChange={(e) => set('version', e.target.value)}
+        />
+        <input style={fSel} type="date" value={f.from} onChange={(e) => set('from', e.target.value)} title="From" />
+        <input style={fSel} type="date" value={f.to} onChange={(e) => set('to', e.target.value)} title="To" />
+        <button style={{ ...ghostButton, padding: '6px 12px', fontSize: 12 }} onClick={reset}>
+          Reset
+        </button>
+      </div>
+
+      {/* QA quality + velocity KPIs */}
+      <AnSection title="Release Quality">
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Kpi label="Submitted" value={submitted} />
+          <Kpi label="Approved" value={approved} sub={`${passRate}% passed QA`} color="var(--success)" />
+          <Kpi label="Sent back" value={rejected} sub={`${rejRate}% returned to dev`} color="var(--danger)" />
+          <Kpi label="Avg release time" value={cycleDays == null ? '—' : `${cycleDays.toFixed(1)}d`} sub="submit → QA done" />
+          <Kpi
+            label="Bugs after release"
+            value={`${leakage}%`}
+            sub={`${prodBugs} in production / ${stagingBugs} in QA`}
+            color={leakage >= 30 ? 'var(--danger)' : undefined}
+          />
+        </div>
+      </AnSection>
+
+      {/* cycle stages + velocity trend */}
+      <AnSection title="Release Speed">
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
+              Average stage duration (days)
+            </div>
+            {[
+              ['Submission → QA assigned', toAssign],
+              ['QA assigned → QA complete', assignToDone],
+              ['Total cycle', cycleDays],
+            ].map(([label, v]) => (
+              <div key={label} style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                  <span>{label}</span>
+                  <span className="tnum" style={{ color: 'var(--color-text-secondary)' }}>
+                    {v == null ? '—' : `${v.toFixed(1)}d`}
+                  </span>
+                </div>
+                <div style={{ height: 6, borderRadius: 999, background: 'var(--color-background-secondary)' }}>
+                  <div
+                    style={{
+                      height: '100%',
+                      borderRadius: 999,
+                      background: 'var(--brand)',
+                      width: `${Math.min(100, ((v || 0) / Math.max(0.1, cycleDays || 1)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+              Releases completed / month
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 80 }}>
+              {months.map((m) => (
+                <div key={m.key} style={{ flex: 1, textAlign: 'center' }}>
+                  <div
+                    style={{
+                      height: `${(m.n / maxMonth) * 64}px`,
+                      background: 'var(--brand)',
+                      borderRadius: 4,
+                      minHeight: 2,
+                    }}
+                    title={`${m.n} completed`}
+                  />
+                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 4 }}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </AnSection>
+
+      {/* bottlenecks */}
+      <AnSection title="Delays & Attention Needed">
+        {bottlenecks.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>
+            No bottlenecks detected for the current filters.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {bottlenecks.map((b, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 9,
+                  padding: '9px 11px',
+                  background: 'var(--color-background-secondary)',
+                  border: '1px solid var(--color-border-tertiary)',
+                  borderRadius: 8,
+                  fontSize: 12.5,
+                }}
+              >
+                <span
+                  style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0 }}
+                />
+                {b.text}
+              </div>
+            ))}
+          </div>
+        )}
+      </AnSection>
+
+      {/* QA quality insights */}
+      <AnSection title="QA Quality Insights">
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+          {BUG_RESOLUTIONS.map((r) => (
+            <Kpi
+              key={r}
+              label={r}
+              value={resCounts[r]}
+              sub={`${totalBugs ? Math.round((resCounts[r] / totalBugs) * 100) : 0}% of bugs`}
+            />
+          ))}
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          {invalidPct}% of reported bugs were closed without a code fix.
+          {invalidPct >= 30
+            ? ' A high share can signal unclear requirements or outdated specs — worth a process review rather than blaming individuals.'
+            : ''}
+        </div>
+      </AnSection>
+
+      {/* charts */}
+      <AnSection title="Bug Breakdown">
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+              By severity
+            </div>
+            <DistBars items={sevDist} />
+          </div>
+          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+              By status
+            </div>
+            <DistBars items={statusDist} />
+          </div>
+          <div style={{ ...card, padding: 14, flex: '1 1 200px' }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+              Open vs Closed
+            </div>
+            <DistBars
+              items={[
+                { key: 'open', label: 'Open', color: 'var(--danger)', n: openBugsCount },
+                { key: 'closed', label: 'Closed', color: 'var(--success)', n: closedBugs },
+              ]}
+            />
+          </div>
+        </div>
+      </AnSection>
+
+      {/* developer insights */}
+      <AnSection title="Developer Insights">
+        {devPerf.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No developer activity.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={th}>Developer</th>
+                  <th style={th}>Releases submitted</th>
+                  <th style={th}>Bugs fixed</th>
+                  <th style={th}>Active releases</th>
+                  <th style={th}>Open bugs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {devPerf.map((d) => (
+                  <tr key={d.id}>
+                    <td style={{ ...td, fontWeight: 500 }}>{d.name}</td>
+                    <td style={td}>{d.submitted}</td>
+                    <td style={td}>{d.fixed}</td>
+                    <td style={td}>{d.active}</td>
+                    <td style={{ ...td, color: d.openBugs ? 'var(--danger)' : undefined }}>{d.openBugs}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AnSection>
+
+      {/* QA insights */}
+      <AnSection title="QA Insights">
+        {qaPerf.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No QA activity.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={th}>QA engineer</th>
+                  <th style={th}>Releases tested</th>
+                  <th style={th}>Bugs reported</th>
+                  <th style={th}>Approval rate</th>
+                  <th style={th}>Rejection rate</th>
+                  <th style={th}>Active workload</th>
+                </tr>
+              </thead>
+              <tbody>
+                {qaPerf.map((q) => (
+                  <tr key={q.id}>
+                    <td style={{ ...td, fontWeight: 500 }}>{q.name}</td>
+                    <td style={td}>{q.tested}</td>
+                    <td style={td}>{q.reported}</td>
+                    <td style={{ ...td, color: 'var(--success)' }}>{q.approveRate}%</td>
+                    <td style={{ ...td, color: 'var(--danger)' }}>{q.rejectRate}%</td>
+                    <td style={{ ...td, color: q.active > 3 ? 'var(--danger)' : undefined, fontWeight: q.active > 3 ? 700 : 400 }}>
+                      {q.active}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AnSection>
+
+      {/* workload */}
+      <AnSection title="Workload by team member">
+        {wlMembers.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No active assignments.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={th}>Member</th>
+                  <th style={th}>Role</th>
+                  <th style={th}>Active releases</th>
+                  <th style={th}>Pending reviews</th>
+                  <th style={th}>Open bugs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wlMembers.map((w) => (
+                  <tr key={w.m.id}>
+                    <td style={{ ...td, fontWeight: 500 }}>{w.m.name}</td>
+                    <td style={td}>{w.m.role}</td>
+                    <td style={td}>{w.activeReleases}</td>
+                    <td style={{ ...td, color: w.pendingReviews > 3 ? 'var(--danger)' : undefined, fontWeight: w.pendingReviews > 3 ? 700 : 400 }}>
+                      {w.pendingReviews}
+                    </td>
+                    <td style={td}>{w.openBugs}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AnSection>
+
+      {/* per-project */}
+      <AnSection title="By project">
+        {rows.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No releases match the filters.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={th}>Project</th>
+                  <th style={th}>Releases</th>
+                  <th style={th}>Bugs</th>
+                  <th style={th}>Avg cycle</th>
+                  <th style={th}>Rejection</th>
+                  <th style={th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.project.id}>
+                    <td style={{ ...td, fontWeight: 500 }}>{r.project.name}</td>
+                    <td style={td}>{r.n}</td>
+                    <td style={td}>{r.bugCount}</td>
+                    <td style={td}>{r.avg == null ? '—' : `${r.avg.toFixed(1)}d`}</td>
+                    <td style={td}>{r.rejRate}%</td>
+                    <td style={td}>
+                      <button
+                        onClick={() => onOpenHistory(r.project)}
+                        style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}
+                      >
+                        History
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AnSection>
+
+      <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+        Release-speed and attention metrics use submission, QA-assigned and QA-complete timestamps recorded from now on;
+        releases created before tracking are excluded from stage averages.
+      </div>
+    </>
+  );
+
+  if (embedded)
+    return (
+      <>
+        <PageHeader title="Analytics" subtitle="Release speed, quality, workload and delays" />
+        {body}
+      </>
+    );
 
   return (
-    <ModalShell onClose={onClose} title="Dashboard analytics" maxWidth={620}>
-      {projects.length === 0 ? (
-        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          No projects yet.
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={th}>Project</th>
-                <th style={th}>Releases</th>
-                <th style={th}>Bugs</th>
-                <th style={th}>Avg QA time</th>
-                <th style={th}>Repeat rate</th>
-                <th style={th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.project.id}>
-                  <td style={{ ...td, fontWeight: 500 }}>{r.project.name}</td>
-                  <td style={td}>{r.releaseCount}</td>
-                  <td style={td}>{r.bugCount}</td>
-                  <td style={td}>
-                    {r.avgDays == null ? '—' : `${r.avgDays.toFixed(1)} d`}
-                  </td>
-                  <td style={td}>{r.repeatRate.toFixed(0)}%</td>
-                  <td style={td}>
-                    <button
-                      onClick={() => onOpenHistory(r.project)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'var(--brand)',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      History
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+    <ModalShell onClose={onClose} title="Analytics" maxWidth={860}>
+      {body}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button style={ghostButton} onClick={onClose}>
           Close
         </button>

@@ -37,6 +37,7 @@ export function mapRelease(r) {
     releaseType: r.release_type,
     platform: r.platform,
     environment: r.environment || 'Production',
+    component: r.component || '',
     fileUrl: r.file_url,
     linkUrl: r.link_url,
     submittedBy: r.submitted_by,
@@ -48,6 +49,8 @@ export function mapRelease(r) {
     status: r.status,
     qaNote: r.qa_note,
     qaCompletedAt: r.qa_completed_at,
+    statusChangedAt: r.status_changed_at,
+    qaAssignedAt: r.qa_assigned_at,
     createdAt: r.created_at,
   };
 }
@@ -61,6 +64,9 @@ export function mapBug(b) {
     severity: b.severity,
     screenshotUrl: b.screenshot_url,
     status: b.status,
+    tags: Array.isArray(b.tags) ? b.tags : [],
+    feature: b.feature || '',
+    resolution: b.resolution || '',
     createdBy: b.created_by,
     createdById: b.created_by_id,
     createdAt: b.created_at,
@@ -193,6 +199,46 @@ export async function fetchTeams() {
   return data.map(mapTeam);
 }
 
+/* ------------------------------------------------------------------ */
+/* Client share links + public read-only status                       */
+/* ------------------------------------------------------------------ */
+
+export async function fetchClientLink(projectId) {
+  const { data, error } = await supabase
+    .from('client_links')
+    .select('*')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (error) throw error;
+  return data; // { id, project_id, token, show_open_bugs } | null
+}
+
+export async function createClientLink(projectId) {
+  const { data, error } = await supabase
+    .from('client_links')
+    .insert({ project_id: projectId })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateClientLink(id, patch) {
+  const { error } = await supabase.from('client_links').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteClientLink(id) {
+  const { error } = await supabase.from('client_links').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export async function fetchPublicStatus(token) {
+  const { data, error } = await supabase.rpc('public_project_status', { p_token: token });
+  if (error) throw error;
+  return data; // null if token invalid
+}
+
 export async function createTeam(name) {
   const { error } = await supabase.rpc('admin_create_team', { p_name: name });
   if (error) throw error;
@@ -290,6 +336,11 @@ export async function createBug(payload) {
 
 export async function updateBugStatus(id, status) {
   const { error } = await supabase.from('bugs').update({ status }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function updateBug(id, patch) {
+  const { error } = await supabase.from('bugs').update(patch).eq('id', id);
   if (error) throw error;
 }
 
