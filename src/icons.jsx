@@ -142,6 +142,14 @@ export const IconLayers = (p) => (
     <path d="M2 12l10 5 10-5M2 17l10 5 10-5" />
   </I>
 );
+export const IconTree = (p) => (
+  <I {...p}>
+    <rect x="3" y="3" width="6" height="5" rx="1" />
+    <rect x="14" y="9" width="7" height="5" rx="1" />
+    <rect x="14" y="16" width="7" height="5" rx="1" />
+    <path d="M6 8v9a2 2 0 0 0 2 2h6M6 11.5h8" />
+  </I>
+);
 export const IconCog = (p) => (
   <I {...p}>
     <circle cx="12" cy="12" r="3" />

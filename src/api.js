@@ -21,6 +21,7 @@ export function mapProject(p) {
     type: p.type,
     platform: p.platform,
     teamId: p.team_id ?? null,
+    wbsEnabled: !!p.wbs_enabled,
     createdAt: p.created_at,
   };
 }
@@ -67,6 +68,7 @@ export function mapBug(b) {
     tags: Array.isArray(b.tags) ? b.tags : [],
     feature: b.feature || '',
     resolution: b.resolution || '',
+    wbsTaskId: b.wbs_task_id || null,
     createdBy: b.created_by,
     createdById: b.created_by_id,
     createdAt: b.created_at,
@@ -239,6 +241,151 @@ export async function fetchPublicStatus(token) {
   return data; // null if token invalid
 }
 
+/* ------------------------------------------------------------------ */
+/* WBS (work breakdown structure)                                     */
+/* ------------------------------------------------------------------ */
+
+export function mapWbsTask(t) {
+  return {
+    id: t.id,
+    projectId: t.project_id,
+    importKey: t.import_key,
+    platform: t.platform || null,
+    section: t.section || '',
+    type: t.type,
+    name: t.name,
+    devComments: t.dev_comments || '',
+    backendStatus: t.backend_status,
+    frontendStatus: t.frontend_status,
+    estDate: t.est_date || '',
+    position: t.position,
+  };
+}
+
+export async function fetchWbsTasks(projectId) {
+  const { data, error } = await supabase
+    .from('wbs_tasks')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('position', { ascending: true });
+  if (error) throw error;
+  return data.map(mapWbsTask);
+}
+
+// Re-importable: preserves dev progress + comments for tasks that still exist.
+export async function importWbs(projectId, parsed) {
+  const existing = await fetchWbsTasks(projectId);
+  const byKey = {};
+  existing.forEach((t) => (byKey[t.importKey] = t));
+
+  const rows = parsed.map((p) => {
+    const prev = byKey[p.import_key];
+    return {
+      project_id: projectId,
+      import_key: p.import_key,
+      platform: p.platform,
+      section: p.section,
+      type: p.type,
+      name: p.name,
+      // keep portal-owned progress + comments across re-imports
+      dev_comments: prev ? prev.devComments : p.dev_comments,
+      backend_status: prev ? prev.backendStatus : p.backend_status,
+      frontend_status: prev ? prev.frontendStatus : p.frontend_status,
+      est_date: p.est_date,
+      position: p.position,
+    };
+  });
+
+  const { error } = await supabase
+    .from('wbs_tasks')
+    .upsert(rows, { onConflict: 'project_id,import_key' });
+  if (error) throw error;
+
+  await supabase.from('projects').update({ wbs_enabled: true }).eq('id', projectId);
+  return rows.length;
+}
+
+export async function updateWbsTask(id, patch) {
+  const { error } = await supabase.from('wbs_tasks').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+// set a status on a set of tasks for a track ('backend' | 'frontend' | 'both')
+export async function setWbsTrackStatus(taskIds, track, status) {
+  if (!taskIds.length) return;
+  const patch = {};
+  if (track === 'backend' || track === 'both') patch.backend_status = status;
+  if (track === 'frontend' || track === 'both') patch.frontend_status = status;
+  const { error } = await supabase.from('wbs_tasks').update(patch).in('id', taskIds);
+  if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ */
+/* Release ↔ WBS task links                                           */
+/* ------------------------------------------------------------------ */
+
+export async function createReleaseTasks(releaseId, items) {
+  if (!items.length) return;
+  const rows = items.map((it) => ({
+    release_id: releaseId,
+    task_id: it.taskId,
+    task_name: it.taskName,
+    track: it.track,
+  }));
+  const { error } = await supabase.from('release_tasks').insert(rows);
+  if (error) throw error;
+}
+
+// open (non-verified) bug counts per WBS task, for a set of task ids
+export async function fetchOpenBugCountsByTask(taskIds) {
+  if (!taskIds || taskIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from('bugs')
+    .select('wbs_task_id, status')
+    .in('wbs_task_id', taskIds)
+    .neq('status', 'verified');
+  if (error) throw error;
+  const m = {};
+  data.forEach((b) => {
+    if (b.wbs_task_id) m[b.wbs_task_id] = (m[b.wbs_task_id] || 0) + 1;
+  });
+  return m;
+}
+
+// open (non-verified) bugs linked to a set of WBS tasks, for task detail views
+export async function fetchBugsByTaskIds(taskIds) {
+  if (!taskIds || taskIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('bugs')
+    .select('id, title, severity, status, wbs_task_id')
+    .in('wbs_task_id', taskIds)
+    .neq('status', 'verified')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data.map((b) => ({
+    id: b.id,
+    title: b.title,
+    severity: b.severity,
+    status: b.status,
+    wbsTaskId: b.wbs_task_id,
+  }));
+}
+
+export async function fetchReleaseTasks(releaseId) {
+  const { data, error } = await supabase
+    .from('release_tasks')
+    .select('*')
+    .eq('release_id', releaseId);
+  if (error) throw error;
+  return data.map((r) => ({
+    id: r.id,
+    releaseId: r.release_id,
+    taskId: r.task_id,
+    taskName: r.task_name,
+    track: r.track,
+  }));
+}
+
 export async function createTeam(name) {
   const { error } = await supabase.rpc('admin_create_team', { p_name: name });
   if (error) throw error;
@@ -297,8 +444,9 @@ export async function fetchReleases() {
 }
 
 export async function createRelease(payload) {
-  const { error } = await supabase.from('releases').insert(payload);
+  const { data, error } = await supabase.from('releases').insert(payload).select('id').single();
   if (error) throw error;
+  return data.id;
 }
 
 export async function updateRelease(id, patch) {

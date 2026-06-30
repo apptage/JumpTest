@@ -151,6 +151,18 @@ export const BUG_FEATURES = [
 /* Outcomes when a bug is closed without a code fix (QA quality insights). */
 export const BUG_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Cannot Reproduce', 'Duplicate'];
 
+/* ---- WBS (Work Breakdown Structure) ---- */
+export const WBS_STATUSES = {
+  not_started: { label: 'Not Started', color: '#64748b' },
+  in_progress: { label: 'In Progress', color: '#d97706' },
+  in_qa: { label: 'In QA', color: '#2563eb' },
+  complete: { label: 'Complete', color: '#16a34a' },
+};
+export const WBS_STATUS_ORDER = ['not_started', 'in_progress', 'in_qa', 'complete'];
+// statuses a developer may set (never QA-verified Complete / In QA)
+export const WBS_DEV_STATUSES = ['not_started', 'in_progress'];
+export const WBS_TRACKS = ['backend', 'frontend', 'both'];
+
 /* Roles */
 export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
 export const ROLE_COLORS = {

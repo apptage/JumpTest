@@ -30,6 +30,10 @@ import {
   BUG_TAGS,
   BUG_FEATURES,
   BUG_RESOLUTIONS,
+  WBS_STATUSES,
+  WBS_STATUS_ORDER,
+  WBS_DEV_STATUSES,
+  WBS_TRACKS,
   ROLES,
   TEAM_ASSIGNABLE_ROLES,
   ALLOWED_EMAIL_DOMAIN,
@@ -60,6 +64,7 @@ import {
   IconCode,
   IconShieldCheck,
 } from './illustrations.jsx';
+import { parseWbsFile } from './wbs.js';
 import {
   IconSearch,
   IconClock,
@@ -79,6 +84,7 @@ import {
   IconUsers,
   IconGrid,
   IconLayers,
+  IconTree,
   IconCog,
 } from './icons.jsx';
 
@@ -380,8 +386,7 @@ export default function ReleaseTracker() {
     setBugs([]);
     setSelectedId(null);
     setShowSubmit(false);
-    setShowAdmin(false);
-    setShowAnalytics(false);
+    setPage('dashboard');
     setHistoryProject(null);
   }
 
@@ -392,8 +397,15 @@ export default function ReleaseTracker() {
       showToast(issue, 'error');
       return;
     }
+    // WBS-enabled releases generate notes from the selected tasks
+    const wbsItems = form.wbsTasks || [];
+    const notes = wbsItems.length
+      ? wbsItems.map((t) => `- ${t.name}`).join('\n') +
+        (form.additionalNote?.trim() ? `\n\n${form.additionalNote.trim()}` : '')
+      : form.releaseNotes.trim();
+
     const ok = await run(async () => {
-      await api.createRelease({
+      const releaseId = await api.createRelease({
         project_id: form.projectId,
         version: form.version.trim(),
         release_type: form.releaseType,
@@ -406,10 +418,23 @@ export default function ReleaseTracker() {
         submitted_by_role: user.role,
         submitted_by_id: user.id,
         date: new Date().toISOString().slice(0, 10),
-        release_notes: form.releaseNotes.trim(),
+        release_notes: notes,
         status: 'pending',
         qa_note: '',
       });
+
+      if (wbsItems.length) {
+        await api.createReleaseTasks(
+          releaseId,
+          wbsItems.map((t) => ({ taskId: t.id, taskName: t.name, track: form.track || 'both' }))
+        );
+        // selected tasks move to In QA (locked for developers)
+        await api.setWbsTrackStatus(
+          wbsItems.map((t) => t.id),
+          form.track || 'both',
+          'in_qa'
+        );
+      }
     }, 'Release submitted');
     if (ok) {
       setShowSubmit(false);
@@ -429,10 +454,24 @@ export default function ReleaseTracker() {
     const now = new Date().toISOString();
     const patch = { status: newStatus, qa_note: qaNote, status_changed_at: now };
     if (newStatus === 'qa_complete') patch.qa_completed_at = now;
-    const ok = await run(
-      () => api.updateRelease(release.id, patch),
-      'Release updated'
-    );
+    const ok = await run(async () => {
+      await api.updateRelease(release.id, patch);
+      // WBS: pass → tasks Complete (only if no open linked bugs);
+      // fail (Repeat Bug) → tasks back to In Progress.
+      if (newStatus === 'qa_complete' || newStatus === 'bug_repeat') {
+        const links = (await api.fetchReleaseTasks(release.id)).filter((l) => l.taskId);
+        const taskIds = [...new Set(links.map((l) => l.taskId))];
+        const openByTask =
+          newStatus === 'qa_complete' ? await api.fetchOpenBugCountsByTask(taskIds) : {};
+        for (const l of links) {
+          const target =
+            newStatus === 'bug_repeat' || (openByTask[l.taskId] || 0) > 0
+              ? 'in_progress'
+              : 'complete';
+          await api.setWbsTrackStatus([l.taskId], l.track, target);
+        }
+      }
+    }, 'Release updated');
     if (ok) refetchReleases();
   }
 
@@ -481,9 +520,19 @@ export default function ReleaseTracker() {
         status: 'open',
         feature: form.feature || null,
         tags: form.tags || [],
+        wbs_task_id: form.wbsTaskId || null,
         created_by: user.name,
         created_by_id: user.id,
       });
+      // WBS: a bug against a task means it isn't done — pull the
+      // verified track(s) back to In Progress.
+      if (form.wbsTaskId) {
+        const links = await api.fetchReleaseTasks(release.id);
+        const tracks = new Set(links.filter((l) => l.taskId === form.wbsTaskId).map((l) => l.track));
+        for (const track of tracks) {
+          await api.setWbsTrackStatus([form.wbsTaskId], track, 'in_progress');
+        }
+      }
       // notify the developer who submitted this release
       await api.createNotification({
         user_id: release.submittedById,
@@ -863,6 +912,10 @@ export default function ReleaseTracker() {
               />
             )}
 
+            {page === 'wbs' && (
+              <WbsPage user={user} projects={scopedProjects} showToast={showToast} />
+            )}
+
             {page === 'analytics' && canManage && (
               <AnalyticsModal
                 embedded
@@ -1018,6 +1071,7 @@ function NavRail({ page, onNavigate, teamName, canManage, isAdmin }) {
   const items = [
     { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: true },
     { key: 'bugs', label: 'Bugs', Icon: IconBug, show: true },
+    { key: 'wbs', label: 'WBS', Icon: IconTree, show: true },
     { key: 'projects', label: 'Projects', Icon: IconFolder, show: canManage },
     { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
     { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
@@ -1410,6 +1464,410 @@ function SettingsPage({ user, team, onSignOut }) {
 }
 
 /* ================================================================== */
+/* WBS page (internal view + import + developer editing)              */
+/* ================================================================== */
+
+function WbsBadge({ status }) {
+  const s = WBS_STATUSES[status] || { label: status, color: '#64748b' };
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 600,
+        color: s.color,
+        background: `${s.color}1a`,
+        border: `1px solid ${s.color}33`,
+        padding: '2px 8px',
+        borderRadius: 999,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function wbsPct(tasks) {
+  // each task counts backend + frontend as two units
+  let done = 0;
+  let total = 0;
+  tasks.forEach((t) => {
+    total += 2;
+    if (t.backendStatus === 'complete') done += 1;
+    if (t.frontendStatus === 'complete') done += 1;
+  });
+  return total ? Math.round((done / total) * 100) : 0;
+}
+
+function WbsTrackCell({ status, locked, canEdit, onChange }) {
+  if (locked || !canEdit) return <WbsBadge status={status} />;
+  return (
+    <select
+      value={status}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ ...inputStyle, width: 'auto', padding: '4px 6px', fontSize: 11.5 }}
+    >
+      {WBS_DEV_STATUSES.map((s) => (
+        <option key={s} value={s}>
+          {WBS_STATUSES[s].label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function WbsTaskRow({ task, canEdit, onUpdate, bugs = [] }) {
+  const [editing, setEditing] = useState(false);
+  const [c, setC] = useState(task.devComments);
+  const beLocked = task.backendStatus === 'in_qa' || task.backendStatus === 'complete';
+  const feLocked = task.frontendStatus === 'in_qa' || task.frontendStatus === 'complete';
+  return (
+    <div style={{ padding: '9px 12px', borderTop: '1px solid var(--color-border-primary)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 140 }}>
+          {task.name}
+          {bugs.length > 0 && (
+            <span
+              title={`${bugs.length} open bug(s) on this task`}
+              style={{
+                marginLeft: 8,
+                fontSize: 10.5,
+                fontWeight: 700,
+                color: 'var(--danger)',
+                background: '#dc26261a',
+                borderRadius: 999,
+                padding: '1px 7px',
+              }}
+            >
+              {bugs.length} bug{bugs.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: 10.5, color: 'var(--color-text-secondary)', width: 56 }}>BE</span>
+        <WbsTrackCell
+          status={task.backendStatus}
+          locked={beLocked}
+          canEdit={canEdit}
+          onChange={(v) => onUpdate(task, { backend_status: v })}
+        />
+        <span style={{ fontSize: 10.5, color: 'var(--color-text-secondary)', width: 56 }}>FE</span>
+        <WbsTrackCell
+          status={task.frontendStatus}
+          locked={feLocked}
+          canEdit={canEdit}
+          onChange={(v) => onUpdate(task, { frontend_status: v })}
+        />
+        {task.estDate && (
+          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{task.estDate}</span>
+        )}
+      </div>
+      <div style={{ marginTop: 6 }}>
+        {editing ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <textarea
+              style={{ ...inputStyle, resize: 'vertical', fontSize: 12 }}
+              rows={2}
+              value={c}
+              placeholder="Developer comment (internal)…"
+              onChange={(e) => setC(e.target.value)}
+            />
+            <button
+              style={ghostButton}
+              onClick={() => {
+                onUpdate(task, { dev_comments: c });
+                setEditing(false);
+              }}
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+            {task.devComments ? (
+              <span>
+                <span style={{ fontWeight: 600 }}>Note: </span>
+                {task.devComments}{' '}
+              </span>
+            ) : null}
+            {canEdit && (
+              <button
+                onClick={() => {
+                  setC(task.devComments);
+                  setEditing(true);
+                }}
+                style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}
+              >
+                {task.devComments ? 'edit' : '+ add note'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {bugs.length > 0 && (
+        <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {bugs.map((b) => (
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5 }}>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: (SEVERITIES[b.severity] || {}).color || 'var(--danger)',
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ color: 'var(--color-text-secondary)', flex: 1 }}>{b.title}</span>
+              <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+                {(BUG_STATUSES[b.status] || {}).label || b.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WbsPage({ user, projects, showToast }) {
+  const [projectId, setProjectId] = useState(projects[0]?.id || '');
+  const [tasks, setTasks] = useState([]);
+  const [bugsByTask, setBugsByTask] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [platform, setPlatform] = useState('all');
+  const [statusF, setStatusF] = useState('all');
+  const [q, setQ] = useState('');
+  const fileRef = useRef(null);
+
+  const project = projects.find((p) => p.id === projectId) || null;
+  const canUpload = user.role === 'Team Lead' && project && project.teamId === user.teamId;
+  const isManager =
+    user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
+  const canEdit = user.role === 'Developer' || isManager;
+
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    setLoading(true);
+    try {
+      const t = await api.fetchWbsTasks(projectId);
+      setTasks(t);
+      try {
+        const linked = await api.fetchBugsByTaskIds(t.map((x) => x.id));
+        const m = {};
+        linked.forEach((b) => (m[b.wbsTaskId] = m[b.wbsTaskId] || []).push(b));
+        setBugsByTask(m);
+      } catch (_) {
+        setBugsByTask({});
+      }
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, showToast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function onFile(e) {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try {
+      const parsed = await parseWbsFile(file);
+      if (!parsed.length) throw new Error('No tasks detected in the spreadsheet.');
+      const n = await api.importWbs(projectId, parsed);
+      showToast(`Imported ${n} WBS rows`);
+      await load();
+    } catch (err) {
+      showToast(err.message || 'Import failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateTask(task, patch) {
+    setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, ...mapPatch(patch) } : t)));
+    try {
+      await api.updateWbsTask(task.id, patch);
+    } catch (e) {
+      showToast(e.message, 'error');
+      load();
+    }
+  }
+  function mapPatch(p) {
+    const m = {};
+    if ('backend_status' in p) m.backendStatus = p.backend_status;
+    if ('frontend_status' in p) m.frontendStatus = p.frontend_status;
+    if ('dev_comments' in p) m.devComments = p.dev_comments;
+    return m;
+  }
+
+  const platforms = Array.from(new Set(tasks.map((t) => t.platform).filter(Boolean)));
+  const matches = (t) =>
+    (platform === 'all' || t.platform === platform) &&
+    (statusF === 'all' || t.backendStatus === statusF || t.frontendStatus === statusF) &&
+    (!q.trim() || t.name.toLowerCase().includes(q.trim().toLowerCase()));
+
+  const workTasks = tasks.filter((t) => t.type !== 'milestone' && matches(t));
+  const milestones = tasks.filter((t) => t.type === 'milestone' && matches(t));
+
+  // group by platform → section
+  const groups = {};
+  workTasks.forEach((t) => {
+    const pk = t.platform || 'General';
+    const sk = t.section || 'General';
+    groups[pk] = groups[pk] || {};
+    groups[pk][sk] = groups[pk][sk] || [];
+    groups[pk][sk].push(t);
+  });
+
+  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+
+  return (
+    <>
+      <PageHeader title="WBS" subtitle="Work breakdown structure & live progress" />
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+        <select style={fSel} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} {p.wbsEnabled ? '• WBS' : ''}
+            </option>
+          ))}
+        </select>
+        {platforms.length > 1 && (
+          <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
+            <option value="all">All platforms</option>
+            {platforms.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
+        <select style={fSel} value={statusF} onChange={(e) => setStatusF(e.target.value)}>
+          <option value="all">All statuses</option>
+          {WBS_STATUS_ORDER.map((s) => (
+            <option key={s} value={s}>
+              {WBS_STATUSES[s].label}
+            </option>
+          ))}
+        </select>
+        <input style={{ ...fSel, flex: '1 1 160px' }} value={q} placeholder="Search tasks…" onChange={(e) => setQ(e.target.value)} />
+        {canUpload && (
+          <>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} />
+            <button style={primaryButton(busy)} disabled={busy} onClick={() => fileRef.current?.click()}>
+              {busy ? 'Importing…' : tasks.length ? 'Re-import WBS' : 'Upload WBS'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* overall progress */}
+      {tasks.length > 0 && (
+        <div style={{ ...card, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>
+              {wbsPct(tasks.filter((t) => t.type !== 'milestone'))}%
+            </span>
+          </div>
+          <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+            <div
+              style={{
+                width: `${wbsPct(tasks.filter((t) => t.type !== 'milestone'))}%`,
+                height: '100%',
+                borderRadius: 999,
+                background: 'var(--brand)',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+      ) : tasks.length === 0 ? (
+        <Empty>
+          {canUpload
+            ? 'No WBS yet — upload an Excel/CSV to get started.'
+            : project?.wbsEnabled
+            ? 'No tasks match your filters.'
+            : 'This project does not use a WBS. The Team Lead can upload one.'}
+        </Empty>
+      ) : (
+        <>
+          {Object.entries(groups).map(([pk, sections]) => (
+            <div key={pk} style={{ marginBottom: 18 }}>
+              {platforms.length > 1 && (
+                <div style={{ ...sideHead, marginBottom: 8 }}>{pk}</div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {Object.entries(sections).map(([sk, ts]) => (
+                  <WbsSection key={sk} name={sk} tasks={ts} canEdit={canEdit} onUpdate={updateTask} bugsByTask={bugsByTask} />
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {milestones.length > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ ...sideHead, marginBottom: 8 }}>Milestones</div>
+              <div style={{ ...card, padding: '4px 0' }}>
+                {milestones.map((m) => (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '9px 14px',
+                      borderTop: '1px solid var(--color-border-primary)',
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{m.name}</span>
+                    {m.estDate && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{m.estDate}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function WbsSection({ name, tasks, canEdit, onUpdate, bugsByTask }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', cursor: 'pointer' }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1 }}>{name}</span>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          {tasks.length} task{tasks.length === 1 ? '' : 's'} · {wbsPct(tasks)}%
+        </span>
+      </div>
+      {open &&
+        tasks.map((t) => (
+          <WbsTaskRow key={t.id} task={t} canEdit={canEdit} onUpdate={onUpdate} bugs={(bugsByTask || {})[t.id] || []} />
+        ))}
+    </div>
+  );
+}
+
+/* ================================================================== */
 /* Auth                                                               */
 /* ================================================================== */
 
@@ -1746,6 +2204,113 @@ const CLIENT_STATUS = {
   bug_repeat: { label: 'Resolving issues', color: '#dc2626' },
 };
 
+function publicWbsPct(items) {
+  let done = 0;
+  let total = 0;
+  items.forEach((t) => {
+    total += 2;
+    if (t.backend === 'complete') done += 1;
+    if (t.frontend === 'complete') done += 1;
+  });
+  return total ? Math.round((done / total) * 100) : 0;
+}
+
+function ClientWbsView({ wbs }) {
+  const work = wbs.filter((t) => t.type !== 'milestone');
+  const milestones = wbs.filter((t) => t.type === 'milestone');
+  const pct = publicWbsPct(work);
+  const platforms = Array.from(new Set(work.map((t) => t.platform).filter(Boolean)));
+
+  const groups = {};
+  work.forEach((t) => {
+    const pk = t.platform || 'General';
+    const sk = t.section || 'General';
+    (groups[pk] = groups[pk] || {});
+    (groups[pk][sk] = groups[pk][sk] || []).push(t);
+  });
+
+  const taskRow = (t, i, arr) => (
+    <div
+      key={i}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '9px 0',
+        borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)',
+        flexWrap: 'wrap',
+      }}
+    >
+      <span style={{ fontSize: 13, flex: 1, minWidth: 140 }}>{t.name}</span>
+      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>Backend</span>
+      <WbsBadge status={t.backend} />
+      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>Frontend</span>
+      <WbsBadge status={t.frontend} />
+      {t.est && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t.est}</span>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ ...card, padding: 18, marginBottom: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
+        </div>
+        <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+          <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
+        </div>
+      </div>
+
+      {Object.entries(groups).map(([pk, sections]) => (
+        <div key={pk} style={{ marginBottom: 18 }}>
+          {platforms.length > 1 && <div style={{ ...sideHead, marginBottom: 8 }}>{pk}</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {Object.entries(sections).map(([sk, ts]) => (
+              <div key={sk} style={{ ...card, padding: '4px 16px' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    padding: '11px 0 6px',
+                    borderBottom: '1px solid var(--color-border-primary)',
+                  }}
+                >
+                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{sk}</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{publicWbsPct(ts)}%</span>
+                </div>
+                {ts.map(taskRow)}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {milestones.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ ...sideHead, marginBottom: 8 }}>Milestones</div>
+          <div style={{ ...card, padding: '4px 16px' }}>
+            {milestones.map((m, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '10px 0',
+                  borderBottom: i === milestones.length - 1 ? 'none' : '1px solid var(--color-border-primary)',
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                {m.est && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{m.est}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ClientDashboard({ token }) {
   const [data, setData] = useState(undefined); // undefined=loading, null=invalid
   const [error, setError] = useState('');
@@ -1770,6 +2335,8 @@ export function ClientDashboard({ token }) {
       </CenteredMessage>
     );
 
+  const wbs = data.wbs || [];
+  const showWbs = data.wbsEnabled && wbs.length > 0;
   const releases = data.releases || [];
   const total = releases.length;
   const completed = releases.filter((r) => r.status === 'qa_complete');
@@ -1848,6 +2415,10 @@ export function ClientDashboard({ token }) {
           Project status overview
         </p>
 
+        {showWbs && <ClientWbsView wbs={wbs} />}
+
+        {!showWbs && (
+        <>
         {/* progress */}
         <div style={{ ...card, padding: 18, marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
@@ -1896,6 +2467,8 @@ export function ClientDashboard({ token }) {
             <div style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
           )}
         </section>
+        </>
+        )}
 
         <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
           Read-only project status · powered by JumpTest
@@ -3054,10 +3627,48 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
     componentOther: '',
     linkUrl: '',
     releaseNotes: '',
+    track: 'both',
+    additionalNote: '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  const [wbsTasks, setWbsTasks] = useState([]);
+  const [selectedTasks, setSelectedTasks] = useState([]); // task ids
+
   const project = projectById(form.projectId);
+  const isWbs = !!project?.wbsEnabled;
+
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedTasks([]);
+    if (!project?.wbsEnabled) {
+      setWbsTasks([]);
+      return;
+    }
+    api
+      .fetchWbsTasks(project.id)
+      .then((ts) => {
+        if (cancelled) return;
+        // selectable: non-milestone tasks not already fully sent to QA / complete
+        setWbsTasks(
+          ts.filter(
+            (t) =>
+              t.type !== 'milestone' &&
+              !(
+                ['in_qa', 'complete'].includes(t.backendStatus) &&
+                ['in_qa', 'complete'].includes(t.frontendStatus)
+              )
+          )
+        );
+      })
+      .catch(() => !cancelled && setWbsTasks([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, project?.wbsEnabled]);
+
+  const toggleTask = (id) =>
+    setSelectedTasks((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const platforms = project ? platformsForProjectType(project.type) : ['Mobile'];
   const allowedTypes = RELEASE_TYPES_BY_PLATFORM[form.platform] || RELEASE_TYPE_ORDER;
   const linkErr = linkIssue(form.linkUrl);
@@ -3094,9 +3705,9 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
   const invalid =
     !form.projectId ||
     !form.version.trim() ||
-    !form.releaseNotes.trim() ||
     componentBad ||
-    !!linkErr;
+    !!linkErr ||
+    (isWbs ? selectedTasks.length === 0 : !form.releaseNotes.trim());
 
   function submit() {
     if (invalid) return;
@@ -3105,7 +3716,10 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
         ? form.componentOther.trim()
         : form.component
       : '';
-    onSubmit({ ...form, component });
+    const picked = isWbs
+      ? wbsTasks.filter((t) => selectedTasks.includes(t.id)).map((t) => ({ id: t.id, name: t.name }))
+      : [];
+    onSubmit({ ...form, component, wbsTasks: picked });
   }
 
   if (projects.length === 0) {
@@ -3257,15 +3871,89 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
         </div>
       </Field>
 
-      <Field label="Release notes">
-        <textarea
-          style={{ ...inputStyle, resize: 'vertical' }}
-          rows={4}
-          value={form.releaseNotes}
-          placeholder="What changed in this release?"
-          onChange={(e) => set('releaseNotes', e.target.value)}
-        />
-      </Field>
+      {isWbs ? (
+        <>
+          <Field label="QA should verify">
+            <div style={{ display: 'flex', gap: 8 }}>
+              {WBS_TRACKS.map((t) => {
+                const active = form.track === t;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => set('track', t)}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      textTransform: 'capitalize',
+                      borderRadius: 'var(--r-input)',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      color: active ? '#fff' : 'var(--color-text-primary)',
+                      background: active ? 'var(--brand)' : 'var(--color-background-primary)',
+                      border: `1px solid ${active ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+                    }}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
+          <Field label={`WBS tasks (${selectedTasks.length} selected)`}>
+            {wbsTasks.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                No available tasks — all are already in QA or complete.
+              </div>
+            ) : (
+              <div
+                style={{
+                  maxHeight: 200,
+                  overflowY: 'auto',
+                  border: '1px solid var(--color-border-tertiary)',
+                  borderRadius: 'var(--r-input)',
+                  padding: 4,
+                }}
+              >
+                {wbsTasks.map((t) => (
+                  <label
+                    key={t.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12.5 }}
+                  >
+                    <input type="checkbox" checked={selectedTasks.includes(t.id)} onChange={() => toggleTask(t.id)} />
+                    <span style={{ flex: 1 }}>{t.name}</span>
+                    {t.section && (
+                      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.section}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+          </Field>
+
+          <Field label="Additional note (optional)">
+            <textarea
+              style={{ ...inputStyle, resize: 'vertical' }}
+              rows={2}
+              value={form.additionalNote}
+              placeholder="Anything QA should know beyond the task list…"
+              onChange={(e) => set('additionalNote', e.target.value)}
+            />
+          </Field>
+        </>
+      ) : (
+        <Field label="Release notes">
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical' }}
+            rows={4}
+            value={form.releaseNotes}
+            placeholder="What changed in this release?"
+            onChange={(e) => set('releaseNotes', e.target.value)}
+          />
+        </Field>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
         <button style={ghostButton} onClick={onClose}>
@@ -3450,14 +4138,23 @@ function DetailModal({
     checklistItems.every((it) => checks[it.id]);
 
   function attemptStatus(newStatus) {
-    if (
-      newStatus === 'qa_complete' &&
-      checklistItems.length > 0 &&
-      !allChecked
-    ) {
-      showToast('Complete the checklist before marking QA Complete', 'error');
-      setTab('checklist');
-      return;
+    if (newStatus === 'qa_complete') {
+      const blocking = bugs.filter(
+        (b) => b.status !== 'verified' && (b.severity === 'critical' || b.severity === 'major')
+      ).length;
+      if (blocking > 0) {
+        showToast(
+          `Cannot mark QA Complete — ${blocking} unresolved Major/Critical bug${blocking === 1 ? '' : 's'} must be verified first.`,
+          'error'
+        );
+        setTab('bugs');
+        return;
+      }
+      if (checklistItems.length > 0 && !allChecked) {
+        showToast('Complete the checklist before marking QA Complete', 'error');
+        setTab('checklist');
+        return;
+      }
     }
     onStatusUpdate(release, newStatus, note);
   }
@@ -3565,6 +4262,7 @@ function DetailModal({
           isQA={isQA}
           profiles={profiles}
           projectTeamId={project?.teamId}
+          wbsEnabled={!!project?.wbsEnabled}
           showToast={showToast}
           isSubmitting={isSubmitting}
           onAddBug={onAddBug}
@@ -3624,6 +4322,18 @@ function DetailsTab({
   const assigned = release.assignedQa ? profilesById[release.assignedQa] : null;
   const soleQa = qaList.length === 1 ? qaList[0] : null;
   const autoAssignedRef = useRef(null);
+  const [linkedTasks, setLinkedTasks] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .fetchReleaseTasks(release.id)
+      .then((t) => !cancelled && setLinkedTasks(t))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [release.id]);
 
   // one QA on the team → auto-assign, no selection dialog
   useEffect(() => {
@@ -3694,6 +4404,30 @@ function DetailsTab({
               </>
             )}
           </a>
+        </div>
+      )}
+
+      {linkedTasks.length > 0 && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            background: 'var(--color-background-secondary)',
+            border: '1px solid var(--color-border-tertiary)',
+            borderRadius: 'var(--r-card)',
+          }}
+        >
+          <div style={{ ...labelStyle, marginBottom: 8 }}>
+            Linked WBS tasks · verify {linkedTasks[0]?.track}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {linkedTasks.map((t) => (
+              <div key={t.id} style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: 'var(--brand)' }} />
+                {t.taskName}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -3891,6 +4625,7 @@ function BugsTab({
   isQA,
   profiles,
   projectTeamId,
+  wbsEnabled,
   showToast,
   isSubmitting,
   onAddBug,
@@ -3905,9 +4640,11 @@ function BugsTab({
     severity: 'major',
     feature: '',
     tags: [],
+    wbsTaskId: '',
   });
   const [file, setFile] = useState(null);
   const [commentCounts, setCommentCounts] = useState({});
+  const [releaseTasks, setReleaseTasks] = useState([]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const toggleTag = (t) =>
     setForm((f) => ({
@@ -3915,8 +4652,22 @@ function BugsTab({
       tags: f.tags.includes(t) ? f.tags.filter((x) => x !== t) : [...f.tags, t],
     }));
 
+  // WBS-enabled: QA reports against the release's linked WBS tasks
+  useEffect(() => {
+    if (!wbsEnabled) return;
+    let cancelled = false;
+    api
+      .fetchReleaseTasks(release.id)
+      .then((t) => !cancelled && setReleaseTasks(t.filter((x) => x.taskId)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [wbsEnabled, release.id]);
+
   const isDev = user.role === 'Developer' || user.role === 'Admin';
-  const invalid = !form.title.trim();
+  const wbsBug = wbsEnabled && releaseTasks.length > 0;
+  const invalid = !form.title.trim() || (wbsBug && !form.wbsTaskId);
 
   // people a developer may tag: same team's QA + Team Lead
   const tagTeamId = user.teamId || projectTeamId || null;
@@ -3944,7 +4695,7 @@ function BugsTab({
   function submit() {
     if (invalid) return;
     onAddBug(release, form, file);
-    setForm({ title: '', description: '', severity: 'major', feature: '', tags: [] });
+    setForm({ title: '', description: '', severity: 'major', feature: '', tags: [], wbsTaskId: '' });
     setFile(null);
     setShow(false);
   }
@@ -3994,46 +4745,65 @@ function BugsTab({
                     </select>
                   </Field>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <Field label="Feature / Epic">
-                    <select style={inputStyle} value={form.feature} onChange={(e) => set('feature', e.target.value)}>
-                      <option value="">— none —</option>
-                      {BUG_FEATURES.map((ft) => (
-                        <option key={ft} value={ft}>
-                          {ft}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
+                {!wbsBug && (
+                  <div style={{ flex: 1 }}>
+                    <Field label="Feature / Epic">
+                      <select style={inputStyle} value={form.feature} onChange={(e) => set('feature', e.target.value)}>
+                        <option value="">— none —</option>
+                        {BUG_FEATURES.map((ft) => (
+                          <option key={ft} value={ft}>
+                            {ft}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                )}
               </div>
-              <Field label="Component tags">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {BUG_TAGS.map((t) => {
-                    const on = form.tags.includes(t);
-                    return (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => toggleTag(t)}
-                        style={{
-                          padding: '4px 9px',
-                          fontSize: 11.5,
-                          fontWeight: 600,
-                          borderRadius: 999,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                          border: `1px solid ${on ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
-                          background: on ? 'var(--brand-soft)' : 'var(--color-background-primary)',
-                          color: on ? 'var(--brand)' : 'var(--color-text-secondary)',
-                        }}
-                      >
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-              </Field>
+
+              {wbsBug ? (
+                <Field label="WBS task">
+                  <select style={inputStyle} value={form.wbsTaskId} onChange={(e) => set('wbsTaskId', e.target.value)}>
+                    <option value="">Select the task this bug is against…</option>
+                    {releaseTasks.map((t) => (
+                      <option key={t.id} value={t.taskId}>
+                        {t.taskName} ({t.track})
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 5 }}>
+                    The bug is linked to this task; the task returns to In Progress until it's resolved &amp; re-verified.
+                  </div>
+                </Field>
+              ) : (
+                <Field label="Component tags">
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {BUG_TAGS.map((t) => {
+                      const on = form.tags.includes(t);
+                      return (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => toggleTag(t)}
+                          style={{
+                            padding: '4px 9px',
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            borderRadius: 999,
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            border: `1px solid ${on ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+                            background: on ? 'var(--brand-soft)' : 'var(--color-background-primary)',
+                            color: on ? 'var(--brand)' : 'var(--color-text-secondary)',
+                          }}
+                        >
+                          {t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
               <Field label="Screenshot (optional)">
                 <input
                   type="file"
@@ -6044,17 +6814,32 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
   const relIds = new Set(relF.map((r) => r.id));
   const bugsF = bugs.filter((b) => relIds.has(b.releaseId));
 
-  // ---- QA quality ----
+  // a release is "blocked" while it still has open Major/Critical bugs
+  const blockedReleaseIds = new Set(
+    bugsF
+      .filter((b) => b.status !== 'verified' && (b.severity === 'critical' || b.severity === 'major'))
+      .map((b) => b.releaseId)
+  );
+
+  // ---- QA quality (based on real outcome, not just submission) ----
   const submitted = relF.length;
-  const approved = relF.filter((r) => r.status === 'qa_complete').length;
-  const rejected = relF.filter((r) => r.status === 'bug_repeat').length;
+  const approved = relF.filter((r) => r.status === 'qa_complete' && !blockedReleaseIds.has(r.id)).length;
+  // bug_repeat, or "approved" releases that still carry blocking bugs, count as not-passed
+  const rejected = relF.filter(
+    (r) => r.status === 'bug_repeat' || (r.status === 'qa_complete' && blockedReleaseIds.has(r.id))
+  ).length;
   const decided = approved + rejected;
   const passRate = decided ? Math.round((approved / decided) * 100) : 0;
   const rejRate = decided ? Math.round((rejected / decided) * 100) : 0;
 
   // ---- velocity ----
   const completed = relF.filter((r) => r.status === 'qa_complete' && r.qaCompletedAt);
-  const cycleDays = avgDaysBetween(completed, 'createdAt', 'qaCompletedAt');
+  // total cycle is only meaningful once a release has gone through QA assignment
+  const cycleDays = avgDaysBetween(
+    completed.filter((r) => r.qaAssignedAt),
+    'createdAt',
+    'qaCompletedAt'
+  );
   const toAssign = avgDaysBetween(
     relF.filter((r) => r.qaAssignedAt),
     'createdAt',
@@ -6081,10 +6866,8 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
   });
   const maxMonth = Math.max(1, ...months.map((m) => m.n));
 
-  // ---- defect leakage ----
+  // ---- production defects (bugs reported against Production-env releases) ----
   const prodBugs = bugsF.filter((b) => (relById(b.releaseId)?.environment || 'Production') === 'Production').length;
-  const stagingBugs = bugsF.length - prodBugs;
-  const leakage = bugsF.length ? Math.round((prodBugs / bugsF.length) * 100) : 0;
   function relById(id) {
     return relF.find((r) => r.id === id);
   }
@@ -6145,6 +6928,34 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
       text: `${disputedBugs.length} bug(s) need clarification across ${rels} release(s) — blocked communication.`,
     });
   }
+  // releases drowning in open bugs / blocking bugs
+  const OPEN_BUG_THRESHOLD = 5;
+  const BLOCKING_THRESHOLD = 3;
+  relF.forEach((r) => {
+    const rbugs = bugsF.filter((b) => b.releaseId === r.id && b.status !== 'verified');
+    const blocking = rbugs.filter((b) => b.severity === 'critical' || b.severity === 'major').length;
+    const label = `v${r.version} · ${projectsById[r.projectId]?.name || ''}`;
+    if (rbugs.length >= OPEN_BUG_THRESHOLD)
+      bottlenecks.push({ level: 'over', text: `${label} has ${rbugs.length} open bugs — stuck in QA.` });
+    else if (blocking >= BLOCKING_THRESHOLD)
+      bottlenecks.push({ level: 'over', text: `${label} has ${blocking} unresolved Major/Critical bugs.` });
+  });
+  // developers overloaded with open bugs on their releases
+  const devOpen = {};
+  bugsF
+    .filter((b) => b.status !== 'verified')
+    .forEach((b) => {
+      const dev = relById(b.releaseId)?.submittedById;
+      if (dev) devOpen[dev] = (devOpen[dev] || 0) + 1;
+    });
+  Object.entries(devOpen)
+    .filter(([, n]) => n > 8)
+    .forEach(([id, n]) =>
+      bottlenecks.push({
+        level: 'warn',
+        text: `${profilesById[id]?.name || 'A developer'} has ${n} open bugs to fix — possibly overloaded.`,
+      })
+    );
 
   // ---- QA quality (resolution outcomes) ----
   const resCounts = {};
@@ -6185,33 +6996,40 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
         id: d.id,
         name: d.name,
         submitted: myRel.length,
-        fixed: onMyRel.filter((b) => b.status === 'fixed' || b.status === 'verified').length,
+        // queue: bugs waiting on the developer to fix
+        awaitingFix: onMyRel.filter((b) => ['open', 'in_progress', 'disputed'].includes(b.status)).length,
         active: myRel.filter((r) => r.status !== 'qa_complete').length,
         openBugs: onMyRel.filter((b) => b.status !== 'verified').length,
       };
     })
     .filter((d) => d.submitted || d.openBugs)
-    .sort((a, b) => b.submitted - a.submitted);
+    .sort((a, b) => b.awaitingFix - a.awaitingFix || b.submitted - a.submitted);
 
   const qaPerf = profiles
     .filter((p) => p.role === 'QA' && (f.team === 'all' || p.teamId === f.team))
     .map((q) => {
       const assigned = relF.filter((r) => r.assignedQa === q.id);
-      const appr = assigned.filter((r) => r.status === 'qa_complete').length;
-      const rej = assigned.filter((r) => r.status === 'bug_repeat').length;
+      const appr = assigned.filter((r) => r.status === 'qa_complete' && !blockedReleaseIds.has(r.id)).length;
+      const rej = assigned.filter(
+        (r) => r.status === 'bug_repeat' || (r.status === 'qa_complete' && blockedReleaseIds.has(r.id))
+      ).length;
       const dec = appr + rej;
+      const reportedIds = new Set(bugsF.filter((b) => b.createdById === q.id).map((b) => b.id));
       return {
         id: q.id,
         name: q.name,
         tested: assigned.length,
-        reported: bugsF.filter((b) => b.createdById === q.id).length,
+        reported: reportedIds.size,
         approveRate: dec ? Math.round((appr / dec) * 100) : 0,
         rejectRate: dec ? Math.round((rej / dec) * 100) : 0,
-        active: assigned.filter((r) => r.status === 'pending' || r.status === 'in_qa').length,
+        // queues: releases pending review, in QA, and fixes awaiting re-verification
+        pendingQa: assigned.filter((r) => r.status === 'pending').length,
+        inQa: assigned.filter((r) => r.status === 'in_qa').length,
+        awaitingVerify: bugsF.filter((b) => b.createdById === q.id && b.status === 'fixed').length,
       };
     })
-    .filter((q) => q.tested || q.reported)
-    .sort((a, b) => b.tested - a.tested);
+    .filter((q) => q.tested || q.reported || q.awaitingVerify)
+    .sort((a, b) => b.inQa + b.pendingQa - (a.inQa + a.pendingQa));
 
   // ---- per-project table ----
   const rows = projects
@@ -6315,12 +7133,16 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
           <Kpi label="Submitted" value={submitted} />
           <Kpi label="Approved" value={approved} sub={`${passRate}% passed QA`} color="var(--success)" />
           <Kpi label="Sent back" value={rejected} sub={`${rejRate}% returned to dev`} color="var(--danger)" />
-          <Kpi label="Avg release time" value={cycleDays == null ? '—' : `${cycleDays.toFixed(1)}d`} sub="submit → QA done" />
           <Kpi
-            label="Bugs after release"
-            value={`${leakage}%`}
-            sub={`${prodBugs} in production / ${stagingBugs} in QA`}
-            color={leakage >= 30 ? 'var(--danger)' : undefined}
+            label="Avg release time"
+            value={cycleDays == null ? 'In progress' : `${cycleDays.toFixed(1)}d`}
+            sub="submit → QA done"
+          />
+          <Kpi
+            label="Production Defects"
+            value={prodBugs}
+            sub="bugs reported in production"
+            color={prodBugs > 0 ? 'var(--danger)' : undefined}
           />
         </div>
       </AnSection>
@@ -6473,7 +7295,7 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
                 <tr>
                   <th style={th}>Developer</th>
                   <th style={th}>Releases submitted</th>
-                  <th style={th}>Bugs fixed</th>
+                  <th style={th}>Awaiting fix</th>
                   <th style={th}>Active releases</th>
                   <th style={th}>Open bugs</th>
                 </tr>
@@ -6483,7 +7305,9 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
                   <tr key={d.id}>
                     <td style={{ ...td, fontWeight: 500 }}>{d.name}</td>
                     <td style={td}>{d.submitted}</td>
-                    <td style={td}>{d.fixed}</td>
+                    <td style={{ ...td, color: d.awaitingFix ? 'var(--danger)' : undefined, fontWeight: d.awaitingFix > 5 ? 700 : 400 }}>
+                      {d.awaitingFix}
+                    </td>
                     <td style={td}>{d.active}</td>
                     <td style={{ ...td, color: d.openBugs ? 'var(--danger)' : undefined }}>{d.openBugs}</td>
                   </tr>
@@ -6504,24 +7328,26 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
               <thead>
                 <tr>
                   <th style={th}>QA engineer</th>
-                  <th style={th}>Releases tested</th>
                   <th style={th}>Bugs reported</th>
                   <th style={th}>Approval rate</th>
                   <th style={th}>Rejection rate</th>
-                  <th style={th}>Active workload</th>
+                  <th style={th}>Pending QA</th>
+                  <th style={th}>In QA</th>
+                  <th style={th}>Awaiting verify</th>
                 </tr>
               </thead>
               <tbody>
                 {qaPerf.map((q) => (
                   <tr key={q.id}>
                     <td style={{ ...td, fontWeight: 500 }}>{q.name}</td>
-                    <td style={td}>{q.tested}</td>
                     <td style={td}>{q.reported}</td>
                     <td style={{ ...td, color: 'var(--success)' }}>{q.approveRate}%</td>
                     <td style={{ ...td, color: 'var(--danger)' }}>{q.rejectRate}%</td>
-                    <td style={{ ...td, color: q.active > 3 ? 'var(--danger)' : undefined, fontWeight: q.active > 3 ? 700 : 400 }}>
-                      {q.active}
+                    <td style={td}>{q.pendingQa}</td>
+                    <td style={{ ...td, color: q.inQa > 3 ? 'var(--danger)' : undefined, fontWeight: q.inQa > 3 ? 700 : 400 }}>
+                      {q.inQa}
                     </td>
+                    <td style={{ ...td, color: q.awaitingVerify ? 'var(--warning)' : undefined }}>{q.awaitingVerify}</td>
                   </tr>
                 ))}
               </tbody>
