@@ -4,6 +4,11 @@ import * as api from './api.js';
 import {
   STATUSES,
   STATUS_ORDER,
+  nextStatuses,
+  TRANSITION_LABELS,
+  isReadOnly,
+  isActiveStatus,
+  isClosedStatus,
   RELEASE_TYPES,
   RELEASE_TYPE_ORDER,
   PROJECT_TYPES,
@@ -70,6 +75,7 @@ import {
   IconClock,
   IconCheck,
   IconBug,
+  IconPackage,
   IconFolder,
   IconBell,
   IconPower,
@@ -104,6 +110,7 @@ export default function ReleaseTracker() {
   const [bugs, setBugs] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [teams, setTeams] = useState([]);
+  const [projectMembers, setProjectMembers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [checklistItems, setChecklistItems] = useState([]);
 
@@ -210,17 +217,21 @@ export default function ReleaseTracker() {
   const refetchTeams = useCallback(async () => {
     setTeams(await api.fetchTeams());
   }, []);
+  const refetchProjectMembers = useCallback(async () => {
+    setProjectMembers(await api.fetchProjectMembers());
+  }, []);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [pr, rel, bg, prof, ci, tm] = await Promise.all([
+      const [pr, rel, bg, prof, ci, tm, pm] = await Promise.all([
         api.fetchProjects(),
         api.fetchReleases(),
         api.fetchBugs(),
         api.fetchProfiles(),
         api.fetchChecklistItems(),
         api.fetchTeams(),
+        api.fetchProjectMembers(),
       ]);
       setProjects(pr);
       setReleases(rel);
@@ -228,6 +239,7 @@ export default function ReleaseTracker() {
       setProfiles(prof);
       setChecklistItems(ci);
       setTeams(tm);
+      setProjectMembers(pm);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -262,13 +274,24 @@ export default function ReleaseTracker() {
     return m;
   }, [profiles]);
 
-  /* ---- team scoping (app-level): non-admins only see their team ---- */
+  /* ---- project-membership scoping (app-level) ----
+     Non-admins see only projects they're an active member of (home members of
+     their team's projects + temporary support grants on other teams' projects).
+     Admins see everything. Expired support grants drop out automatically. */
   const adminScope = user?.role === 'Admin';
   const myTeamId = user?.teamId ?? null;
 
+  const myProjectIds = useMemo(() => {
+    const s = new Set();
+    projectMembers.forEach((m) => {
+      if (m.userId === user?.id && api.membershipActive(m)) s.add(m.projectId);
+    });
+    return s;
+  }, [projectMembers, user?.id]);
+
   const scopedProjects = useMemo(
-    () => (adminScope ? projects : projects.filter((p) => p.teamId === myTeamId)),
-    [projects, adminScope, myTeamId]
+    () => (adminScope ? projects : projects.filter((p) => myProjectIds.has(p.id))),
+    [projects, adminScope, myProjectIds]
   );
   const scopedProjectIds = useMemo(
     () => new Set(scopedProjects.map((p) => p.id)),
@@ -316,8 +339,9 @@ export default function ReleaseTracker() {
     return acc;
   }, {});
 
-  const filtered = contextReleases.filter(
-    (r) => statusFilter === 'all' || r.status === statusFilter
+  // hide closed (superseded) iterations from the active board unless explicitly filtered
+  const filtered = contextReleases.filter((r) =>
+    statusFilter === 'all' ? r.status !== 'closed' : r.status === statusFilter
   );
 
   const unread = notifications.filter((n) => !n.read).length;
@@ -397,14 +421,28 @@ export default function ReleaseTracker() {
       showToast(issue, 'error');
       return;
     }
-    // WBS-enabled releases generate notes from the selected tasks
     const wbsItems = form.wbsTasks || [];
-    const notes = wbsItems.length
-      ? wbsItems.map((t) => `- ${t.name}`).join('\n') +
-        (form.additionalNote?.trim() ? `\n\n${form.additionalNote.trim()}` : '')
-      : form.releaseNotes.trim();
+    const wbsEnabled = !!projectsById[form.projectId]?.wbsEnabled;
+    const extraNote = form.additionalNote?.trim() ? `\n\n${form.additionalNote.trim()}` : '';
 
     const ok = await run(async () => {
+      // Follow-up detection: if this developer has a sent-back release for the
+      // project, the new submission supersedes it (close it + carry bugs).
+      const priorSentBack = await api.fetchSentBackRelease(form.projectId, user.id);
+
+      // Release notes:
+      //  - tasks selected → generated from the tasks (feature release)
+      //  - WBS project, no tasks, but a prior sent-back release → bug-fix release
+      //  - otherwise → the manually-entered notes
+      let notes;
+      if (wbsItems.length) {
+        notes = wbsItems.map((t) => `- ${t.name}`).join('\n') + extraNote;
+      } else if (wbsEnabled && priorSentBack) {
+        notes = `Bug fixes for v${priorSentBack.version}` + extraNote;
+      } else {
+        notes = form.releaseNotes.trim();
+      }
+
       const releaseId = await api.createRelease({
         project_id: form.projectId,
         version: form.version.trim(),
@@ -419,8 +457,9 @@ export default function ReleaseTracker() {
         submitted_by_id: user.id,
         date: new Date().toISOString().slice(0, 10),
         release_notes: notes,
-        status: 'pending',
+        status: 'qa_pending',
         qa_note: '',
+        supersedes_release_id: priorSentBack ? priorSentBack.id : null,
       });
 
       if (wbsItems.length) {
@@ -435,10 +474,25 @@ export default function ReleaseTracker() {
           'in_qa'
         );
       }
+
+      // Close the superseded release and carry its unresolved bugs forward.
+      if (priorSentBack) {
+        await api.closeRelease(priorSentBack.id);
+        const summary = await api.carryForwardBugs(priorSentBack.id, releaseId);
+        if (priorSentBack.assignedQa) {
+          await api.createNotification({
+            user_id: priorSentBack.assignedQa,
+            type: 'release_followup',
+            message: `${user.name} submitted a follow-up v${form.version.trim()} for QA — ${summary.pendingVerify} fix(es) to verify, ${summary.unresolved} still open.`,
+            release_id: releaseId,
+          });
+        }
+      }
     }, 'Release submitted');
     if (ok) {
       setShowSubmit(false);
       refetchReleases();
+      refetchBugs();
     }
   }
 
@@ -452,20 +506,22 @@ export default function ReleaseTracker() {
 
   async function handleReleaseStatus(release, newStatus, qaNote) {
     const now = new Date().toISOString();
-    const patch = { status: newStatus, qa_note: qaNote, status_changed_at: now };
-    if (newStatus === 'qa_complete') patch.qa_completed_at = now;
+    const patch = { status: newStatus, status_changed_at: now };
+    if (qaNote != null) patch.qa_note = qaNote;
+    if (newStatus === 'approved') patch.qa_completed_at = now;
     const ok = await run(async () => {
       await api.updateRelease(release.id, patch);
-      // WBS: pass → tasks Complete (only if no open linked bugs);
-      // fail (Repeat Bug) → tasks back to In Progress.
-      if (newStatus === 'qa_complete' || newStatus === 'bug_repeat') {
+      // WBS reconciliation on the terminal QA outcomes:
+      //  approved  → linked tasks Complete (unless they still carry open bugs)
+      //  sent_back → linked tasks back to In Progress
+      if (newStatus === 'approved' || newStatus === 'sent_back') {
         const links = (await api.fetchReleaseTasks(release.id)).filter((l) => l.taskId);
         const taskIds = [...new Set(links.map((l) => l.taskId))];
         const openByTask =
-          newStatus === 'qa_complete' ? await api.fetchOpenBugCountsByTask(taskIds) : {};
+          newStatus === 'approved' ? await api.fetchOpenBugCountsByTask(taskIds) : {};
         for (const l of links) {
           const target =
-            newStatus === 'bug_repeat' || (openByTask[l.taskId] || 0) > 0
+            newStatus === 'sent_back' || (openByTask[l.taskId] || 0) > 0
               ? 'in_progress'
               : 'complete';
           await api.setWbsTrackStatus([l.taskId], l.track, target);
@@ -521,6 +577,7 @@ export default function ReleaseTracker() {
         feature: form.feature || null,
         tags: form.tags || [],
         wbs_task_id: form.wbsTaskId || null,
+        origin_release_id: release.id,
         created_by: user.name,
         created_by_id: user.id,
       });
@@ -544,11 +601,29 @@ export default function ReleaseTracker() {
     if (ok) refetchBugs();
   }
 
+  // When a WBS-linked bug is verified/closed, complete its track(s) if the task
+  // no longer has any open bugs across active releases.
+  async function reconcileWbsTaskForBug(release, bug) {
+    if (!bug.wbsTaskId) return;
+    const open = await api.fetchOpenBugCountsByTask([bug.wbsTaskId]);
+    if ((open[bug.wbsTaskId] || 0) > 0) return;
+    const links = await api.fetchReleaseTasks(release.id);
+    const tracks = new Set(links.filter((l) => l.taskId === bug.wbsTaskId).map((l) => l.track));
+    for (const track of tracks) {
+      await api.setWbsTrackStatus([bug.wbsTaskId], track, 'complete');
+    }
+  }
+
   async function handleBugStatus(release, bug, newStatus) {
     const ok = await run(async () => {
       const patch = { status: newStatus };
-      if (newStatus === 'verified') patch.resolution = 'Fixed';
+      if (newStatus === 'verified') {
+        patch.resolution = 'Fixed';
+        patch.verified_at = new Date().toISOString();
+        patch.verified_by_id = user.id;
+      }
       await api.updateBug(bug.id, patch);
+      if (newStatus === 'verified') await reconcileWbsTaskForBug(release, bug);
       if (newStatus === 'fixed') {
         await api.createNotification({
           user_id: bug.createdById,
@@ -572,10 +647,15 @@ export default function ReleaseTracker() {
   }
 
   async function handleBugResolve(release, bug, resolution) {
-    const ok = await run(
-      () => api.updateBug(bug.id, { status: 'verified', resolution }),
-      'Bug closed'
-    );
+    const ok = await run(async () => {
+      await api.updateBug(bug.id, {
+        status: 'verified',
+        resolution,
+        verified_at: new Date().toISOString(),
+        verified_by_id: user.id,
+      });
+      await reconcileWbsTaskForBug(release, bug);
+    }, 'Bug closed');
     if (ok) refetchBugs();
   }
 
@@ -604,8 +684,23 @@ export default function ReleaseTracker() {
 
   /* ---- projects + checklist (admin) ---- */
   async function handleCreateProject(p) {
-    const ok = await run(() => api.createProject(p), 'Project created');
-    if (ok) refetchProjects();
+    const ok = await run(async () => {
+      const projectId = await api.createProject(p);
+      // creator becomes the project's first (home) member so it's visible to them
+      if (projectId && user.role !== 'Admin') {
+        await api.addProjectMember({
+          project_id: projectId,
+          user_id: user.id,
+          project_role: user.role === 'Team Lead' ? 'lead' : 'developer',
+          access_type: 'home',
+          granted_by: user.id,
+        });
+      }
+    }, 'Project created');
+    if (ok) {
+      refetchProjects();
+      refetchProjectMembers();
+    }
   }
   async function handleUpdateProject(id, patch) {
     const ok = await run(() => api.updateProject(id, patch), 'Project updated');
@@ -630,6 +725,22 @@ export default function ReleaseTracker() {
       api.createChecklistItem(projectId, label, position)
     );
     if (ok) refetchChecklist();
+  }
+  /* ---- project members ---- */
+  async function handleAddMember(payload) {
+    const ok = await run(
+      () => api.addProjectMember({ ...payload, granted_by: user.id }),
+      'Member added'
+    );
+    if (ok) refetchProjectMembers();
+  }
+  async function handleUpdateMember(id, patch) {
+    const ok = await run(() => api.updateProjectMember(id, patch), 'Member updated');
+    if (ok) refetchProjectMembers();
+  }
+  async function handleRemoveMember(id) {
+    const ok = await run(() => api.removeProjectMember(id), 'Member removed');
+    if (ok) refetchProjectMembers();
   }
   async function handleDeleteChecklistItem(id) {
     const ok = await run(() => api.deleteChecklistItem(id));
@@ -879,18 +990,24 @@ export default function ReleaseTracker() {
                 <PageHeader title="Projects" subtitle="Create and manage projects and QA checklists" />
                 <ProjectsTab
                   isAdmin={isAdmin}
+                  user={user}
                   myTeamId={myTeamId}
                   teams={teams}
                   teamsById={teamsById}
                   projects={scopedProjects}
                   releases={scopedReleases}
                   checklistItems={checklistItems}
+                  profiles={profiles}
+                  projectMembers={projectMembers}
                   isSubmitting={isSubmitting}
                   onCreateProject={handleCreateProject}
                   onUpdateProject={handleUpdateProject}
                   onDeleteProject={handleDeleteProject}
                   onAddChecklistItem={handleAddChecklistItem}
                   onDeleteChecklistItem={handleDeleteChecklistItem}
+                  onAddMember={handleAddMember}
+                  onUpdateMember={handleUpdateMember}
+                  onRemoveMember={handleRemoveMember}
                 />
               </>
             )}
@@ -971,6 +1088,10 @@ export default function ReleaseTracker() {
       {showSubmit && (
         <SubmitModal
           projects={scopedProjects}
+          sentBackReleases={releases.filter(
+            (r) => r.status === 'sent_back' && r.submittedById === user.id
+          )}
+          bugs={bugs}
           isSubmitting={isSubmitting}
           onClose={() => setShowSubmit(false)}
           onSubmit={handleCreateRelease}
@@ -1004,7 +1125,10 @@ export default function ReleaseTracker() {
           isManager={isManagerOfSelected}
           profiles={profiles}
           profilesById={profilesById}
+          projectMembers={projectMembers}
           bugs={bugs.filter((b) => b.releaseId === selected.id)}
+          supersedesRelease={releases.find((r) => r.id === selected.supersedesReleaseId) || null}
+          supersededByRelease={releases.find((r) => r.supersedesReleaseId === selected.id) || null}
           checklistItems={checklistItems.filter(
             (c) => c.projectId === selected.projectId
           )}
@@ -1502,6 +1626,26 @@ function wbsPct(tasks) {
   return total ? Math.round((done / total) * 100) : 0;
 }
 
+// derive a section/group target date = the latest parseable est date of its tasks
+function latestEst(tasks) {
+  let best = null;
+  let bestStr = '';
+  tasks.forEach((t) => {
+    const s = t.estDate || t.est_date || t.est || '';
+    if (!s) return;
+    const ms = Date.parse(s);
+    if (Number.isNaN(ms)) {
+      if (!best && !bestStr) bestStr = s; // keep a free-form target if nothing parses
+      return;
+    }
+    if (best == null || ms > best) {
+      best = ms;
+      bestStr = s;
+    }
+  });
+  return bestStr;
+}
+
 function WbsTrackCell({ status, locked, canEdit, onChange }) {
   if (locked || !canEdit) return <WbsBadge status={status} />;
   return (
@@ -1855,6 +1999,11 @@ function WbsSection({ name, tasks, canEdit, onUpdate, bugsByTask }) {
       >
         <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', width: 10 }}>{open ? '▾' : '▸'}</span>
         <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1 }}>{name}</span>
+        {latestEst(tasks) && (
+          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+            Target {latestEst(tasks)}
+          </span>
+        )}
         <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
           {tasks.length} task{tasks.length === 1 ? '' : 's'} · {wbsPct(tasks)}%
         </span>
@@ -2198,10 +2347,12 @@ function SetPasswordScreen({ isSubmitting, onSetPassword }) {
 /* ================================================================== */
 
 const CLIENT_STATUS = {
-  pending: { label: 'In development', color: '#d97706' },
-  in_qa: { label: 'In testing', color: '#2563eb' },
-  qa_complete: { label: 'Completed', color: '#16a34a' },
-  bug_repeat: { label: 'Resolving issues', color: '#dc2626' },
+  qa_pending: { label: 'In development', color: '#d97706' },
+  qa_in_progress: { label: 'In testing', color: '#2563eb' },
+  qa_done: { label: 'In review', color: '#7c3aed' },
+  approved: { label: 'Completed', color: '#16a34a' },
+  sent_back: { label: 'Resolving issues', color: '#dc2626' },
+  closed: { label: 'Superseded', color: '#64748b' },
 };
 
 function publicWbsPct(items) {
@@ -2277,7 +2428,12 @@ function ClientWbsView({ wbs }) {
                   }}
                 >
                   <span style={{ fontSize: 13.5, fontWeight: 600 }}>{sk}</span>
-                  <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{publicWbsPct(ts)}%</span>
+                  <span style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
+                    {latestEst(ts) && (
+                      <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Target {latestEst(ts)}</span>
+                    )}
+                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{publicWbsPct(ts)}%</span>
+                  </span>
                 </div>
                 {ts.map(taskRow)}
               </div>
@@ -2337,10 +2493,11 @@ export function ClientDashboard({ token }) {
 
   const wbs = data.wbs || [];
   const showWbs = data.wbsEnabled && wbs.length > 0;
-  const releases = data.releases || [];
+  // hide superseded (closed) iterations from the client
+  const releases = (data.releases || []).filter((r) => r.status !== 'closed');
   const total = releases.length;
-  const completed = releases.filter((r) => r.status === 'qa_complete');
-  const inProgress = releases.filter((r) => r.status !== 'qa_complete');
+  const completed = releases.filter((r) => r.status === 'approved');
+  const inProgress = releases.filter((r) => r.status !== 'approved');
   const pct = total ? Math.round((completed.length / total) * 100) : 0;
   const current = inProgress[0]; // most recent non-complete
   const cs = (s) => CLIENT_STATUS[s] || { label: s, color: '#64748b' };
@@ -2906,10 +3063,12 @@ function NotificationsDropdown({ notifications, onNotifClick, onMarkAllRead }) {
 /* ================================================================== */
 
 const STATUS_ICONS = {
-  in_qa: IconSearch,
-  pending: IconClock,
-  qa_complete: IconCheck,
-  bug_repeat: IconBug,
+  qa_pending: IconClock,
+  qa_in_progress: IconSearch,
+  qa_done: IconCheck,
+  approved: IconCheck,
+  sent_back: IconBug,
+  closed: IconPackage,
 };
 
 function StatCards({ counts }) {
@@ -3610,7 +3769,7 @@ function RightPanel({
 /* Submit modal                                                       */
 /* ================================================================== */
 
-function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
+function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubmitting, onClose, onSubmit }) {
   const projectById = (id) => projects.find((x) => x.id === id);
   const firstProject = projects[0];
   const initPlatform = firstProject
@@ -3699,6 +3858,15 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
     }));
   }
 
+  // follow-up detection: an open sent-back release for the selected project
+  const priorSentBack = sentBackReleases.find((r) => r.projectId === form.projectId) || null;
+  const priorOpenBugs = priorSentBack
+    ? bugs.filter((b) => b.releaseId === priorSentBack.id && b.status !== 'verified').length
+    : 0;
+
+  // A WBS project with a prior sent-back release may be submitted as a
+  // bug-fix-only release (no WBS task selection required).
+  const bugFixEligible = isWbs && !!priorSentBack;
   const isWeb = form.platform === 'Web';
   const componentBad =
     isWeb && form.component === 'Other' && !form.componentOther.trim();
@@ -3707,7 +3875,9 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
     !form.version.trim() ||
     componentBad ||
     !!linkErr ||
-    (isWbs ? selectedTasks.length === 0 : !form.releaseNotes.trim());
+    (isWbs
+      ? !bugFixEligible && selectedTasks.length === 0 // feature release still needs ≥1 task
+      : !form.releaseNotes.trim());
 
   function submit() {
     if (invalid) return;
@@ -3752,6 +3922,25 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
           ))}
         </select>
       </Field>
+
+      {priorSentBack && (
+        <div
+          style={{
+            padding: '10px 12px',
+            marginBottom: 12,
+            borderRadius: 10,
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: 'var(--warning)',
+            background: 'var(--color-background-secondary)',
+            border: '1px solid var(--color-border-tertiary)',
+          }}
+        >
+          You have an open QA cycle on <strong>v{priorSentBack.version}</strong> with {priorOpenBugs} unresolved
+          bug{priorOpenBugs === 1 ? '' : 's'}. Submitting closes v{priorSentBack.version} and carries its
+          unresolved &amp; fixed-pending-verification bugs into this new release.
+        </div>
+      )}
 
       {platforms.length > 1 && (
         <Field label="Platform">
@@ -3902,10 +4091,27 @@ function SubmitModal({ projects, isSubmitting, onClose, onSubmit }) {
             </div>
           </Field>
 
-          <Field label={`WBS tasks (${selectedTasks.length} selected)`}>
+          <Field
+            label={`WBS tasks (${selectedTasks.length} selected)${bugFixEligible ? ' — optional' : ''}`}
+          >
+            {bugFixEligible && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--color-text-tertiary)',
+                  marginBottom: 8,
+                  lineHeight: 1.5,
+                }}
+              >
+                Leave empty for a <strong>bug-fix release</strong> (only fixes carried from v
+                {priorSentBack.version}). Select tasks only if this build also completes new WBS work.
+              </div>
+            )}
             {wbsTasks.length === 0 ? (
               <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-                No available tasks — all are already in QA or complete.
+                {bugFixEligible
+                  ? 'No feature tasks available — submit as a bug-fix release.'
+                  : 'No available tasks — all are already in QA or complete.'}
               </div>
             ) : (
               <div
@@ -4083,7 +4289,10 @@ function DetailModal({
   isManager,
   profiles,
   profilesById,
+  projectMembers,
   bugs,
+  supersedesRelease,
+  supersededByRelease,
   checklistItems,
   isSubmitting,
   showToast,
@@ -4114,8 +4323,9 @@ function DetailModal({
   const isOwner =
     release.submittedById === user.id || release.submittedBy === user.name;
   const ownerWindow = isOwner && withinEditWindow(release);
-  const canEdit = isManager || ownerWindow;
-  const canDelete = isManager || ownerWindow;
+  const readOnly = isReadOnly(release);
+  const canEdit = !readOnly && (isManager || ownerWindow);
+  const canDelete = !readOnly && (isManager || ownerWindow);
   const ownerLocked = isOwner && !isManager && !withinEditWindow(release);
 
   const loadChecks = useCallback(async () => {
@@ -4138,20 +4348,20 @@ function DetailModal({
     checklistItems.every((it) => checks[it.id]);
 
   function attemptStatus(newStatus) {
-    if (newStatus === 'qa_complete') {
+    if (newStatus === 'approved') {
       const blocking = bugs.filter(
         (b) => b.status !== 'verified' && (b.severity === 'critical' || b.severity === 'major')
       ).length;
       if (blocking > 0) {
         showToast(
-          `Cannot mark QA Complete — ${blocking} unresolved Major/Critical bug${blocking === 1 ? '' : 's'} must be verified first.`,
+          `Cannot approve — ${blocking} unresolved Major/Critical bug${blocking === 1 ? '' : 's'} must be verified first.`,
           'error'
         );
         setTab('bugs');
         return;
       }
       if (checklistItems.length > 0 && !allChecked) {
-        showToast('Complete the checklist before marking QA Complete', 'error');
+        showToast('Complete the checklist before approving', 'error');
         setTab('checklist');
         return;
       }
@@ -4172,10 +4382,19 @@ function DetailModal({
   const openBugs = bugs.filter((b) => b.status === 'open').length;
   // QA testers assignable to this release: QA role only (never Admin),
   // limited to the release's project team.
-  const qaTeamId = project ? project.teamId : null;
-  const qaList = profiles.filter(
-    (p) => p.role === 'QA' && p.teamId === qaTeamId
+  // QA testers assignable to this release = active QA members of the project
+  // (home members + temporary support QAs), never Admins.
+  const projectQaIds = new Set(
+    (projectMembers || [])
+      .filter(
+        (m) =>
+          m.projectId === release.projectId &&
+          api.membershipActive(m) &&
+          (m.projectRole === 'qa' || profilesById[m.userId]?.role === 'QA')
+      )
+      .map((m) => m.userId)
   );
+  const qaList = profiles.filter((p) => p.role === 'QA' && projectQaIds.has(p.id));
 
   const tabBtn = (key, label, badge) => (
     <div
@@ -4235,6 +4454,10 @@ function DetailModal({
       {tab === 'details' && (
         <DetailsTab
           release={release}
+          supersedesRelease={supersedesRelease}
+          supersededByRelease={supersededByRelease}
+          bugCount={bugs.length}
+          openBugCount={openBugs}
           note={note}
           setNote={setNote}
           isQA={isQA}
@@ -4302,6 +4525,10 @@ function DetailModal({
 
 function DetailsTab({
   release,
+  supersedesRelease,
+  supersededByRelease,
+  bugCount = 0,
+  openBugCount = 0,
   note,
   setNote,
   isQA,
@@ -4350,6 +4577,29 @@ function DetailsTab({
 
   return (
     <>
+      {(supersedesRelease || supersededByRelease) && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginBottom: 12,
+            fontSize: 11.5,
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          {supersedesRelease && (
+            <span style={{ padding: '3px 9px', borderRadius: 999, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+              ↩ Supersedes v{supersedesRelease.version}
+            </span>
+          )}
+          {supersededByRelease && (
+            <span style={{ padding: '3px 9px', borderRadius: 999, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+              ↪ Superseded by v{supersededByRelease.version}
+            </span>
+          )}
+        </div>
+      )}
       <div
         style={{
           display: 'grid',
@@ -4505,40 +4755,64 @@ function DetailsTab({
               This release is assigned to another tester.
             </div>
           )}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 8,
-              marginBottom: 12,
-            }}
-          >
-            {STATUS_ORDER.map((key) => {
-              const active = release.status === key;
-              const c = STATUSES[key].color;
-              return (
-                <button
-                  key={key}
-                  disabled={isSubmitting || !canDoQA}
-                  onClick={() => onAttemptStatus(key)}
-                  style={{
-                    padding: '9px 12px',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    borderRadius: 10,
-                    cursor: isSubmitting || !canDoQA ? 'default' : 'pointer',
-                    fontFamily: 'inherit',
-                    opacity: canDoQA ? 1 : 0.5,
-                    color: active ? '#fff' : c,
-                    background: active ? c : `${c}14`,
-                    border: `0.5px solid ${active ? c : 'transparent'}`,
-                  }}
-                >
-                  {STATUSES[key].label}
-                </button>
-              );
-            })}
+          {/* current stage + bug summary */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <StatusBadge status={release.status} />
+            <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+              {bugCount} bug{bugCount === 1 ? '' : 's'} reported
+              {openBugCount ? ` · ${openBugCount} open` : ''}
+            </span>
           </div>
+          {/* contextual next-step actions (enforced transitions) */}
+          {(() => {
+            const steps = isReadOnly(release) ? [] : nextStatuses(release.status);
+            if (isReadOnly(release))
+              return (
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+                  This release is closed (superseded) and read-only.
+                </div>
+              );
+            if (steps.length === 0)
+              return (
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+                  {release.status === 'approved'
+                    ? 'Approved — no further QA action.'
+                    : release.status === 'sent_back'
+                      ? 'Sent back to the developer. A follow-up release will supersede this one.'
+                      : 'No actions available.'}
+                </div>
+              );
+            return (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                {steps.map((key) => {
+                  const c = STATUSES[key].color;
+                  return (
+                    <button
+                      key={key}
+                      disabled={isSubmitting || !canDoQA}
+                      onClick={() => onAttemptStatus(key)}
+                      style={{
+                        flex: 1,
+                        minWidth: 130,
+                        padding: '10px 12px',
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        borderRadius: 10,
+                        cursor: isSubmitting || !canDoQA ? 'default' : 'pointer',
+                        fontFamily: 'inherit',
+                        opacity: canDoQA ? 1 : 0.5,
+                        color: '#fff',
+                        background: c,
+                        border: `0.5px solid ${c}`,
+                      }}
+                    >
+                      {TRANSITION_LABELS[key] || STATUSES[key].label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
           <label style={labelStyle}>QA note (optional)</label>
           <textarea
             style={{ ...inputStyle, resize: 'vertical', marginBottom: 10 }}
@@ -4666,6 +4940,7 @@ function BugsTab({
   }, [wbsEnabled, release.id]);
 
   const isDev = user.role === 'Developer' || user.role === 'Admin';
+  const readOnly = isReadOnly(release);
   const wbsBug = wbsEnabled && releaseTasks.length > 0;
   const invalid = !form.title.trim() || (wbsBug && !form.wbsTaskId);
 
@@ -4702,7 +4977,12 @@ function BugsTab({
 
   return (
     <>
-      {isQA && (
+      {readOnly && (
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+          This release is closed (superseded). Bugs are shown as they were at close.
+        </div>
+      )}
+      {isQA && !readOnly && (
         <div style={{ marginBottom: 14 }}>
           {!show ? (
             <button style={ghostButton} onClick={() => setShow(true)}>
@@ -4836,8 +5116,8 @@ function BugsTab({
       ) : (
         <>
           <FeatureSummary bugs={bugs} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {bugs.map((bug) => (
+          {(() => {
+            const renderBug = (bug) => (
               <BugRow
                 key={bug.id}
                 bug={bug}
@@ -4846,16 +5126,39 @@ function BugsTab({
                 taggable={taggable}
                 commentCount={commentCounts[bug.id] || 0}
                 onCommentsChanged={refreshCounts}
-                isDev={isDev}
-                isQA={isQA}
-                canDelete={user.role === 'Admin' || bug.createdById === user.id}
+                isDev={isDev && !readOnly}
+                isQA={isQA && !readOnly}
+                canDelete={!readOnly && (user.role === 'Admin' || bug.createdById === user.id)}
                 isSubmitting={isSubmitting}
                 onStatus={(st) => onBugStatus(release, bug, st)}
                 onResolve={(res) => onBugResolve(release, bug, res)}
                 onDelete={() => onDeleteBug(bug)}
               />
-            ))}
-          </div>
+            );
+            const pendingVerify = bugs.filter((b) => b.carriedForward && b.status === 'fixed');
+            const carried = bugs.filter((b) => b.carriedForward && b.status !== 'fixed');
+            const fresh = bugs.filter((b) => !b.carriedForward);
+            const group = (label, list, hint) =>
+              list.length === 0 ? null : (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ ...sideHead, marginBottom: 8, display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                    {label} <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}>· {list.length}</span>
+                    {hint && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', fontWeight: 400 }}>{hint}</span>}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{list.map(renderBug)}</div>
+                </div>
+              );
+            // if nothing was carried, keep the original flat list
+            if (!pendingVerify.length && !carried.length)
+              return <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{fresh.map(renderBug)}</div>;
+            return (
+              <>
+                {group('Pending verification', pendingVerify, 'fixed on a prior build — verify on this release')}
+                {group('Carried forward', carried, 'still unresolved from a prior build')}
+                {group('New this release', fresh)}
+              </>
+            );
+          })()}
         </>
       )}
     </>
@@ -4958,6 +5261,21 @@ function BugRow({
     <div style={{ ...card, padding: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{bug.title}</span>
+        {bug.iteration > 1 && (
+          <span
+            title={`Carried across ${bug.iteration} releases`}
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '2px 7px',
+              borderRadius: 999,
+              color: 'var(--brand)',
+              background: 'var(--brand-soft)',
+            }}
+          >
+            Carried ×{bug.iteration - 1}
+          </span>
+        )}
         <SlaBadge
           level={bugSlaLevel(bug.status, bug.createdAt)}
           title="This bug is aging — resolve or escalate"
@@ -6169,18 +6487,24 @@ function UsersTab({
 
 function ProjectsTab({
   isAdmin,
+  user,
   myTeamId,
   teams,
   teamsById,
   projects,
   releases,
   checklistItems,
+  profiles,
+  projectMembers,
   isSubmitting,
   onCreateProject,
   onUpdateProject,
   onDeleteProject,
   onAddChecklistItem,
   onDeleteChecklistItem,
+  onAddMember,
+  onUpdateMember,
+  onRemoveMember,
 }) {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
@@ -6355,15 +6679,21 @@ function ProjectsTab({
               key={p.id}
               project={p}
               isAdmin={isAdmin}
+              user={user}
               teams={teams}
               teamName={p.teamId ? teamsById[p.teamId]?.name : null}
               releaseCount={releaseCount(p.id)}
               items={checklistItems.filter((c) => c.projectId === p.id)}
+              profiles={profiles}
+              members={projectMembers.filter((m) => m.projectId === p.id)}
               isSubmitting={isSubmitting}
               onUpdate={onUpdateProject}
               onDelete={() => onDeleteProject(p.id)}
               onAddItem={(label, pos) => onAddChecklistItem(p.id, label, pos)}
               onDeleteItem={onDeleteChecklistItem}
+              onAddMember={onAddMember}
+              onUpdateMember={onUpdateMember}
+              onRemoveMember={onRemoveMember}
             />
           ))}
           {visible < filteredProjects.length && (
@@ -6383,15 +6713,21 @@ function ProjectsTab({
 function ProjectRow({
   project,
   isAdmin,
+  user,
   teams,
   teamName,
   releaseCount,
   items,
+  profiles,
+  members,
   isSubmitting,
   onUpdate,
   onDelete,
   onAddItem,
   onDeleteItem,
+  onAddMember,
+  onUpdateMember,
+  onRemoveMember,
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -6622,8 +6958,221 @@ function ProjectRow({
             </div>
           </div>
 
+          <ProjectMembersSection
+            project={project}
+            profiles={profiles}
+            members={members}
+            canManage={isAdmin || (user?.role === 'Team Lead' && user?.teamId === project.teamId)}
+            currentUser={user}
+            isSubmitting={isSubmitting}
+            onAddMember={onAddMember}
+            onUpdateMember={onUpdateMember}
+            onRemoveMember={onRemoveMember}
+          />
+
           {isAdmin && <ClientLinkSection projectId={project.id} />}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectMembersSection({
+  project,
+  profiles,
+  members,
+  canManage,
+  currentUser,
+  isSubmitting,
+  onAddMember,
+  onUpdateMember,
+  onRemoveMember,
+}) {
+  const [adding, setAdding] = useState(false);
+  const [pick, setPick] = useState('');
+  const [role, setRole] = useState('developer');
+  const [expires, setExpires] = useState('');
+
+  const profileById = useMemo(() => {
+    const m = {};
+    (profiles || []).forEach((p) => (m[p.id] = p));
+    return m;
+  }, [profiles]);
+
+  const memberUserIds = new Set(members.map((m) => m.userId));
+  // anyone (from any team) who isn't already a member and isn't an Admin
+  const addable = (profiles || [])
+    .filter((p) => p.role !== 'Admin' && !memberUserIds.has(p.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const home = members.filter((m) => m.accessType !== 'support');
+  const support = members.filter((m) => m.accessType === 'support');
+
+  const active = (m) => !m.expiresAt || new Date(m.expiresAt).getTime() > Date.now();
+  const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString() : null);
+
+  function submitAdd() {
+    if (!pick) return;
+    const picked = profileById[pick];
+    // a member from another team is a temporary "support" grant
+    const accessType = picked && picked.teamId === project.teamId ? 'home' : 'support';
+    onAddMember({
+      project_id: project.id,
+      user_id: pick,
+      project_role: role,
+      access_type: accessType,
+      expires_at: accessType === 'support' && expires ? new Date(expires).toISOString() : null,
+    });
+    setPick('');
+    setRole('developer');
+    setExpires('');
+    setAdding(false);
+  }
+
+  function extend(m) {
+    const base = m.expiresAt && new Date(m.expiresAt) > new Date() ? new Date(m.expiresAt) : new Date();
+    base.setDate(base.getDate() + 30);
+    onUpdateMember(m.id, { expires_at: base.toISOString() });
+  }
+
+  const chip = (text, color) => (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '1px 7px',
+        borderRadius: 999,
+        color,
+        background: `${color}1a`,
+      }}
+    >
+      {text}
+    </span>
+  );
+
+  const roleColor = { qa: '#2563eb', lead: '#d97706', developer: '#16a34a', viewer: '#64748b' };
+
+  const memberRow = (m) => {
+    const p = profileById[m.userId];
+    const expired = !active(m);
+    return (
+      <div
+        key={m.id}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 9,
+          padding: '7px 0',
+          borderTop: '1px solid var(--color-border-primary)',
+          opacity: expired ? 0.5 : 1,
+        }}
+      >
+        <Avatar name={p?.name || '?'} size={24} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 500 }}>{p?.name || 'Unknown user'}</div>
+          <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+            {p?.email}
+          </div>
+        </div>
+        {chip((m.projectRole || 'developer').toUpperCase(), roleColor[m.projectRole] || '#64748b')}
+        {m.accessType === 'support' &&
+          chip(m.expiresAt ? `until ${fmt(m.expiresAt)}` : 'no end date', expired ? '#dc2626' : '#7c3aed')}
+        {canManage && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            {m.accessType === 'support' && (
+              <button
+                style={{ ...ghostButton, padding: '3px 8px', fontSize: 11 }}
+                disabled={isSubmitting}
+                onClick={() => extend(m)}
+                title="Extend access by 30 days"
+              >
+                +30d
+              </button>
+            )}
+            <button
+              style={{ ...ghostButton, padding: '3px 8px', fontSize: 11, color: '#dc2626', borderColor: '#dc262644' }}
+              disabled={isSubmitting || m.userId === currentUser?.id}
+              onClick={() => onRemoveMember(m.id)}
+              title={m.userId === currentUser?.id ? "You can't remove yourself" : 'Remove from project'}
+            >
+              Remove
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '0.5px solid var(--color-border-primary)', paddingTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ ...labelStyle, margin: 0 }}>
+          Members <span style={{ color: 'var(--color-text-tertiary)' }}>· {members.length}</span>
+        </div>
+        {canManage && (
+          <button style={{ ...ghostButton, padding: '4px 10px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}>
+            {adding ? 'Cancel' : '+ Add member'}
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <div style={{ ...card, padding: 12, marginBottom: 10, background: 'var(--color-background-secondary)' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '2 1 180px' }}>
+              <div style={{ ...labelStyle }}>Person (any team)</div>
+              <select style={inputStyle} value={pick} onChange={(e) => setPick(e.target.value)}>
+                <option value="">Select…</option>
+                {addable.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.role}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: '1 1 110px' }}>
+              <div style={{ ...labelStyle }}>Role here</div>
+              <select style={inputStyle} value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="developer">Developer</option>
+                <option value="qa">QA</option>
+                <option value="lead">Lead</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </div>
+          </div>
+          {pick && profileById[pick]?.teamId !== project.teamId && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ ...labelStyle }}>
+                Support access ends <span style={{ color: 'var(--color-text-tertiary)' }}>(blank = no end date)</span>
+              </div>
+              <input type="date" style={{ ...inputStyle, width: 'auto' }} value={expires} onChange={(e) => setExpires(e.target.value)} />
+              <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                This person is from another team — they'll get temporary <strong>support</strong> access that expires on this date.
+              </div>
+            </div>
+          )}
+          <button style={{ ...primaryButton(!pick), marginTop: 10 }} disabled={!pick || isSubmitting} onClick={submitAdd}>
+            Add to project
+          </button>
+        </div>
+      )}
+
+      {members.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+          No members yet — only Admins can see this project until members are added.
+        </div>
+      ) : (
+        <>
+          {home.map(memberRow)}
+          {support.length > 0 && (
+            <>
+              <div style={{ ...labelStyle, marginTop: 10, marginBottom: 0 }}>
+                Support (temporary) <span style={{ color: 'var(--color-text-tertiary)' }}>· {support.length}</span>
+              </div>
+              {support.map(memberRow)}
+            </>
+          )}
+        </>
       )}
     </div>
   );
@@ -6812,7 +7361,10 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
     return true;
   });
   const relIds = new Set(relF.map((r) => r.id));
-  const bugsF = bugs.filter((b) => relIds.has(b.releaseId));
+  // bugs on closed (superseded) releases were carried onto their successor —
+  // exclude them from bug metrics so carried bugs aren't counted twice.
+  const closedRelIds = new Set(relF.filter((r) => isClosedStatus(r.status)).map((r) => r.id));
+  const bugsF = bugs.filter((b) => relIds.has(b.releaseId) && !closedRelIds.has(b.releaseId));
 
   // a release is "blocked" while it still has open Major/Critical bugs
   const blockedReleaseIds = new Set(
@@ -6823,17 +7375,17 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
 
   // ---- QA quality (based on real outcome, not just submission) ----
   const submitted = relF.length;
-  const approved = relF.filter((r) => r.status === 'qa_complete' && !blockedReleaseIds.has(r.id)).length;
+  const approved = relF.filter((r) => r.status === 'approved' && !blockedReleaseIds.has(r.id)).length;
   // bug_repeat, or "approved" releases that still carry blocking bugs, count as not-passed
   const rejected = relF.filter(
-    (r) => r.status === 'bug_repeat' || (r.status === 'qa_complete' && blockedReleaseIds.has(r.id))
+    (r) => r.status === 'sent_back' || (r.status === 'approved' && blockedReleaseIds.has(r.id))
   ).length;
   const decided = approved + rejected;
   const passRate = decided ? Math.round((approved / decided) * 100) : 0;
   const rejRate = decided ? Math.round((rejected / decided) * 100) : 0;
 
   // ---- velocity ----
-  const completed = relF.filter((r) => r.status === 'qa_complete' && r.qaCompletedAt);
+  const completed = relF.filter((r) => r.status === 'approved' && r.qaCompletedAt);
   // total cycle is only meaningful once a release has gone through QA assignment
   const cycleDays = avgDaysBetween(
     completed.filter((r) => r.qaAssignedAt),
@@ -6872,6 +7424,14 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
     return relF.find((r) => r.id === id);
   }
 
+  // ---- bug lineage: carry-forward rate + avg iterations to verify ----
+  const carriedBugs = bugsF.filter((b) => b.carriedForward).length;
+  const carryRate = bugsF.length ? Math.round((carriedBugs / bugsF.length) * 100) : 0;
+  const verifiedIters = bugsF.filter((b) => b.status === 'verified').map((b) => b.iteration || 1);
+  const avgIterations = verifiedIters.length
+    ? (verifiedIters.reduce((s, n) => s + n, 0) / verifiedIters.length).toFixed(1)
+    : null;
+
   // ---- workload ----
   const wlMembers = profiles
     .filter((p) => p.role !== 'Admin' && (f.team === 'all' || p.teamId === f.team))
@@ -6879,9 +7439,9 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
       const mine = new Set(relF.filter((r) => r.submittedById === m.id).map((r) => r.id));
       return {
         m,
-        activeReleases: relF.filter((r) => r.submittedById === m.id && r.status !== 'qa_complete').length,
+        activeReleases: relF.filter((r) => r.submittedById === m.id && isActiveStatus(r.status)).length,
         pendingReviews: relF.filter(
-          (r) => r.assignedQa === m.id && (r.status === 'pending' || r.status === 'in_qa')
+          (r) => r.assignedQa === m.id && (r.status === 'qa_pending' || r.status === 'qa_in_progress')
         ).length,
         openBugs: bugsF.filter(
           (b) => (b.createdById === m.id || mine.has(b.releaseId)) && b.status !== 'verified'
@@ -6898,7 +7458,7 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
     bottlenecks.push({ level: 'over', text: `${overSla.length} release(s) past their SLA (Pending/In QA).` });
   const reviewerLoad = {};
   relF.forEach((r) => {
-    if (r.assignedQa && (r.status === 'pending' || r.status === 'in_qa'))
+    if (r.assignedQa && (r.status === 'qa_pending' || r.status === 'qa_in_progress'))
       reviewerLoad[r.assignedQa] = (reviewerLoad[r.assignedQa] || 0) + 1;
   });
   Object.entries(reviewerLoad)
@@ -6915,7 +7475,7 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
   });
   (f.team === 'all' ? teams : teams.filter((t) => t.id === f.team)).forEach((t) => {
     const waiting = relF.some(
-      (r) => projectsById[r.projectId]?.teamId === t.id && (r.status === 'pending' || r.status === 'in_qa')
+      (r) => projectsById[r.projectId]?.teamId === t.id && (r.status === 'qa_pending' || r.status === 'qa_in_progress')
     );
     if (waiting && !qaCountByTeam[t.id])
       bottlenecks.push({ level: 'over', text: `${t.name} has releases waiting but no QA testers.` });
@@ -6998,7 +7558,7 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
         submitted: myRel.length,
         // queue: bugs waiting on the developer to fix
         awaitingFix: onMyRel.filter((b) => ['open', 'in_progress', 'disputed'].includes(b.status)).length,
-        active: myRel.filter((r) => r.status !== 'qa_complete').length,
+        active: myRel.filter((r) => isActiveStatus(r.status)).length,
         openBugs: onMyRel.filter((b) => b.status !== 'verified').length,
       };
     })
@@ -7009,9 +7569,9 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
     .filter((p) => p.role === 'QA' && (f.team === 'all' || p.teamId === f.team))
     .map((q) => {
       const assigned = relF.filter((r) => r.assignedQa === q.id);
-      const appr = assigned.filter((r) => r.status === 'qa_complete' && !blockedReleaseIds.has(r.id)).length;
+      const appr = assigned.filter((r) => r.status === 'approved' && !blockedReleaseIds.has(r.id)).length;
       const rej = assigned.filter(
-        (r) => r.status === 'bug_repeat' || (r.status === 'qa_complete' && blockedReleaseIds.has(r.id))
+        (r) => r.status === 'sent_back' || (r.status === 'approved' && blockedReleaseIds.has(r.id))
       ).length;
       const dec = appr + rej;
       const reportedIds = new Set(bugsF.filter((b) => b.createdById === q.id).map((b) => b.id));
@@ -7023,8 +7583,8 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
         approveRate: dec ? Math.round((appr / dec) * 100) : 0,
         rejectRate: dec ? Math.round((rej / dec) * 100) : 0,
         // queues: releases pending review, in QA, and fixes awaiting re-verification
-        pendingQa: assigned.filter((r) => r.status === 'pending').length,
-        inQa: assigned.filter((r) => r.status === 'in_qa').length,
+        pendingQa: assigned.filter((r) => r.status === 'qa_pending').length,
+        inQa: assigned.filter((r) => r.status === 'qa_in_progress').length,
         awaitingVerify: bugsF.filter((b) => b.createdById === q.id && b.status === 'fixed').length,
       };
     })
@@ -7038,11 +7598,11 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
       const rel = relF.filter((r) => r.projectId === p.id);
       const bugCount = bugsF.filter((b) => relById(b.releaseId)?.projectId === p.id).length;
       const avg = avgDaysBetween(
-        rel.filter((r) => r.status === 'qa_complete' && r.qaCompletedAt),
+        rel.filter((r) => r.status === 'approved' && r.qaCompletedAt),
         'createdAt',
         'qaCompletedAt'
       );
-      const reps = rel.filter((r) => r.status === 'bug_repeat').length;
+      const reps = rel.filter((r) => r.status === 'sent_back').length;
       return { project: p, n: rel.length, bugCount, avg, rejRate: rel.length ? Math.round((reps / rel.length) * 100) : 0 };
     })
     .filter((r) => r.n > 0);
@@ -7143,6 +7703,12 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
             value={prodBugs}
             sub="bugs reported in production"
             color={prodBugs > 0 ? 'var(--danger)' : undefined}
+          />
+          <Kpi
+            label="Carried forward"
+            value={carriedBugs}
+            sub={`${carryRate}% of bugs${avgIterations ? ` · ~${avgIterations} builds to verify` : ''}`}
+            color={carryRate >= 30 ? 'var(--warning)' : undefined}
           />
         </div>
       </AnSection>
@@ -7464,7 +8030,7 @@ function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAdmin, em
 
 function buildChangelog(project, releases) {
   const done = releases
-    .filter((r) => r.status === 'qa_complete')
+    .filter((r) => r.status === 'approved')
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   const lines = [`# ${project.name} — Changelog`, ''];
   if (done.length === 0) lines.push('_No QA-complete releases yet._');

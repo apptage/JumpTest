@@ -1,11 +1,48 @@
-/* Release statuses */
+/* Release statuses — explicit QA lifecycle.
+   qa_pending → qa_in_progress → qa_done → approved | sent_back; closed is terminal. */
 export const STATUSES = {
-  in_qa: { label: 'In QA', color: '#64748b', icon: '🔍' },
-  pending: { label: 'Pending', color: '#d97706', icon: '⏳' },
-  qa_complete: { label: 'QA Complete', color: '#16a34a', icon: '✅' },
-  bug_repeat: { label: 'Repeat Bug', color: '#dc2626', icon: '🐛' },
+  qa_pending: { label: 'QA Pending', color: '#d97706', icon: '⏳' },
+  qa_in_progress: { label: 'QA In Progress', color: '#2563eb', icon: '🔍' },
+  qa_done: { label: 'QA Done', color: '#7c3aed', icon: '📋' },
+  approved: { label: 'Approved', color: '#16a34a', icon: '✅' },
+  sent_back: { label: 'Sent Back', color: '#dc2626', icon: '↩️' },
+  closed: { label: 'Closed', color: '#64748b', icon: '🗄️' },
 };
-export const STATUS_ORDER = ['in_qa', 'pending', 'qa_complete', 'bug_repeat'];
+export const STATUS_ORDER = ['qa_pending', 'qa_in_progress', 'qa_done', 'approved', 'sent_back', 'closed'];
+
+/* Allowed forward transitions (QA / manager driven). sent_back is resolved by
+   the developer submitting a follow-up release, not by an in-place transition. */
+export const STATUS_TRANSITIONS = {
+  qa_pending: ['qa_in_progress'],
+  qa_in_progress: ['qa_done'],
+  qa_done: ['approved', 'sent_back'],
+  approved: [],
+  sent_back: [],
+  closed: [],
+};
+export function nextStatuses(status) {
+  return STATUS_TRANSITIONS[status] || [];
+}
+/* Friendly action label for a transition target. */
+export const TRANSITION_LABELS = {
+  qa_in_progress: 'Start QA',
+  qa_done: 'Mark QA Done',
+  approved: 'Approve',
+  sent_back: 'Send Back',
+};
+
+/* Statuses that occupy an open QA cycle (shown on the active board). */
+export const ACTIVE_STATUSES = ['qa_pending', 'qa_in_progress', 'qa_done', 'sent_back'];
+export function isActiveStatus(s) {
+  return ACTIVE_STATUSES.includes(s);
+}
+export function isClosedStatus(s) {
+  return s === 'closed';
+}
+/* A release is read-only once it has been superseded/closed. */
+export function isReadOnly(release) {
+  return release?.status === 'closed';
+}
 
 /* Release delivery types */
 export const RELEASE_TYPES = {
@@ -62,7 +99,7 @@ export function withinEditWindow(release) {
 }
 
 /* ---- SLA thresholds (hours) by release status ---- */
-export const SLA_HOURS = { pending: 24, in_qa: 72 };
+export const SLA_HOURS = { qa_pending: 24, qa_in_progress: 72, qa_done: 48 };
 export const BUG_SLA_DAYS = 5;
 
 /* level: null (ok) | 'warn' (>=75% of SLA) | 'over' (past SLA) */

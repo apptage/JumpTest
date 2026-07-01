@@ -52,6 +52,8 @@ export function mapRelease(r) {
     qaCompletedAt: r.qa_completed_at,
     statusChangedAt: r.status_changed_at,
     qaAssignedAt: r.qa_assigned_at,
+    supersedesReleaseId: r.supersedes_release_id || null,
+    closedAt: r.closed_at || null,
     createdAt: r.created_at,
   };
 }
@@ -69,6 +71,13 @@ export function mapBug(b) {
     feature: b.feature || '',
     resolution: b.resolution || '',
     wbsTaskId: b.wbs_task_id || null,
+    bugKey: b.bug_key || null,
+    originReleaseId: b.origin_release_id || null,
+    carriedFromReleaseId: b.carried_from_release_id || null,
+    carriedForward: !!b.carried_forward,
+    iteration: b.iteration || 1,
+    verifiedAt: b.verified_at || null,
+    verifiedById: b.verified_by_id || null,
     createdBy: b.created_by,
     createdById: b.created_by_id,
     createdAt: b.created_at,
@@ -107,6 +116,49 @@ export function mapChecklistItem(i) {
     label: i.label,
     position: i.position,
   };
+}
+
+export function mapProjectMember(m) {
+  return {
+    id: m.id,
+    projectId: m.project_id,
+    userId: m.user_id,
+    projectRole: m.project_role,
+    accessType: m.access_type, // 'home' | 'support'
+    expiresAt: m.expires_at || null,
+    grantedBy: m.granted_by || null,
+    createdAt: m.created_at,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Project membership (visibility + submit + QA eligibility unit)      */
+/* ------------------------------------------------------------------ */
+
+// A membership grants access while it has no expiry or hasn't expired yet.
+export function membershipActive(m) {
+  return !m.expiresAt || new Date(m.expiresAt).getTime() > Date.now();
+}
+
+export async function fetchProjectMembers() {
+  const { data, error } = await supabase.from('project_members').select('*');
+  if (error) throw error;
+  return data.map(mapProjectMember);
+}
+
+export async function addProjectMember(payload) {
+  const { error } = await supabase.from('project_members').insert(payload);
+  if (error) throw error;
+}
+
+export async function updateProjectMember(id, patch) {
+  const { error } = await supabase.from('project_members').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+export async function removeProjectMember(id) {
+  const { error } = await supabase.from('project_members').delete().eq('id', id);
+  if (error) throw error;
 }
 
 /* ------------------------------------------------------------------ */
@@ -287,10 +339,11 @@ export async function importWbs(projectId, parsed) {
       section: p.section,
       type: p.type,
       name: p.name,
-      // keep portal-owned progress + comments across re-imports
-      dev_comments: prev ? prev.devComments : p.dev_comments,
-      backend_status: prev ? prev.backendStatus : p.backend_status,
-      frontend_status: prev ? prev.frontendStatus : p.frontend_status,
+      // statuses + comments are app-managed, never imported from the sheet:
+      // new tasks start "Not Started"; re-imports keep portal-owned progress.
+      dev_comments: prev ? prev.devComments : '',
+      backend_status: prev ? prev.backendStatus : 'not_started',
+      frontend_status: prev ? prev.frontendStatus : 'not_started',
       est_date: p.est_date,
       position: p.position,
     };
@@ -336,18 +389,30 @@ export async function createReleaseTasks(releaseId, items) {
   if (error) throw error;
 }
 
-// open (non-verified) bug counts per WBS task, for a set of task ids
+// which of these release ids are closed (superseded)?  bugs now has several
+// FKs to releases, so we resolve this with a plain second query rather than an
+// (ambiguous) embed.
+async function closedReleaseIdSet(releaseIds) {
+  const ids = [...new Set((releaseIds || []).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const { data, error } = await supabase.from('releases').select('id, status').in('id', ids);
+  if (error) throw error;
+  return new Set(data.filter((r) => r.status === 'closed').map((r) => r.id));
+}
+
+// open (non-verified) bug counts per WBS task, across active (non-closed) releases
 export async function fetchOpenBugCountsByTask(taskIds) {
   if (!taskIds || taskIds.length === 0) return {};
   const { data, error } = await supabase
     .from('bugs')
-    .select('wbs_task_id, status')
+    .select('wbs_task_id, status, release_id')
     .in('wbs_task_id', taskIds)
     .neq('status', 'verified');
   if (error) throw error;
+  const closed = await closedReleaseIdSet(data.map((b) => b.release_id));
   const m = {};
   data.forEach((b) => {
-    if (b.wbs_task_id) m[b.wbs_task_id] = (m[b.wbs_task_id] || 0) + 1;
+    if (b.wbs_task_id && !closed.has(b.release_id)) m[b.wbs_task_id] = (m[b.wbs_task_id] || 0) + 1;
   });
   return m;
 }
@@ -357,18 +422,21 @@ export async function fetchBugsByTaskIds(taskIds) {
   if (!taskIds || taskIds.length === 0) return [];
   const { data, error } = await supabase
     .from('bugs')
-    .select('id, title, severity, status, wbs_task_id')
+    .select('id, title, severity, status, wbs_task_id, release_id')
     .in('wbs_task_id', taskIds)
     .neq('status', 'verified')
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return data.map((b) => ({
-    id: b.id,
-    title: b.title,
-    severity: b.severity,
-    status: b.status,
-    wbsTaskId: b.wbs_task_id,
-  }));
+  const closed = await closedReleaseIdSet(data.map((b) => b.release_id));
+  return data
+    .filter((b) => !closed.has(b.release_id))
+    .map((b) => ({
+      id: b.id,
+      title: b.title,
+      severity: b.severity,
+      status: b.status,
+      wbsTaskId: b.wbs_task_id,
+    }));
 }
 
 export async function fetchReleaseTasks(releaseId) {
@@ -410,13 +478,18 @@ export async function fetchProjects() {
 }
 
 export async function createProject(p) {
-  const { error } = await supabase.from('projects').insert({
-    name: p.name,
-    type: p.type,
-    platform: p.platform,
-    team_id: p.team_id ?? null,
-  });
+  const { data, error } = await supabase
+    .from('projects')
+    .insert({
+      name: p.name,
+      type: p.type,
+      platform: p.platform,
+      team_id: p.team_id ?? null,
+    })
+    .select('id')
+    .single();
   if (error) throw error;
+  return data.id;
 }
 
 export async function updateProject(id, patch) {
@@ -457,6 +530,73 @@ export async function updateRelease(id, patch) {
 export async function deleteRelease(id) {
   const { error } = await supabase.from('releases').delete().eq('id', id);
   if (error) throw error;
+}
+
+// Archive a release as terminal/read-only.
+export async function closeRelease(id) {
+  const { error } = await supabase
+    .from('releases')
+    .update({ status: 'closed', closed_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// Copy unresolved bugs from a closed release onto its successor, preserving
+// stable identity (bug_key) and lineage. Verified bugs stay behind as history.
+//  - fixed (not yet verified) → carried as 'fixed' (pending verification)
+//  - open / in_progress / disputed → carried as 'open' (unresolved)
+export async function carryForwardBugs(fromReleaseId, toReleaseId) {
+  const { data: src, error } = await supabase
+    .from('bugs')
+    .select('*')
+    .eq('release_id', fromReleaseId)
+    .neq('status', 'verified');
+  if (error) throw error;
+  const carry = (src || []).filter((b) => b.status !== 'verified');
+  if (!carry.length) return { carried: 0, pendingVerify: 0, unresolved: 0 };
+
+  const rows = carry.map((b) => ({
+    release_id: toReleaseId,
+    title: b.title,
+    description: b.description,
+    severity: b.severity,
+    screenshot_url: b.screenshot_url,
+    status: b.status === 'fixed' ? 'fixed' : 'open',
+    feature: b.feature || null,
+    tags: Array.isArray(b.tags) ? b.tags : [],
+    wbs_task_id: b.wbs_task_id || null,
+    resolution: null,
+    bug_key: b.bug_key,
+    origin_release_id: b.origin_release_id || b.release_id,
+    carried_from_release_id: fromReleaseId,
+    carried_forward: true,
+    iteration: (b.iteration || 1) + 1,
+    created_by: b.created_by,
+    created_by_id: b.created_by_id,
+  }));
+  const { error: insErr } = await supabase.from('bugs').insert(rows);
+  if (insErr) throw insErr;
+  return {
+    carried: rows.length,
+    pendingVerify: rows.filter((r) => r.status === 'fixed').length,
+    unresolved: rows.filter((r) => r.status === 'open').length,
+  };
+}
+
+// Most recent still-open "sent back" release for a project (optionally a dev),
+// i.e. the release a follow-up submission would supersede.
+export async function fetchSentBackRelease(projectId, submitterId) {
+  let q = supabase
+    .from('releases')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('status', 'sent_back')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (submitterId) q = q.eq('submitted_by_id', submitterId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data && data.length ? mapRelease(data[0]) : null;
 }
 
 /* ------------------------------------------------------------------ */
