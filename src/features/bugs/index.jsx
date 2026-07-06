@@ -1,8 +1,11 @@
-/* Bugs feature — the standalone Bugs page (cross-project bug list + filters +
-   aging). Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
+/* Bugs feature — the standalone Bugs page: cross-project bug list with filters,
+   an aging-issues panel, and readable per-bug cards (full detail: description,
+   project, platform, release version, reporter). Filtering is the shared layer. */
 import { useState, useMemo } from 'react';
 import { card, inputStyle, ghostButton, BugStatusBadge, SeverityBadge } from '@/ui.jsx';
 import { Empty, PageHeader, SlaBadge, TagChip, sideHead } from '@shared/ui-kit.jsx';
+import { filterBugs } from '@shared/filters.js';
+import { agingBugs, aggregateBugMetrics } from '@shared/bugMetrics.js';
 import {
   SEVERITIES,
   SEVERITY_ORDER,
@@ -39,62 +42,45 @@ export function BugsPage({ bugs, releases, projects, projectsById, profilesById,
   const devs = (profiles || []).filter((p) => p.role !== 'QA');
   const qas = (profiles || []).filter((p) => p.role === 'QA');
 
-  const term = q.trim().toLowerCase();
-  const filtered = bugs
-    .filter((b) => {
-      const rel = relById[b.releaseId];
-      if (!rel) return false;
-      const proj = projectsById[rel.projectId];
-      if (status !== 'all' && b.status !== status) return false;
-      if (sev !== 'all' && b.severity !== sev) return false;
-      if (platform !== 'all' && rel.platform !== platform) return false;
-      if (tag !== 'all' && !b.tags.includes(tag)) return false;
-      if (feature !== 'all' && (b.feature || 'Unassigned') !== feature) return false;
-      if (project !== 'all' && rel.projectId !== project) return false;
-      if (team !== 'all' && (proj?.teamId || '') !== team) return false;
-      if (developer !== 'all' && rel.submittedById !== developer) return false;
-      if (qa !== 'all' && rel.assignedQa !== qa) return false;
-      if (from && (b.createdAt || '').slice(0, 10) < from) return false;
-      if (to && (b.createdAt || '').slice(0, 10) > to) return false;
-      if (term) {
-        const name = proj?.name || '';
-        if (!b.title.toLowerCase().includes(term) && !name.toLowerCase().includes(term)) return false;
-      }
-      return true;
-    })
-    .sort((a, b) =>
-      sort === 'oldest'
-        ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-        : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+  // single shared filter pipeline (same functions Analytics uses)
+  const bugFilter = { search: q, status, severity: sev, platform, tag, feature, project, team, developer, qa, from, to };
+  const filtered = filterBugs(bugs, bugFilter, { releaseById: relById, projectById: projectsById }).sort((a, b) =>
+    sort === 'oldest'
+      ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
   const pageBugs = filtered.slice(0, visible);
+  const metrics = aggregateBugMetrics(filtered);
 
-  // aging: open bugs sorted oldest-first, those at/over SLA highlighted
-  const aging = bugs
-    .filter((b) => {
-      const rel = relById[b.releaseId];
-      return rel && b.status !== 'verified' && bugSlaLevel(b.status, b.createdAt);
-    })
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    .slice(0, 6);
+  // aging = active bugs from the SAME filtered dataset, at/over SLA, oldest first
+  const aging = agingBugs(filtered, 6);
 
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
-  const th = {
-    textAlign: 'left',
-    fontSize: 11,
-    fontWeight: 600,
-    color: 'var(--color-text-secondary)',
-    padding: '8px 10px',
-    borderBottom: '1px solid var(--color-border-primary)',
-  };
-  const td = { fontSize: 12.5, padding: '10px', borderBottom: '1px solid var(--color-border-primary)' };
+  const stat = (label, value, color) => (
+    <div style={{ ...card, padding: '10px 14px', flex: '1 1 120px', minWidth: 110 }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
+    </div>
+  );
 
   return (
     <>
-      <PageHeader title="Bugs" subtitle={`${filtered.length} bug${filtered.length === 1 ? '' : 's'} across your releases`} />
+      <PageHeader title="Bugs" subtitle="Track and triage every bug across your releases" />
+
+      {/* summary */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        {stat('Total (filtered)', metrics.total)}
+        {stat('Active', metrics.active, metrics.active ? 'var(--danger)' : undefined)}
+        {stat('Closed', metrics.closed, 'var(--success)')}
+        {stat('Aging', aging.length, aging.length ? 'var(--warning)' : undefined)}
+      </div>
+
+      {/* filters */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
         <input
-          style={{ ...inputStyle, flex: '1 1 200px', width: 'auto' }}
+          style={{ ...inputStyle, flex: '1 1 220px', width: 'auto' }}
           value={q}
           placeholder="Search bugs or projects…"
           onChange={(e) => {
@@ -105,75 +91,57 @@ export function BugsPage({ bugs, releases, projects, projectsById, profilesById,
         <select style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="all">All statuses</option>
           {BUG_STATUS_ORDER.map((s) => (
-            <option key={s} value={s}>
-              {BUG_STATUSES[s].label}
-            </option>
+            <option key={s} value={s}>{BUG_STATUSES[s].label}</option>
           ))}
         </select>
         <select style={fSel} value={sev} onChange={(e) => setSev(e.target.value)}>
           <option value="all">All severities</option>
           {SEVERITY_ORDER.map((s) => (
-            <option key={s} value={s}>
-              {SEVERITIES[s].label}
-            </option>
+            <option key={s} value={s}>{SEVERITIES[s].label}</option>
           ))}
         </select>
         <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
           <option value="all">All platforms</option>
           {RELEASE_PLATFORMS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
         <select style={fSel} value={tag} onChange={(e) => setTag(e.target.value)}>
           <option value="all">All tags</option>
           {BUG_TAGS.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
+            <option key={t} value={t}>{t}</option>
           ))}
         </select>
         <select style={fSel} value={feature} onChange={(e) => setFeature(e.target.value)}>
           <option value="all">All features</option>
           {BUG_FEATURES.map((ft) => (
-            <option key={ft} value={ft}>
-              {ft}
-            </option>
+            <option key={ft} value={ft}>{ft}</option>
           ))}
         </select>
         <select style={fSel} value={project} onChange={(e) => setProject(e.target.value)}>
           <option value="all">All projects</option>
           {(projects || []).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
+            <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
         {isAdmin && (
           <select style={fSel} value={team} onChange={(e) => setTeam(e.target.value)}>
             <option value="all">All teams</option>
             {(teams || []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
+              <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         )}
         <select style={fSel} value={developer} onChange={(e) => setDeveloper(e.target.value)}>
           <option value="all">All developers</option>
           {devs.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
+            <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
         <select style={fSel} value={qa} onChange={(e) => setQa(e.target.value)}>
           <option value="all">All QA</option>
           {qas.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
+            <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
         <input style={fSel} type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
@@ -184,116 +152,162 @@ export function BugsPage({ bugs, releases, projects, projectsById, profilesById,
         </select>
       </div>
 
+      {/* aging */}
       {aging.length > 0 && (
         <div style={{ ...card, padding: 14, marginBottom: 16 }}>
           <div style={{ ...sideHead, marginBottom: 10, color: 'var(--danger)' }}>
             Aging issues — needs immediate attention
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {aging.map((b) => {
-              const rel = relById[b.releaseId];
-              return (
-                <div
-                  key={b.id}
-                  onClick={() => onOpenRelease(b.releaseId)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 9,
-                    padding: '9px 11px',
-                    background: 'var(--color-background-secondary)',
-                    border: '1px solid var(--color-border-tertiary)',
-                    borderRadius: 8,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <SlaBadge level={bugSlaLevel(b.status, b.createdAt)} />
-                  <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0 }}>{b.title}</span>
-                  <SeverityBadge severity={b.severity} />
-                  <BugStatusBadge status={b.status} />
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-                    open {humanizeSince(b.createdAt)}
+            {aging.map((b) => (
+              <div
+                key={b.id}
+                onClick={() => onOpenRelease(b.releaseId)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 9,
+                  padding: '9px 11px',
+                  background: 'var(--color-background-secondary)',
+                  border: '1px solid var(--color-border-tertiary)',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                }}
+              >
+                <SlaBadge level={bugSlaLevel(b.status, b.createdAt)} />
+                <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0 }}>{b.title}</span>
+                {relById[b.releaseId] && (
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
+                    v{relById[b.releaseId].version}
                   </span>
-                </div>
-              );
-            })}
+                )}
+                <SeverityBadge severity={b.severity} />
+                <BugStatusBadge status={b.status} />
+                <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>open {humanizeSince(b.createdAt)}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
+      {/* list */}
       {filtered.length === 0 ? (
         <Empty>No bugs match your filters.</Empty>
       ) : (
-        <div style={{ ...card, padding: 0, overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={th}>Bug</th>
-                <th style={th}>Severity</th>
-                <th style={th}>Status</th>
-                <th style={th}>Feature · Tags</th>
-                <th style={th}>Project · Platform</th>
-                <th style={th}>Release</th>
-                <th style={th}>Reported</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageBugs.map((b) => {
-                const rel = relById[b.releaseId];
-                const proj = projectsById[rel.projectId];
-                return (
-                  <tr
-                    key={b.id}
-                    onClick={() => onOpenRelease(b.releaseId)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td style={{ ...td, fontWeight: 500 }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                        <SlaBadge level={bugSlaLevel(b.status, b.createdAt)} />
-                        {b.title}
-                      </span>
-                    </td>
-                    <td style={td}>
-                      <SeverityBadge severity={b.severity} />
-                    </td>
-                    <td style={td}>
-                      <BugStatusBadge status={b.status} />
-                    </td>
-                    <td style={td}>
-                      <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
-                        {b.feature && <TagChip label={b.feature} tone="brand" />}
-                        {b.tags.slice(0, 2).map((t) => (
-                          <TagChip key={t} label={t} />
-                        ))}
-                        {b.tags.length > 2 && (
-                          <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
-                            +{b.tags.length - 2}
-                          </span>
-                        )}
-                        {!b.feature && b.tags.length === 0 && (
-                          <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>
-                        )}
-                      </span>
-                    </td>
-                    <td style={td}>
-                      {proj?.name || '—'} · {rel.platform}
-                    </td>
-                    <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>v{rel.version}</td>
-                    <td style={td}>{humanizeSince(b.createdAt)} ago</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {pageBugs.map((b) => (
+              <BugCard
+                key={b.id}
+                bug={b}
+                rel={relById[b.releaseId]}
+                proj={projectsById[relById[b.releaseId]?.projectId]}
+                reporter={b.createdBy || profilesById[b.createdById]?.name || ''}
+                onOpen={onOpenRelease}
+              />
+            ))}
+          </div>
           {visible < filtered.length && (
-            <div style={{ padding: 10 }}>
-              <button style={{ ...ghostButton, width: '100%' }} onClick={() => setVisible((v) => v + 20)}>
-                Load more ({filtered.length - visible} left)
-              </button>
-            </div>
+            <button style={{ ...ghostButton, width: '100%', marginTop: 12 }} onClick={() => setVisible((v) => v + 20)}>
+              Load more ({filtered.length - visible} left)
+            </button>
           )}
-        </div>
+        </>
       )}
     </>
+  );
+}
+
+function BugCard({ bug, rel, proj, reporter, onOpen }) {
+  const [open, setOpen] = useState(false);
+  const sev = SEVERITIES[bug.severity] || {};
+  const desc = bug.description || '';
+  const long = desc.length > 240;
+  const shown = open || !long ? desc : desc.slice(0, 240).trimEnd() + '…';
+  const dot = <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>;
+
+  return (
+    <div style={{ ...card, padding: 0, overflow: 'hidden', display: 'flex' }}>
+      <div style={{ width: 4, flexShrink: 0, background: sev.color || 'var(--color-border-tertiary)' }} />
+      <div style={{ flex: 1, minWidth: 0, padding: 14 }}>
+        {/* title row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <SlaBadge level={bugSlaLevel(bug.status, bug.createdAt)} title="Aging — needs attention" />
+          <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 160 }}>{bug.title}</span>
+          <SeverityBadge severity={bug.severity} />
+          <BugStatusBadge status={bug.status} />
+        </div>
+
+        {/* meta: project · platform · version · reporter/time */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 7, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{proj?.name || 'Unknown project'}</span>
+          {rel && (
+            <>
+              {dot}
+              <span>{rel.platform}</span>
+              {dot}
+              <span
+                title="Release version"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 600,
+                  background: 'var(--color-background-secondary)',
+                  border: '1px solid var(--color-border-tertiary)',
+                  padding: '1px 8px',
+                  borderRadius: 6,
+                  color: 'var(--color-text-primary)',
+                }}
+              >
+                v{rel.version}
+              </span>
+              {rel.environment && (
+                <>
+                  {dot}
+                  <span style={{ color: 'var(--color-text-tertiary)' }}>{rel.environment}</span>
+                </>
+              )}
+            </>
+          )}
+          {dot}
+          <span style={{ color: 'var(--color-text-tertiary)' }}>
+            reported {humanizeSince(bug.createdAt)} ago{reporter ? ` by ${reporter}` : ''}
+          </span>
+        </div>
+
+        {/* description */}
+        {desc ? (
+          <p style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-secondary)', margin: '10px 0 0', whiteSpace: 'pre-wrap' }}>
+            {shown}
+            {long && (
+              <button
+                onClick={() => setOpen((o) => !o)}
+                style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, padding: '0 0 0 6px' }}
+              >
+                {open ? 'show less' : 'show more'}
+              </button>
+            )}
+          </p>
+        ) : (
+          <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '10px 0 0', fontStyle: 'italic' }}>
+            No description provided.
+          </p>
+        )}
+
+        {/* tags + action */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+          {bug.feature && <TagChip label={bug.feature} tone="brand" />}
+          {bug.tags.map((t) => (
+            <TagChip key={t} label={t} />
+          ))}
+          <span style={{ flex: 1 }} />
+          <button
+            onClick={() => onOpen(bug.releaseId)}
+            style={{ ...ghostButton, padding: '5px 12px', fontSize: 12 }}
+          >
+            Open release →
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

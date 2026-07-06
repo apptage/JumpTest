@@ -54,6 +54,7 @@ export function mapRelease(r) {
     qaAssignedAt: r.qa_assigned_at,
     supersedesReleaseId: r.supersedes_release_id || null,
     closedAt: r.closed_at || null,
+    wbsPlatformId: r.wbs_platform_id || null,
     createdAt: r.created_at,
   };
 }
@@ -304,6 +305,8 @@ export function mapWbsTask(t) {
     importKey: t.import_key,
     platform: t.platform || null,
     section: t.section || '',
+    platformId: t.platform_id || null,
+    moduleId: t.module_id || null,
     type: t.type,
     name: t.name,
     devComments: t.dev_comments || '',
@@ -311,6 +314,27 @@ export function mapWbsTask(t) {
     frontendStatus: t.frontend_status,
     estDate: t.est_date || '',
     position: t.position,
+  };
+}
+
+export function mapWbsPlatform(p) {
+  return {
+    id: p.id,
+    projectId: p.project_id,
+    name: p.name,
+    importPlatform: p.import_platform || null,
+    position: p.position,
+  };
+}
+
+export function mapWbsModule(m) {
+  return {
+    id: m.id,
+    projectId: m.project_id,
+    platformId: m.platform_id,
+    name: m.name,
+    importSection: m.import_section || null,
+    position: m.position,
   };
 }
 
@@ -324,38 +348,232 @@ export async function fetchWbsTasks(projectId) {
   return data.map(mapWbsTask);
 }
 
-// Re-importable: preserves dev progress + comments for tasks that still exist.
-export async function importWbs(projectId, parsed) {
-  const existing = await fetchWbsTasks(projectId);
-  const byKey = {};
-  existing.forEach((t) => (byKey[t.importKey] = t));
+// non-milestone tasks for a specific WBS platform (release task-picker source)
+export async function fetchWbsTasksForPlatform(projectId, platformId) {
+  const { data, error } = await supabase
+    .from('wbs_tasks')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('platform_id', platformId)
+    .order('position', { ascending: true });
+  if (error) throw error;
+  return data.map(mapWbsTask);
+}
 
-  const rows = parsed.map((p) => {
-    const prev = byKey[p.import_key];
-    return {
+export async function fetchWbsPlatforms(projectId) {
+  const { data, error } = await supabase
+    .from('wbs_platforms')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('position', { ascending: true });
+  if (error) throw error;
+  return data.map(mapWbsPlatform);
+}
+
+// Structured tree: platforms → modules → tasks (+ per-platform milestones),
+// assembled client-side from three ordered selects.
+export async function fetchWbsTree(projectId) {
+  const [plats, mods, tasks] = await Promise.all([
+    fetchWbsPlatforms(projectId),
+    supabase.from('wbs_modules').select('*').eq('project_id', projectId).order('position', { ascending: true }),
+    fetchWbsTasks(projectId),
+  ]);
+  if (mods.error) throw mods.error;
+  const modules = mods.data.map(mapWbsModule);
+  const tasksByModule = {};
+  const milestonesByPlatform = {};
+  tasks.forEach((t) => {
+    if (t.type === 'milestone') {
+      (milestonesByPlatform[t.platformId] = milestonesByPlatform[t.platformId] || []).push(t);
+    } else if (t.moduleId) {
+      (tasksByModule[t.moduleId] = tasksByModule[t.moduleId] || []).push(t);
+    }
+  });
+  const modulesByPlatform = {};
+  modules.forEach((m) => {
+    (modulesByPlatform[m.platformId] = modulesByPlatform[m.platformId] || []).push({
+      ...m,
+      tasks: tasksByModule[m.id] || [],
+    });
+  });
+  return {
+    platforms: plats.map((p) => ({
+      ...p,
+      modules: modulesByPlatform[p.id] || [],
+      milestones: milestonesByPlatform[p.id] || [],
+    })),
+  };
+}
+
+/* ---- WBS platform CRUD + reorder ---- */
+export async function createWbsPlatform(projectId, { name, position = 0, importPlatform = null }) {
+  const { data, error } = await supabase
+    .from('wbs_platforms')
+    .insert({ project_id: projectId, name, position, import_platform: importPlatform })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+export async function updateWbsPlatform(id, patch) {
+  // rename never touches import_platform (the stable re-import match key)
+  const { error } = await supabase.from('wbs_platforms').update(patch).eq('id', id);
+  if (error) throw error;
+  // mirror name into the wbs_tasks.platform text cache (RPC/client read it)
+  if (patch.name != null) {
+    await supabase.from('wbs_tasks').update({ platform: patch.name }).eq('platform_id', id);
+  }
+}
+export async function deleteWbsPlatform(id) {
+  // cascades to modules; tasks' platform_id/module_id → SET NULL (caller handles reparent/confirm)
+  const { error } = await supabase.from('wbs_platforms').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function reorderWbsPlatforms(orderedIds) {
+  await reorderRows('wbs_platforms', orderedIds);
+}
+
+/* ---- WBS module CRUD + reorder + move ---- */
+export async function createWbsModule(projectId, platformId, { name, position = 0, importSection = null }) {
+  const { data, error } = await supabase
+    .from('wbs_modules')
+    .insert({ project_id: projectId, platform_id: platformId, name, position, import_section: importSection })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+export async function updateWbsModule(id, patch) {
+  const { error } = await supabase.from('wbs_modules').update(patch).eq('id', id);
+  if (error) throw error;
+  // mirror name into the wbs_tasks.section text cache
+  if (patch.name != null) {
+    await supabase.from('wbs_tasks').update({ section: patch.name }).eq('module_id', id);
+  }
+}
+export async function moveWbsModule(id, toPlatformId, toPlatformName, position = 0) {
+  const { error } = await supabase
+    .from('wbs_modules')
+    .update({ platform_id: toPlatformId, position })
+    .eq('id', id);
+  if (error) throw error;
+  // child tasks follow the module to the new platform (+ mirror platform text)
+  await supabase
+    .from('wbs_tasks')
+    .update({ platform_id: toPlatformId, platform: toPlatformName })
+    .eq('module_id', id);
+}
+export async function deleteWbsModule(id) {
+  const { error } = await supabase.from('wbs_modules').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function reorderWbsModules(orderedIds) {
+  await reorderRows('wbs_modules', orderedIds);
+}
+
+// generic reorder: rewrite position = index for a sibling set
+async function reorderRows(table, orderedIds) {
+  if (!orderedIds || !orderedIds.length) return;
+  const results = await Promise.all(
+    orderedIds.map((id, i) => supabase.from(table).update({ position: i }).eq('id', id))
+  );
+  const failed = results.find((r) => r.error);
+  if (failed) throw failed.error;
+}
+
+// Additive re-import: the portal is the source of truth after in-portal edits.
+// Existing tasks (matched by import_key) are left untouched; only newly-detected
+// platforms/modules/tasks are inserted. Never overwrites edits, never deletes.
+export async function importWbs(projectId, parsed) {
+  const [existingTasks, existingPlats, modRes] = await Promise.all([
+    fetchWbsTasks(projectId),
+    fetchWbsPlatforms(projectId),
+    supabase.from('wbs_modules').select('*').eq('project_id', projectId),
+  ]);
+  if (modRes.error) throw modRes.error;
+  const existingMods = modRes.data.map(mapWbsModule);
+
+  const taskKeys = new Set(existingTasks.map((t) => t.importKey));
+  const NULLKEY = '|null';
+  const platByImport = {};
+  existingPlats.forEach((p) => (platByImport[p.importPlatform ?? NULLKEY] = p));
+  const modByKey = {};
+  existingMods.forEach((m) => (modByKey[`${m.platformId}|${m.importSection ?? ''}`] = m));
+
+  let addedPlatforms = 0;
+  let addedModules = 0;
+  let addedTasks = 0;
+  let platPos = existingPlats.length;
+  const modPos = {}; // platformId -> next module position
+  const taskPos = {}; // moduleId|'ms' -> next task position
+
+  const resolvePlatform = async (sheetPlatform) => {
+    const key = sheetPlatform ?? NULLKEY;
+    if (platByImport[key]) return platByImport[key];
+    const name = sheetPlatform || 'General';
+    const byName = existingPlats.find((p) => p.name === name);
+    if (byName) return (platByImport[key] = byName);
+    const id = await createWbsPlatform(projectId, { name, position: platPos++, importPlatform: sheetPlatform });
+    const p = { id, projectId, name, importPlatform: sheetPlatform, position: platPos - 1 };
+    existingPlats.push(p);
+    addedPlatforms++;
+    return (platByImport[key] = p);
+  };
+  const resolveModule = async (platform, sheetSection) => {
+    const key = `${platform.id}|${sheetSection ?? ''}`;
+    if (modByKey[key]) return modByKey[key];
+    const name = sheetSection || 'General';
+    const byName = existingMods.find((m) => m.platformId === platform.id && m.name === name);
+    if (byName) return (modByKey[key] = byName);
+    if (modPos[platform.id] == null)
+      modPos[platform.id] = existingMods.filter((m) => m.platformId === platform.id).length;
+    const pos = modPos[platform.id]++;
+    const id = await createWbsModule(projectId, platform.id, { name, position: pos, importSection: sheetSection });
+    const m = { id, projectId, platformId: platform.id, name, importSection: sheetSection, position: pos };
+    existingMods.push(m);
+    addedModules++;
+    return (modByKey[key] = m);
+  };
+
+  const newRows = [];
+  for (const p of parsed) {
+    if (taskKeys.has(p.import_key)) continue; // portal wins
+    const platform = await resolvePlatform(p.platform);
+    let moduleId = null;
+    let sectionText = p.section || 'Milestones';
+    if (p.type !== 'milestone') {
+      const mod = await resolveModule(platform, p.section);
+      moduleId = mod.id;
+      sectionText = mod.name;
+    }
+    const bucket = moduleId || 'ms';
+    if (taskPos[bucket] == null)
+      taskPos[bucket] = existingTasks.filter((t) => (t.moduleId || 'ms') === bucket).length;
+    newRows.push({
       project_id: projectId,
       import_key: p.import_key,
-      platform: p.platform,
-      section: p.section,
+      platform: platform.name,
+      section: sectionText,
+      platform_id: platform.id,
+      module_id: moduleId,
       type: p.type,
       name: p.name,
-      // statuses + comments are app-managed, never imported from the sheet:
-      // new tasks start "Not Started"; re-imports keep portal-owned progress.
-      dev_comments: prev ? prev.devComments : '',
-      backend_status: prev ? prev.backendStatus : 'not_started',
-      frontend_status: prev ? prev.frontendStatus : 'not_started',
+      dev_comments: '',
+      backend_status: 'not_started',
+      frontend_status: 'not_started',
       est_date: p.est_date,
-      position: p.position,
-    };
-  });
+      position: taskPos[bucket]++,
+    });
+    taskKeys.add(p.import_key);
+    addedTasks++;
+  }
 
-  const { error } = await supabase
-    .from('wbs_tasks')
-    .upsert(rows, { onConflict: 'project_id,import_key' });
-  if (error) throw error;
-
+  if (newRows.length) {
+    const { error } = await supabase.from('wbs_tasks').insert(newRows);
+    if (error) throw error;
+  }
   await supabase.from('projects').update({ wbs_enabled: true }).eq('id', projectId);
-  return rows.length;
+  return { addedTasks, addedModules, addedPlatforms };
 }
 
 export async function updateWbsTask(id, patch) {
@@ -371,6 +589,75 @@ export async function setWbsTrackStatus(taskIds, track, status) {
   if (track === 'frontend' || track === 'both') patch.frontend_status = status;
   const { error } = await supabase.from('wbs_tasks').update(patch).in('id', taskIds);
   if (error) throw error;
+}
+
+/* ---- WBS task CRUD + reorder + move (portal editing) ---- */
+export async function createWbsTask(projectId, task) {
+  const {
+    platformId,
+    moduleId = null,
+    type = 'task',
+    name,
+    estDate = '',
+    position = 0,
+    platformName = '',
+    moduleName = '',
+  } = task;
+  const importKey = 'portal:' + crypto.randomUUID(); // never matched by sheet re-import
+  const { data, error } = await supabase
+    .from('wbs_tasks')
+    .insert({
+      project_id: projectId,
+      import_key: importKey,
+      platform: platformName,
+      section: type === 'milestone' ? 'Milestones' : moduleName,
+      platform_id: platformId,
+      module_id: type === 'milestone' ? null : moduleId,
+      type,
+      name,
+      dev_comments: '',
+      backend_status: 'not_started',
+      frontend_status: 'not_started',
+      est_date: estDate,
+      position,
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+export async function deleteWbsTask(id) {
+  // release_tasks.task_id → SET NULL keeps the name snapshot; linked bugs degrade gracefully
+  const { error } = await supabase.from('wbs_tasks').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function reorderWbsTasks(orderedIds) {
+  await reorderRows('wbs_tasks', orderedIds);
+}
+export async function moveWbsTask(id, { moduleId, platformId, platformName, moduleName, position = 0 }) {
+  const { error } = await supabase
+    .from('wbs_tasks')
+    .update({
+      module_id: moduleId,
+      platform_id: platformId,
+      platform: platformName,
+      section: moduleName,
+      position,
+    })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// Delete a project's entire WBS. Release history (release_tasks name snapshots)
+// and releases.wbs_platform_id survive via ON DELETE SET NULL.
+export async function deleteWbs(projectId) {
+  let { error } = await supabase.from('wbs_tasks').delete().eq('project_id', projectId);
+  if (error) throw error;
+  ({ error } = await supabase.from('wbs_modules').delete().eq('project_id', projectId));
+  if (error) throw error;
+  ({ error } = await supabase.from('wbs_platforms').delete().eq('project_id', projectId));
+  if (error) throw error;
+  await supabase.from('projects').update({ wbs_enabled: false }).eq('id', projectId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -597,6 +884,24 @@ export async function fetchSentBackRelease(projectId, submitterId) {
   const { data, error } = await q;
   if (error) throw error;
   return data && data.length ? mapRelease(data[0]) : null;
+}
+
+// ALL open sent-back releases for a project + submitter on the same PLATFORM.
+// Platform is 'Mobile' (covers both APK/Android and TestFlight/iOS) or 'Web',
+// so a new mobile build supersedes every open mobile cycle and carries all of
+// their bugs forward. Ordered newest-first (first item is the primary lineage).
+export async function fetchSentBackReleases(projectId, submitterId, platform) {
+  let q = supabase
+    .from('releases')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('status', 'sent_back')
+    .order('created_at', { ascending: false });
+  if (submitterId) q = q.eq('submitted_by_id', submitterId);
+  if (platform) q = q.eq('platform', platform);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []).map(mapRelease);
 }
 
 /* ------------------------------------------------------------------ */

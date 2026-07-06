@@ -1,5 +1,5 @@
-/* WBS feature — internal work-breakdown view + live progress.
-   Moved verbatim out of ReleaseTracker.jsx (Phase 0 mechanical split). */
+/* WBS feature — multi-platform work-breakdown: internal view, live progress,
+   and in-portal structural editing (platforms / modules / tasks). */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '@/api.js';
 import { parseWbsFile } from '@/wbs.js';
@@ -85,7 +85,7 @@ function WbsTrackCell({ status, locked, canEdit, onChange }) {
   );
 }
 
-function WbsTaskRow({ task, canEdit, onUpdate, bugs = [] }) {
+function WbsTaskRow({ task, canEdit, onUpdate, bugs = [], manage = null }) {
   const [editing, setEditing] = useState(false);
   const [c, setC] = useState(task.devComments);
   const beLocked = task.backendStatus === 'in_qa' || task.backendStatus === 'complete';
@@ -129,6 +129,7 @@ function WbsTaskRow({ task, canEdit, onUpdate, bugs = [] }) {
         {task.estDate && (
           <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{task.estDate}</span>
         )}
+        {manage}
       </div>
       <div style={{ marginTop: 6 }}>
         {editing ? (
@@ -197,31 +198,54 @@ function WbsTaskRow({ task, canEdit, onUpdate, bugs = [] }) {
   );
 }
 
+// tiny control button used across the editor
+function Ctl({ label, title, onClick, disabled, danger }) {
+  return (
+    <button
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        ...ghostButton,
+        padding: '2px 7px',
+        fontSize: 11,
+        opacity: disabled ? 0.4 : 1,
+        color: danger ? '#dc2626' : 'var(--color-text-secondary)',
+        borderColor: danger ? '#dc262644' : undefined,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 export function WbsPage({ user, projects, showToast }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
-  const [tasks, setTasks] = useState([]);
+  const [tree, setTree] = useState({ platforms: [] });
   const [bugsByTask, setBugsByTask] = useState({});
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [platform, setPlatform] = useState('all');
+  const [activePlatformId, setActivePlatformId] = useState(null);
   const [statusF, setStatusF] = useState('all');
   const [q, setQ] = useState('');
   const fileRef = useRef(null);
 
   const project = projects.find((p) => p.id === projectId) || null;
-  const canUpload = user.role === 'Team Lead' && project && project.teamId === user.teamId;
-  const isManager =
+  const canManage =
     user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
-  const canEdit = user.role === 'Developer' || isManager;
+  const canEdit = user.role === 'Developer' || canManage;
 
   const load = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
     try {
-      const t = await api.fetchWbsTasks(projectId);
-      setTasks(t);
+      const t = await api.fetchWbsTree(projectId);
+      setTree(t);
+      const ids = t.platforms
+        .flatMap((p) => [...p.modules.flatMap((m) => m.tasks), ...p.milestones])
+        .map((x) => x.id);
       try {
-        const linked = await api.fetchBugsByTaskIds(t.map((x) => x.id));
+        const linked = await api.fetchBugsByTaskIds(ids);
         const m = {};
         linked.forEach((b) => (m[b.wbsTaskId] = m[b.wbsTaskId] || []).push(b));
         setBugsByTask(m);
@@ -239,6 +263,21 @@ export function WbsPage({ user, projects, showToast }) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!tree.platforms.length) return;
+    if (!tree.platforms.some((p) => p.id === activePlatformId)) setActivePlatformId(tree.platforms[0].id);
+  }, [tree, activePlatformId]);
+
+  const run = async (fn, msg) => {
+    try {
+      await fn();
+      if (msg) showToast(msg);
+      await load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  };
+
   async function onFile(e) {
     const file = e.target.files[0];
     e.target.value = '';
@@ -247,8 +286,10 @@ export function WbsPage({ user, projects, showToast }) {
     try {
       const parsed = await parseWbsFile(file);
       if (!parsed.length) throw new Error('No tasks detected in the spreadsheet.');
-      const n = await api.importWbs(projectId, parsed);
-      showToast(`Imported ${n} WBS rows`);
+      const r = await api.importWbs(projectId, parsed);
+      showToast(
+        `Imported: +${r.addedTasks} task(s), +${r.addedModules} module(s), +${r.addedPlatforms} platform(s)`
+      );
       await load();
     } catch (err) {
       showToast(err.message || 'Import failed', 'error');
@@ -257,47 +298,99 @@ export function WbsPage({ user, projects, showToast }) {
     }
   }
 
-  async function updateTask(task, patch) {
-    setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, ...mapPatch(patch) } : t)));
-    try {
-      await api.updateWbsTask(task.id, patch);
-    } catch (e) {
-      showToast(e.message, 'error');
-      load();
-    }
-  }
-  function mapPatch(p) {
-    const m = {};
-    if ('backend_status' in p) m.backendStatus = p.backend_status;
-    if ('frontend_status' in p) m.frontendStatus = p.frontend_status;
-    if ('dev_comments' in p) m.devComments = p.dev_comments;
-    return m;
-  }
+  const updateTask = (task, patch) => run(() => api.updateWbsTask(task.id, patch));
 
-  const platforms = Array.from(new Set(tasks.map((t) => t.platform).filter(Boolean)));
+  const reorder = (items, idx, dir, apiFn) => {
+    const j = idx + dir;
+    if (j < 0 || j >= items.length) return;
+    const ids = items.map((x) => x.id);
+    [ids[idx], ids[j]] = [ids[j], ids[idx]];
+    run(() => apiFn(ids));
+  };
+
+  // ---- structural edit handlers (Team-Lead / Admin) ----
+  const ask = (label, initial = '') => {
+    const v = window.prompt(label, initial);
+    return v == null ? null : v.trim();
+  };
+  const addPlatform = () => {
+    const name = ask('New platform name');
+    if (name) run(() => api.createWbsPlatform(projectId, { name, position: tree.platforms.length }), 'Platform added');
+  };
+  const renamePlatform = (p) => {
+    const name = ask('Rename platform', p.name);
+    if (name && name !== p.name) run(() => api.updateWbsPlatform(p.id, { name }));
+  };
+  const deletePlatform = (p) => {
+    if (window.confirm(`Delete platform "${p.name}" with its ${p.modules.length} module(s) and their tasks? Release history is preserved.`))
+      run(() => api.deleteWbsPlatform(p.id), 'Platform deleted');
+  };
+  const addModule = (p) => {
+    const name = ask('New module name');
+    if (name) run(() => api.createWbsModule(projectId, p.id, { name, position: p.modules.length }), 'Module added');
+  };
+  const renameModule = (m) => {
+    const name = ask('Rename module', m.name);
+    if (name && name !== m.name) run(() => api.updateWbsModule(m.id, { name }));
+  };
+  const deleteModule = (m) => {
+    if (window.confirm(`Delete module "${m.name}" with its ${m.tasks.length} task(s)? Release history is preserved.`))
+      run(() => api.deleteWbsModule(m.id), 'Module deleted');
+  };
+  const moveModule = (m, toPlatform) =>
+    run(() => api.moveWbsModule(m.id, toPlatform.id, toPlatform.name, toPlatform.modules.length), 'Module moved');
+  const addTask = (p, m) => {
+    const name = ask('New task name');
+    if (!name) return;
+    const est = ask('Estimated date (optional)') || '';
+    run(
+      () => api.createWbsTask(projectId, { platformId: p.id, moduleId: m.id, name, estDate: est, platformName: p.name, moduleName: m.name, position: m.tasks.length }),
+      'Task added'
+    );
+  };
+  const addMilestone = (p) => {
+    const name = ask('New milestone name');
+    if (!name) return;
+    const est = ask('Target date (optional)') || '';
+    run(
+      () => api.createWbsTask(projectId, { platformId: p.id, type: 'milestone', name, estDate: est, platformName: p.name, position: p.milestones.length }),
+      'Milestone added'
+    );
+  };
+  const renameTask = (t) => {
+    const name = ask('Rename task', t.name);
+    if (name && name !== t.name) run(() => api.updateWbsTask(t.id, { name }));
+  };
+  const editTaskDate = (t) => {
+    const est = ask('Estimated date', t.estDate || '');
+    if (est != null) run(() => api.updateWbsTask(t.id, { est_date: est }));
+  };
+  const deleteTask = (t) => {
+    if (window.confirm(`Delete task "${t.name}"? Release history keeps its name.`))
+      run(() => api.deleteWbsTask(t.id), 'Task deleted');
+  };
+  const moveTask = (t, toModule, platform) =>
+    run(
+      () => api.moveWbsTask(t.id, { moduleId: toModule.id, platformId: platform.id, platformName: platform.name, moduleName: toModule.name, position: toModule.tasks.length }),
+      'Task moved'
+    );
+  const deleteWholeWbs = () => {
+    if (window.confirm('Delete the ENTIRE WBS for this project (all platforms, modules, tasks)? Release history is preserved. This cannot be undone.'))
+      run(() => api.deleteWbs(projectId), 'WBS deleted');
+  };
+
+  const platforms = tree.platforms;
+  const active = platforms.find((p) => p.id === activePlatformId) || platforms[0] || null;
+  const overall = wbsPct(platforms.flatMap((p) => p.modules.flatMap((m) => m.tasks)));
   const matches = (t) =>
-    (platform === 'all' || t.platform === platform) &&
     (statusF === 'all' || t.backendStatus === statusF || t.frontendStatus === statusF) &&
     (!q.trim() || t.name.toLowerCase().includes(q.trim().toLowerCase()));
-
-  const workTasks = tasks.filter((t) => t.type !== 'milestone' && matches(t));
-  const milestones = tasks.filter((t) => t.type === 'milestone' && matches(t));
-
-  // group by platform → section
-  const groups = {};
-  workTasks.forEach((t) => {
-    const pk = t.platform || 'General';
-    const sk = t.section || 'General';
-    groups[pk] = groups[pk] || {};
-    groups[pk][sk] = groups[pk][sk] || [];
-    groups[pk][sk].push(t);
-  });
 
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
 
   return (
     <>
-      <PageHeader title="WBS" subtitle="Work breakdown structure & live progress" />
+      <PageHeader title="WBS" subtitle="Work breakdown structure — multi-platform, editable" />
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
         <select style={fSel} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
@@ -307,16 +400,6 @@ export function WbsPage({ user, projects, showToast }) {
             </option>
           ))}
         </select>
-        {platforms.length > 1 && (
-          <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
-            <option value="all">All platforms</option>
-            {platforms.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        )}
         <select style={fSel} value={statusF} onChange={(e) => setStatusF(e.target.value)}>
           <option value="all">All statuses</option>
           {WBS_STATUS_ORDER.map((s) => (
@@ -326,114 +409,209 @@ export function WbsPage({ user, projects, showToast }) {
           ))}
         </select>
         <input style={{ ...fSel, flex: '1 1 160px' }} value={q} placeholder="Search tasks…" onChange={(e) => setQ(e.target.value)} />
-        {canUpload && (
+        {canManage && (
           <>
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} />
             <button style={primaryButton(busy)} disabled={busy} onClick={() => fileRef.current?.click()}>
-              {busy ? 'Importing…' : tasks.length ? 'Re-import WBS' : 'Upload WBS'}
+              {busy ? 'Importing…' : platforms.length ? 'Re-import (adds new)' : 'Upload WBS'}
             </button>
+            {platforms.length > 0 && (
+              <button style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644' }} onClick={deleteWholeWbs}>
+                Delete WBS
+              </button>
+            )}
           </>
         )}
       </div>
 
-      {/* overall progress */}
-      {tasks.length > 0 && (
-        <div style={{ ...card, padding: 16, marginBottom: 16 }}>
+      {platforms.length > 0 && (
+        <div style={{ ...card, padding: 16, marginBottom: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>
-              {wbsPct(tasks.filter((t) => t.type !== 'milestone'))}%
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Overall project progress</span>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{overall}%</span>
           </div>
           <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
-            <div
-              style={{
-                width: `${wbsPct(tasks.filter((t) => t.type !== 'milestone'))}%`,
-                height: '100%',
-                borderRadius: 999,
-                background: 'var(--brand)',
-              }}
-            />
+            <div style={{ width: `${overall}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
           </div>
+        </div>
+      )}
+
+      {/* platform tabs */}
+      {platforms.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+          {platforms.map((p, i) => {
+            const pct = wbsPct(p.modules.flatMap((m) => m.tasks));
+            const on = active && p.id === active.id;
+            return (
+              <button
+                key={p.id}
+                onClick={() => setActivePlatformId(p.id)}
+                style={{
+                  padding: '7px 12px',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  color: on ? '#fff' : 'var(--color-text-primary)',
+                  background: on ? 'var(--brand)' : 'var(--color-background-primary)',
+                  border: `1px solid ${on ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+                }}
+              >
+                {p.name} · {pct}%
+              </button>
+            );
+          })}
+          {canManage && <Ctl label="+ Platform" title="Add a platform" onClick={addPlatform} />}
         </div>
       )}
 
       {loading ? (
         <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
-      ) : tasks.length === 0 ? (
+      ) : platforms.length === 0 ? (
         <Empty>
-          {canUpload
-            ? 'No WBS yet — upload an Excel/CSV to get started.'
-            : project?.wbsEnabled
-            ? 'No tasks match your filters.'
-            : 'This project does not use a WBS. The Team Lead can upload one.'}
-        </Empty>
-      ) : (
-        <>
-          {Object.entries(groups).map(([pk, sections]) => (
-            <div key={pk} style={{ marginBottom: 18 }}>
-              {platforms.length > 1 && (
-                <div style={{ ...sideHead, marginBottom: 8 }}>{pk}</div>
-              )}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {Object.entries(sections).map(([sk, ts]) => (
-                  <WbsSection key={sk} name={sk} tasks={ts} canEdit={canEdit} onUpdate={updateTask} bugsByTask={bugsByTask} />
-                ))}
-              </div>
+          {canManage
+            ? 'No WBS yet — upload an Excel/CSV or add a platform to start.'
+            : 'This project has no WBS yet.'}
+          {canManage && (
+            <div style={{ marginTop: 10 }}>
+              <button style={ghostButton} onClick={addPlatform}>+ Add platform</button>
             </div>
-          ))}
+          )}
+        </Empty>
+      ) : active ? (
+        <>
+          {/* platform manage strip */}
+          {canManage && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ ...sideHead, margin: 0 }}>{active.name}</span>
+              <Ctl label="Rename" onClick={() => renamePlatform(active)} />
+              <Ctl label="◀" title="Move left" disabled={platforms.indexOf(active) === 0} onClick={() => reorder(platforms, platforms.indexOf(active), -1, api.reorderWbsPlatforms)} />
+              <Ctl label="▶" title="Move right" disabled={platforms.indexOf(active) === platforms.length - 1} onClick={() => reorder(platforms, platforms.indexOf(active), 1, api.reorderWbsPlatforms)} />
+              <Ctl label="+ Module" onClick={() => addModule(active)} />
+              <Ctl label="+ Milestone" onClick={() => addMilestone(active)} />
+              <Ctl label="Delete platform" danger onClick={() => deletePlatform(active)} />
+            </div>
+          )}
 
-          {milestones.length > 0 && (
-            <div style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {active.modules.map((m, mi) => {
+              const shown = m.tasks.filter(matches);
+              return (
+                <div key={m.id} style={{ ...card, padding: 0, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1 }}>{m.name}</span>
+                    {latestEst(m.tasks) && (
+                      <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Target {latestEst(m.tasks)}</span>
+                    )}
+                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                      {m.tasks.length} task{m.tasks.length === 1 ? '' : 's'} · {wbsPct(m.tasks)}%
+                    </span>
+                    {canManage && (
+                      <>
+                        <Ctl label="▲" title="Move up" disabled={mi === 0} onClick={() => reorder(active.modules, mi, -1, api.reorderWbsModules)} />
+                        <Ctl label="▼" title="Move down" disabled={mi === active.modules.length - 1} onClick={() => reorder(active.modules, mi, 1, api.reorderWbsModules)} />
+                        <Ctl label="Rename" onClick={() => renameModule(m)} />
+                        <Ctl label="+ Task" onClick={() => addTask(active, m)} />
+                        {platforms.length > 1 && (
+                          <select
+                            title="Move module to platform"
+                            value=""
+                            onChange={(e) => {
+                              const to = platforms.find((x) => x.id === e.target.value);
+                              if (to) moveModule(m, to);
+                            }}
+                            style={{ ...inputStyle, width: 'auto', padding: '2px 6px', fontSize: 11 }}
+                          >
+                            <option value="">Move to…</option>
+                            {platforms.filter((x) => x.id !== active.id).map((x) => (
+                              <option key={x.id} value={x.id}>{x.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        <Ctl label="Delete" danger onClick={() => deleteModule(m)} />
+                      </>
+                    )}
+                  </div>
+                  {shown.length === 0 ? (
+                    <div style={{ padding: '9px 14px', fontSize: 12, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-border-primary)' }}>
+                      {m.tasks.length ? 'No tasks match the filter.' : 'No tasks yet.'}
+                    </div>
+                  ) : (
+                    shown.map((t, ti) => (
+                      <WbsTaskRow
+                        key={t.id}
+                        task={t}
+                        canEdit={canEdit}
+                        onUpdate={updateTask}
+                        bugs={bugsByTask[t.id] || []}
+                        manage={
+                          canManage ? (
+                            <span style={{ display: 'inline-flex', gap: 4 }}>
+                              <Ctl label="▲" title="Move up" disabled={ti === 0} onClick={() => reorder(m.tasks, m.tasks.indexOf(t), -1, api.reorderWbsTasks)} />
+                              <Ctl label="▼" title="Move down" disabled={ti === shown.length - 1} onClick={() => reorder(m.tasks, m.tasks.indexOf(t), 1, api.reorderWbsTasks)} />
+                              <Ctl label="Edit" onClick={() => renameTask(t)} />
+                              <Ctl label="Date" onClick={() => editTaskDate(t)} />
+                              {active.modules.length > 1 && (
+                                <select
+                                  title="Move task to module"
+                                  value=""
+                                  onChange={(e) => {
+                                    const to = active.modules.find((x) => x.id === e.target.value);
+                                    if (to) moveTask(t, to, active);
+                                  }}
+                                  style={{ ...inputStyle, width: 'auto', padding: '2px 5px', fontSize: 10.5 }}
+                                >
+                                  <option value="">Move…</option>
+                                  {active.modules.filter((x) => x.id !== m.id).map((x) => (
+                                    <option key={x.id} value={x.id}>{x.name}</option>
+                                  ))}
+                                </select>
+                              )}
+                              <Ctl label="✕" title="Delete task" danger onClick={() => deleteTask(t)} />
+                            </span>
+                          ) : null
+                        }
+                      />
+                    ))
+                  )}
+                </div>
+              );
+            })}
+            {active.modules.length === 0 && (
+              <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>
+                No modules on this platform.{canManage ? ' Use “+ Module” above to add one.' : ''}
+              </div>
+            )}
+          </div>
+
+          {/* milestones for the active platform */}
+          {(active.milestones.length > 0 || canManage) && (
+            <div style={{ marginTop: 18 }}>
               <div style={{ ...sideHead, marginBottom: 8 }}>Milestones</div>
               <div style={{ ...card, padding: '4px 0' }}>
-                {milestones.map((m) => (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '9px 14px',
-                      borderTop: '1px solid var(--color-border-primary)',
-                    }}
-                  >
-                    <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{m.name}</span>
-                    {m.estDate && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{m.estDate}</span>}
-                  </div>
-                ))}
+                {active.milestones.length === 0 ? (
+                  <div style={{ padding: '9px 14px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No milestones.</div>
+                ) : (
+                  active.milestones.map((m) => (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderTop: '1px solid var(--color-border-primary)' }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{m.name}</span>
+                      {m.estDate && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{m.estDate}</span>}
+                      {canManage && (
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <Ctl label="Edit" onClick={() => renameTask(m)} />
+                          <Ctl label="Date" onClick={() => editTaskDate(m)} />
+                          <Ctl label="✕" danger onClick={() => deleteTask(m)} />
+                        </span>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}
         </>
-      )}
+      ) : null}
     </>
-  );
-}
-
-function WbsSection({ name, tasks, canEdit, onUpdate, bugsByTask }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
-      <div
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', cursor: 'pointer' }}
-      >
-        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', width: 10 }}>{open ? '▾' : '▸'}</span>
-        <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1 }}>{name}</span>
-        {latestEst(tasks) && (
-          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-            Target {latestEst(tasks)}
-          </span>
-        )}
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          {tasks.length} task{tasks.length === 1 ? '' : 's'} · {wbsPct(tasks)}%
-        </span>
-      </div>
-      {open &&
-        tasks.map((t) => (
-          <WbsTaskRow key={t.id} task={t} canEdit={canEdit} onUpdate={onUpdate} bugs={(bugsByTask || {})[t.id] || []} />
-        ))}
-    </div>
   );
 }

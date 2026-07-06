@@ -154,6 +154,17 @@ export const BUG_STATUSES = {
 };
 export const BUG_STATUS_ORDER = ['open', 'in_progress', 'fixed', 'disputed', 'verified'];
 
+/* Single global definition of bug lifecycle buckets — used by every page/metric.
+   Active = still needs work/verification; Closed = verified (done). */
+export const ACTIVE_BUG_STATUSES = ['open', 'in_progress', 'disputed', 'fixed'];
+export const CLOSED_BUG_STATUSES = ['verified'];
+export function isActiveBug(bug) {
+  return CLOSED_BUG_STATUSES.indexOf(bug.status) === -1;
+}
+export function isClosedBug(bug) {
+  return CLOSED_BUG_STATUSES.indexOf(bug.status) !== -1;
+}
+
 /* Which part of a Web project a release targets. */
 export const RELEASE_COMPONENTS = ['Web Application', 'Admin Dashboard', 'Landing Page', 'Other'];
 

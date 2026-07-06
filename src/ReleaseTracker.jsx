@@ -412,19 +412,22 @@ export default function ReleaseTracker() {
     const extraNote = form.additionalNote?.trim() ? `\n\n${form.additionalNote.trim()}` : '';
 
     const ok = await run(async () => {
-      // Follow-up detection: if this developer has a sent-back release for the
-      // project, the new submission supersedes it (close it + carry bugs).
-      const priorSentBack = await api.fetchSentBackRelease(form.projectId, user.id);
+      // Follow-up detection: a new build supersedes EVERY open sent-back cycle
+      // on the same platform. Mobile spans both APK/Android and TestFlight/iOS,
+      // so a mobile follow-up carries bugs from both; Web spans web releases.
+      const newPlatform = form.platform || platformForReleaseType(form.releaseType);
+      const priors = await api.fetchSentBackReleases(form.projectId, user.id, newPlatform);
+      const primaryPrior = priors[0] || null;
 
       // Release notes:
       //  - tasks selected → generated from the tasks (feature release)
-      //  - WBS project, no tasks, but a prior sent-back release → bug-fix release
+      //  - WBS project, no tasks, but prior sent-back cycle(s) → bug-fix release
       //  - otherwise → the manually-entered notes
       let notes;
       if (wbsItems.length) {
         notes = wbsItems.map((t) => `- ${t.name}`).join('\n') + extraNote;
-      } else if (wbsEnabled && priorSentBack) {
-        notes = `Bug fixes for v${priorSentBack.version}` + extraNote;
+      } else if (wbsEnabled && priors.length) {
+        notes = `Bug fixes for ${priors.map((p) => `v${p.version}`).join(', ')}` + extraNote;
       } else {
         notes = form.releaseNotes.trim();
       }
@@ -445,7 +448,8 @@ export default function ReleaseTracker() {
         release_notes: notes,
         status: 'qa_pending',
         qa_note: '',
-        supersedes_release_id: priorSentBack ? priorSentBack.id : null,
+        supersedes_release_id: primaryPrior ? primaryPrior.id : null,
+        wbs_platform_id: form.wbsPlatformId || null,
       });
 
       if (wbsItems.length) {
@@ -461,15 +465,24 @@ export default function ReleaseTracker() {
         );
       }
 
-      // Close the superseded release and carry its unresolved bugs forward.
-      if (priorSentBack) {
-        await api.closeRelease(priorSentBack.id);
-        const summary = await api.carryForwardBugs(priorSentBack.id, releaseId);
-        if (priorSentBack.assignedQa) {
+      // Close every superseded release (all open cycles on this platform) and
+      // carry all their unresolved bugs onto the new release.
+      if (priors.length) {
+        let pendingVerify = 0;
+        let unresolved = 0;
+        const qaIds = new Set();
+        for (const prior of priors) {
+          await api.closeRelease(prior.id);
+          const s = await api.carryForwardBugs(prior.id, releaseId);
+          pendingVerify += s.pendingVerify;
+          unresolved += s.unresolved;
+          if (prior.assignedQa) qaIds.add(prior.assignedQa);
+        }
+        for (const qaId of qaIds) {
           await api.createNotification({
-            user_id: priorSentBack.assignedQa,
+            user_id: qaId,
             type: 'release_followup',
-            message: `${user.name} submitted a follow-up v${form.version.trim()} for QA — ${summary.pendingVerify} fix(es) to verify, ${summary.unresolved} still open.`,
+            message: `${user.name} submitted a follow-up v${form.version.trim()} for QA — ${pendingVerify} fix(es) to verify, ${unresolved} still open.`,
             release_id: releaseId,
           });
         }

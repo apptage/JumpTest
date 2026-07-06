@@ -2,16 +2,17 @@
    Moved verbatim out of ReleaseTracker.jsx (Phase 0 mechanical split). */
 import { useState, useMemo } from 'react';
 import { card, inputStyle, ghostButton, ModalShell, StatusBadge } from '@/ui.jsx';
-import { PageHeader, Kpi, DistBars, AnSection, avgDaysBetween, statusSince } from '@shared/ui-kit.jsx';
+import { PageHeader, Kpi, DistBars, AnSection, avgDaysBetween } from '@shared/ui-kit.jsx';
+import { filterBugs, filterReleases } from '@shared/filters.js';
+import { computeReleaseMetrics, computeBottlenecks, computeWorkload } from '@shared/releaseMetrics.js';
+import { assertBugReconcile } from '@shared/bugMetrics.js';
 import {
   STATUSES,
   SEVERITIES,
   SEVERITY_ORDER,
   BUG_STATUSES,
   BUG_STATUS_ORDER,
-  slaLevel,
   isActiveStatus,
-  isClosedStatus,
   SLA_COLORS,
   BUG_RESOLUTIONS,
   ENVIRONMENTS,
@@ -46,61 +47,21 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   const reset = () =>
     setF({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
 
-  const relF = releases.filter((r) => {
-    const proj = projectsById[r.projectId];
-    if (f.team !== 'all' && (proj?.teamId || '') !== f.team) return false;
-    if (f.project !== 'all' && r.projectId !== f.project) return false;
-    if (f.platform !== 'all' && r.platform !== f.platform) return false;
-    if (f.environment !== 'all' && (r.environment || 'Production') !== f.environment) return false;
-    if (f.developer !== 'all' && r.submittedById !== f.developer) return false;
-    if (f.qa !== 'all' && r.assignedQa !== f.qa) return false;
-    if (f.version.trim() && !r.version.toLowerCase().includes(f.version.trim().toLowerCase())) return false;
-    if (f.from && r.date < f.from) return false;
-    if (f.to && r.date > f.to) return false;
-    return true;
-  });
-  const relIds = new Set(relF.map((r) => r.id));
-  // bugs on closed (superseded) releases were carried onto their successor —
-  // exclude them from bug metrics so carried bugs aren't counted twice.
-  const closedRelIds = new Set(relF.filter((r) => isClosedStatus(r.status)).map((r) => r.id));
-  const bugsF = bugs.filter((b) => relIds.has(b.releaseId) && !closedRelIds.has(b.releaseId));
+  // ---- single shared dataset pipeline (same functions the Bugs page uses) ----
+  const releaseById = {};
+  releases.forEach((r) => (releaseById[r.id] = r));
+  const relF = filterReleases(releases, f, { projectById: projectsById });
+  const bugsF = filterBugs(bugs, f, { releaseById, projectById: projectsById });
+  assertBugReconcile(bugsF, 'analytics'); // dev-only reconcile guard
 
-  // a release is "blocked" while it still has open Major/Critical bugs
-  const blockedReleaseIds = new Set(
-    bugsF
-      .filter((b) => b.status !== 'verified' && (b.severity === 'critical' || b.severity === 'major'))
-      .map((b) => b.releaseId)
-  );
+  const metrics = computeReleaseMetrics(relF, bugsF, { releaseById });
+  const blockedReleaseIds = metrics.blocked;
+  const { submitted, approved, rejected, decided, passRate, rejRate, cycleDays, prodBugs, carriedBugs, carryRate, avgIterations } = metrics;
+  const toAssign = metrics.assignTime; // one shared cohort → cycleDays ≈ toAssign + assignToDone
+  const assignToDone = metrics.qaTime;
 
-  // ---- QA quality (based on real outcome, not just submission) ----
-  const submitted = relF.length;
-  const approved = relF.filter((r) => r.status === 'approved' && !blockedReleaseIds.has(r.id)).length;
-  // bug_repeat, or "approved" releases that still carry blocking bugs, count as not-passed
-  const rejected = relF.filter(
-    (r) => r.status === 'sent_back' || (r.status === 'approved' && blockedReleaseIds.has(r.id))
-  ).length;
-  const decided = approved + rejected;
-  const passRate = decided ? Math.round((approved / decided) * 100) : 0;
-  const rejRate = decided ? Math.round((rejected / decided) * 100) : 0;
-
-  // ---- velocity ----
+  // completed-per-month chart source (approved releases; broader than the cycle cohort)
   const completed = relF.filter((r) => r.status === 'approved' && r.qaCompletedAt);
-  // total cycle is only meaningful once a release has gone through QA assignment
-  const cycleDays = avgDaysBetween(
-    completed.filter((r) => r.qaAssignedAt),
-    'createdAt',
-    'qaCompletedAt'
-  );
-  const toAssign = avgDaysBetween(
-    relF.filter((r) => r.qaAssignedAt),
-    'createdAt',
-    'qaAssignedAt'
-  );
-  const assignToDone = avgDaysBetween(
-    completed.filter((r) => r.qaAssignedAt),
-    'qaAssignedAt',
-    'qaCompletedAt'
-  );
 
   // completed per month (last 6)
   const months = [];
@@ -117,104 +78,15 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   });
   const maxMonth = Math.max(1, ...months.map((m) => m.n));
 
-  // ---- production defects (bugs reported against Production-env releases) ----
-  const prodBugs = bugsF.filter((b) => (relById(b.releaseId)?.environment || 'Production') === 'Production').length;
-  function relById(id) {
-    return relF.find((r) => r.id === id);
-  }
-
-  // ---- bug lineage: carry-forward rate + avg iterations to verify ----
-  const carriedBugs = bugsF.filter((b) => b.carriedForward).length;
-  const carryRate = bugsF.length ? Math.round((carriedBugs / bugsF.length) * 100) : 0;
-  const verifiedIters = bugsF.filter((b) => b.status === 'verified').map((b) => b.iteration || 1);
-  const avgIterations = verifiedIters.length
-    ? (verifiedIters.reduce((s, n) => s + n, 0) / verifiedIters.length).toFixed(1)
-    : null;
-
-  // ---- workload ----
-  const wlMembers = profiles
-    .filter((p) => p.role !== 'Admin' && (f.team === 'all' || p.teamId === f.team))
-    .map((m) => {
-      const mine = new Set(relF.filter((r) => r.submittedById === m.id).map((r) => r.id));
-      return {
-        m,
-        activeReleases: relF.filter((r) => r.submittedById === m.id && isActiveStatus(r.status)).length,
-        pendingReviews: relF.filter(
-          (r) => r.assignedQa === m.id && (r.status === 'qa_pending' || r.status === 'qa_in_progress')
-        ).length,
-        openBugs: bugsF.filter(
-          (b) => (b.createdById === m.id || mine.has(b.releaseId)) && b.status !== 'verified'
-        ).length,
-      };
-    })
-    .filter((w) => w.activeReleases || w.pendingReviews || w.openBugs)
-    .sort((a, b) => b.pendingReviews + b.activeReleases - (a.pendingReviews + a.activeReleases));
-
-  // ---- bottlenecks ----
-  const bottlenecks = [];
-  const overSla = relF.filter((r) => slaLevel(r.status, statusSince(r)) === 'over');
-  if (overSla.length)
-    bottlenecks.push({ level: 'over', text: `${overSla.length} release(s) past their SLA (Pending/In QA).` });
-  const reviewerLoad = {};
-  relF.forEach((r) => {
-    if (r.assignedQa && (r.status === 'qa_pending' || r.status === 'qa_in_progress'))
-      reviewerLoad[r.assignedQa] = (reviewerLoad[r.assignedQa] || 0) + 1;
+  // ---- workload + bottlenecks (shared, project-aggregated, deduped) ----
+  const wlMembers = computeWorkload(profiles, relF, bugsF, f.team);
+  const bottlenecks = computeBottlenecks(relF, bugsF, {
+    projectsById,
+    profilesById,
+    profiles,
+    teams,
+    teamFilter: f.team,
   });
-  Object.entries(reviewerLoad)
-    .filter(([, n]) => n > 3)
-    .forEach(([id, n]) =>
-      bottlenecks.push({
-        level: 'warn',
-        text: `${profilesById[id]?.name || 'A tester'} has ${n} active reviews — possibly overloaded.`,
-      })
-    );
-  const qaCountByTeam = {};
-  profiles.forEach((p) => {
-    if (p.role === 'QA') qaCountByTeam[p.teamId] = (qaCountByTeam[p.teamId] || 0) + 1;
-  });
-  (f.team === 'all' ? teams : teams.filter((t) => t.id === f.team)).forEach((t) => {
-    const waiting = relF.some(
-      (r) => projectsById[r.projectId]?.teamId === t.id && (r.status === 'qa_pending' || r.status === 'qa_in_progress')
-    );
-    if (waiting && !qaCountByTeam[t.id])
-      bottlenecks.push({ level: 'over', text: `${t.name} has releases waiting but no QA testers.` });
-  });
-  const disputedBugs = bugsF.filter((b) => b.status === 'disputed');
-  if (disputedBugs.length) {
-    const rels = new Set(disputedBugs.map((b) => b.releaseId)).size;
-    bottlenecks.push({
-      level: 'warn',
-      text: `${disputedBugs.length} bug(s) need clarification across ${rels} release(s) — blocked communication.`,
-    });
-  }
-  // releases drowning in open bugs / blocking bugs
-  const OPEN_BUG_THRESHOLD = 5;
-  const BLOCKING_THRESHOLD = 3;
-  relF.forEach((r) => {
-    const rbugs = bugsF.filter((b) => b.releaseId === r.id && b.status !== 'verified');
-    const blocking = rbugs.filter((b) => b.severity === 'critical' || b.severity === 'major').length;
-    const label = `v${r.version} · ${projectsById[r.projectId]?.name || ''}`;
-    if (rbugs.length >= OPEN_BUG_THRESHOLD)
-      bottlenecks.push({ level: 'over', text: `${label} has ${rbugs.length} open bugs — stuck in QA.` });
-    else if (blocking >= BLOCKING_THRESHOLD)
-      bottlenecks.push({ level: 'over', text: `${label} has ${blocking} unresolved Major/Critical bugs.` });
-  });
-  // developers overloaded with open bugs on their releases
-  const devOpen = {};
-  bugsF
-    .filter((b) => b.status !== 'verified')
-    .forEach((b) => {
-      const dev = relById(b.releaseId)?.submittedById;
-      if (dev) devOpen[dev] = (devOpen[dev] || 0) + 1;
-    });
-  Object.entries(devOpen)
-    .filter(([, n]) => n > 8)
-    .forEach(([id, n]) =>
-      bottlenecks.push({
-        level: 'warn',
-        text: `${profilesById[id]?.name || 'A developer'} has ${n} open bugs to fix — possibly overloaded.`,
-      })
-    );
 
   // ---- QA quality (resolution outcomes) ----
   const resCounts = {};
@@ -295,7 +167,7 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
     .filter((p) => f.team === 'all' || p.teamId === f.team)
     .map((p) => {
       const rel = relF.filter((r) => r.projectId === p.id);
-      const bugCount = bugsF.filter((b) => relById(b.releaseId)?.projectId === p.id).length;
+      const bugCount = bugsF.filter((b) => releaseById[b.releaseId]?.projectId === p.id).length;
       const avg = avgDaysBetween(
         rel.filter((r) => r.status === 'approved' && r.qaCompletedAt),
         'createdAt',

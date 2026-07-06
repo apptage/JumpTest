@@ -67,24 +67,50 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     releaseNotes: '',
     track: 'both',
     additionalNote: '',
+    wbsPlatformId: '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  const [wbsPlatforms, setWbsPlatforms] = useState([]);
   const [wbsTasks, setWbsTasks] = useState([]);
   const [selectedTasks, setSelectedTasks] = useState([]); // task ids
 
   const project = projectById(form.projectId);
   const isWbs = !!project?.wbsEnabled;
 
+  // load the project's WBS platforms; default to the first one
   useEffect(() => {
     let cancelled = false;
     setSelectedTasks([]);
+    setWbsTasks([]);
     if (!project?.wbsEnabled) {
+      setWbsPlatforms([]);
+      setForm((f) => ({ ...f, wbsPlatformId: '' }));
+      return;
+    }
+    api
+      .fetchWbsPlatforms(project.id)
+      .then((pl) => {
+        if (cancelled) return;
+        setWbsPlatforms(pl);
+        setForm((f) => ({ ...f, wbsPlatformId: pl[0]?.id || '' }));
+      })
+      .catch(() => !cancelled && setWbsPlatforms([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, project?.wbsEnabled]);
+
+  // load selectable tasks for the chosen platform
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedTasks([]);
+    if (!isWbs || !form.wbsPlatformId) {
       setWbsTasks([]);
       return;
     }
     api
-      .fetchWbsTasks(project.id)
+      .fetchWbsTasksForPlatform(project.id, form.wbsPlatformId)
       .then((ts) => {
         if (cancelled) return;
         // selectable: non-milestone tasks not already fully sent to QA / complete
@@ -103,7 +129,8 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     return () => {
       cancelled = true;
     };
-  }, [project?.id, project?.wbsEnabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWbs, form.wbsPlatformId, project?.id]);
 
   const toggleTask = (id) =>
     setSelectedTasks((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -137,15 +164,21 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     }));
   }
 
-  // follow-up detection: an open sent-back release for the selected project
-  const priorSentBack = sentBackReleases.find((r) => r.projectId === form.projectId) || null;
-  const priorOpenBugs = priorSentBack
-    ? bugs.filter((b) => b.releaseId === priorSentBack.id && b.status !== 'verified').length
-    : 0;
+  // follow-up detection: ALL open sent-back cycles for this project on the same
+  // platform (Mobile = APK + TestFlight). Submitting supersedes every one of them.
+  const priorSentBackList = sentBackReleases.filter(
+    (r) => r.projectId === form.projectId && r.platform === form.platform
+  );
+  const priorSentBack = priorSentBackList[0] || null;
+  const priorOpenBugs = priorSentBackList.reduce(
+    (n, r) => n + bugs.filter((b) => b.releaseId === r.id && b.status !== 'verified').length,
+    0
+  );
+  const priorVersions = priorSentBackList.map((r) => `v${r.version}`).join(', ');
 
-  // A WBS project with a prior sent-back release may be submitted as a
+  // A WBS project with prior sent-back cycle(s) may be submitted as a
   // bug-fix-only release (no WBS task selection required).
-  const bugFixEligible = isWbs && !!priorSentBack;
+  const bugFixEligible = isWbs && priorSentBackList.length > 0;
   const isWeb = form.platform === 'Web';
   const componentBad =
     isWeb && form.component === 'Other' && !form.componentOther.trim();
@@ -155,7 +188,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     componentBad ||
     !!linkErr ||
     (isWbs
-      ? !bugFixEligible && selectedTasks.length === 0 // feature release still needs ≥1 task
+      ? !form.wbsPlatformId || (!bugFixEligible && selectedTasks.length === 0) // platform required; feature release needs ≥1 task
       : !form.releaseNotes.trim());
 
   function submit() {
@@ -215,9 +248,10 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
             border: '1px solid var(--color-border-tertiary)',
           }}
         >
-          You have an open QA cycle on <strong>v{priorSentBack.version}</strong> with {priorOpenBugs} unresolved
-          bug{priorOpenBugs === 1 ? '' : 's'}. Submitting closes v{priorSentBack.version} and carries its
-          unresolved &amp; fixed-pending-verification bugs into this new release.
+          You have {priorSentBackList.length} open {form.platform} QA cycle
+          {priorSentBackList.length === 1 ? '' : 's'} (<strong>{priorVersions}</strong>) with {priorOpenBugs} unresolved
+          bug{priorOpenBugs === 1 ? '' : 's'}. Submitting closes {priorSentBackList.length === 1 ? 'it' : 'them all'} and
+          carries every unresolved &amp; fixed-pending-verification bug into this new release.
         </div>
       )}
 
@@ -341,6 +375,19 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
       {isWbs ? (
         <>
+          <Field label="WBS platform">
+            <select style={inputStyle} value={form.wbsPlatformId} onChange={(e) => set('wbsPlatformId', e.target.value)}>
+              {wbsPlatforms.length === 0 && <option value="">No WBS platforms</option>}
+              {wbsPlatforms.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 5 }}>
+              This release targets one platform — only its tasks are shown, and QA/completion are tracked for it.
+            </div>
+          </Field>
           <Field label="QA should verify">
             <div style={{ display: 'flex', gap: 8 }}>
               {WBS_TRACKS.map((t) => {
@@ -829,6 +876,7 @@ function DetailsTab({
   const soleQa = qaList.length === 1 ? qaList[0] : null;
   const autoAssignedRef = useRef(null);
   const [linkedTasks, setLinkedTasks] = useState([]);
+  const [wbsPlatformName, setWbsPlatformName] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -836,10 +884,16 @@ function DetailsTab({
       .fetchReleaseTasks(release.id)
       .then((t) => !cancelled && setLinkedTasks(t))
       .catch(() => {});
+    if (release.wbsPlatformId && release.projectId) {
+      api
+        .fetchWbsPlatforms(release.projectId)
+        .then((pl) => !cancelled && setWbsPlatformName(pl.find((p) => p.id === release.wbsPlatformId)?.name || ''))
+        .catch(() => {});
+    }
     return () => {
       cancelled = true;
     };
-  }, [release.id]);
+  }, [release.id, release.wbsPlatformId, release.projectId]);
 
   // one QA on the team → auto-assign, no selection dialog
   useEffect(() => {
@@ -947,7 +1001,7 @@ function DetailsTab({
           }}
         >
           <div style={{ ...labelStyle, marginBottom: 8 }}>
-            Linked WBS tasks · verify {linkedTasks[0]?.track}
+            {wbsPlatformName ? `${wbsPlatformName} · ` : ''}Linked WBS tasks · verify {linkedTasks[0]?.track}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {linkedTasks.map((t) => (
