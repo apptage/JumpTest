@@ -242,7 +242,7 @@ export default function ReleaseTracker() {
     refetchProjectMembers,
     refetchNotifications,
     resetAll,
-  } = useAppData(user, showToast);
+  } = useAppData(session, user, showToast);
 
   /* ---- derived ---- */
   const projectsById = useMemo(() => {
@@ -337,11 +337,15 @@ export default function ReleaseTracker() {
   /* ---- auth actions ---- */
   async function handleSignIn({ email, password }) {
     await run(async () => {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
       if (error) throw error;
+      // Set the session synchronously from the sign-in response instead of
+      // waiting for onAuthStateChange — otherwise queries can fire before the
+      // JWT is attached and RLS quietly returns empty rows.
+      if (data.session) setSession(data.session);
     }, 'Signed in');
   }
 
@@ -384,6 +388,9 @@ export default function ReleaseTracker() {
     });
     setIsSubmitting(false);
     if (error) return showToast(error.message, 'error');
+    // When email confirmation is disabled, sign-up returns a live session —
+    // set it immediately (same reasoning as sign-in) so data loads right away.
+    if (data.session) setSession(data.session);
     showToast(
       data.session
         ? 'Account created'

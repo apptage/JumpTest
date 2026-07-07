@@ -10,11 +10,16 @@ const EMPTY = [];
    project_members table) no longer zeroes the whole dashboard. The refetch*
    helpers are cache invalidations, so existing mutation handlers keep working
    unchanged — they call refetchX() after a mutation and the query refetches. */
-export function useAppData(user, onError) {
+export function useAppData(session, user, onError) {
   const qc = useQueryClient();
-  const enabled = !!user;
+  // Only fetch once auth is fully ready: a live access token AND a resolved
+  // profile. Gating on the token avoids the login race where Supabase RLS
+  // returns [] with HTTP 200 (no error, no retry) before the JWT is attached.
+  const enabled = !!session?.access_token && !!user?.id;
+  // Scope every query by user id so a login mints a fresh key → fresh fetch,
+  // never reusing an empty result cached during the pre-auth window.
   const q = (key, fn, extra) =>
-    useQuery({ queryKey: [key], queryFn: () => fn(), enabled, ...extra });
+    useQuery({ queryKey: [key, user?.id], queryFn: () => fn(), enabled, ...extra });
 
   const projectsQ = q('projects', api.fetchProjects);
   const releasesQ = q('releases', api.fetchReleases);
@@ -38,6 +43,13 @@ export function useAppData(user, onError) {
     if (firstError) onError?.(firstError.message || 'Failed to load data', 'error');
   }, [firstError, onError]);
 
+  // Belt-and-suspenders: the moment auth becomes ready, force a refetch of
+  // everything. The user-id key change already refetches, but this guarantees
+  // any query that started during the pre-auth window is re-run.
+  useEffect(() => {
+    if (enabled) qc.invalidateQueries();
+  }, [enabled, user?.id, qc]);
+
   const inv = useCallback((key) => qc.invalidateQueries({ queryKey: [key] }), [qc]);
 
   return {
@@ -49,8 +61,10 @@ export function useAppData(user, onError) {
     projectMembers: membersQ.data ?? EMPTY,
     checklistItems: checklistQ.data ?? EMPTY,
     notifications: notifQ.data ?? EMPTY,
-    // initial-load spinner: only while the core lists first load
-    loading: enabled && (projectsQ.isLoading || releasesQ.isLoading || bugsQ.isLoading),
+    // initial-load spinner: isPending stays true until the first successful
+    // fetch resolves, so we keep showing the spinner (not an empty UI) through
+    // the whole post-login bootstrap rather than only while actively fetching.
+    loading: enabled && (projectsQ.isPending || releasesQ.isPending || bugsQ.isPending),
     refetchReleases: useCallback(() => inv('releases'), [inv]),
     refetchBugs: useCallback(() => inv('bugs'), [inv]),
     refetchProjects: useCallback(() => inv('projects'), [inv]),

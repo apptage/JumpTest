@@ -231,6 +231,12 @@ export function WbsPage({ user, projects, showToast }) {
   const [q, setQ] = useState('');
   const fileRef = useRef(null);
 
+  // projects can be empty on first mount (data still loading after login) —
+  // pick the first project once the list actually arrives, not just at init.
+  useEffect(() => {
+    if (!projectId && projects[0]?.id) setProjectId(projects[0].id);
+  }, [projects, projectId]);
+
   const project = projects.find((p) => p.id === projectId) || null;
   const canManage =
     user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
