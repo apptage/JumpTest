@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, Logo, Avatar, CountBadge } from '@/ui.jsx';
 import { PageHeader, sideHead, relativeTime, greeting } from '@shared/ui-kit.jsx';
+import { Pill } from '@shared/dashboard-kit.jsx';
 import { EDIT_WINDOW_HOURS, SLA_HOURS, BUG_SLA_DAYS } from '@/constants.js';
 import {
   IconBell, IconBug, IconChart, IconCog, IconFolder, IconGrid,
@@ -89,7 +90,16 @@ export function SettingsPage({ user, team, onSignOut }) {
           <div style={{ ...sideHead, marginBottom: 10 }}>Profile</div>
           {row('Name', user.name)}
           {row('Email', user.email)}
-          {row('Role', user.role)}
+          {row(
+            'Role',
+            <Pill
+              label={user.role}
+              tone={
+                { Admin: 'info', 'Team Lead': 'warning', QA: 'success', Developer: 'neutral' }[user.role] ||
+                'neutral'
+              }
+            />
+          )}
           {row('Team', team ? team.name : '—')}
           <button
             style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644', marginTop: 14 }}

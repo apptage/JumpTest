@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import * as api from '@/api.js';
 import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, ModalShell } from '@/ui.jsx';
 import { Field } from '@shared/ui-kit.jsx';
+import { StatSmall, Pill } from '@shared/dashboard-kit.jsx';
 import {
   ALLOWED_EMAIL_DOMAIN,
   PROJECT_TYPES,
@@ -143,8 +144,21 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
     onCreateTeam(name.trim());
     setName('');
   }
+  const noLeadCount = teams.filter((t) => !leadOf(t.id)).length;
   return (
     <div>
+      {/* KPI header — house hierarchy */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        <StatSmall label="Teams" value={teams.length} />
+        <StatSmall label="People assigned" value={profiles.filter((p) => p.teamId).length} />
+        <StatSmall label="Projects" value={projects.filter((p) => p.teamId).length} />
+        <StatSmall
+          label="Without a lead"
+          value={noLeadCount}
+          color={noLeadCount ? 'var(--danger)' : 'var(--success)'}
+        />
+      </div>
+
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         <input
           style={{ ...inputStyle, flex: 1 }}
@@ -167,6 +181,7 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
             return (
               <div
                 key={t.id}
+                className="mgr-row"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -178,16 +193,16 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{t.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600 }}>{t.name}</span>
                     {lead ? (
-                      <span>
-                        Lead: <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>{lead.name}</span>
-                      </span>
+                      <Pill label={`Lead: ${lead.name}`} tone="success" />
                     ) : (
-                      <span style={{ color: '#dc2626' }}>No team lead</span>
-                    )}{' '}
-                    · {members(t.id).length} member{members(t.id).length === 1 ? '' : 's'} · {projCount(t.id)} project
+                      <Pill label="No team lead" tone="danger" />
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>
+                    {members(t.id).length} member{members(t.id).length === 1 ? '' : 's'} · {projCount(t.id)} project
                     {projCount(t.id) === 1 ? '' : 's'}
                   </div>
                 </div>
@@ -411,8 +426,19 @@ export function UsersTab({
   );
   const pageUsers = filteredUsers.slice(0, visible);
 
+  const roleCount = (r) => profiles.filter((p) => p.role === r).length;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* KPI header — role distribution */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+        <StatSmall label="Total" value={profiles.length} />
+        <StatSmall label="Admins" value={roleCount('Admin')} color="var(--brand)" />
+        <StatSmall label="Team Leads" value={roleCount('Team Lead')} color="var(--warning)" />
+        <StatSmall label="QA" value={roleCount('QA')} color="var(--success)" />
+        <StatSmall label="Developers" value={roleCount('Developer')} />
+      </div>
+
       {isAdmin && (
         <CreateUserForm teams={teams} isSubmitting={isSubmitting} onCreateUser={onCreateUser} />
       )}
@@ -467,6 +493,7 @@ export function UsersTab({
         return (
           <div
             key={p.id}
+            className="mgr-row"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -638,8 +665,19 @@ export function ProjectsTab({
     setCreating(false);
   }
 
+  const typeCount = (t) => projects.filter((p) => p.type === t).length;
+
   return (
     <div>
+      {/* KPI header — house hierarchy */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        <StatSmall label="Projects" value={projects.length} />
+        <StatSmall label="Mobile" value={typeCount('mobile')} color="var(--brand)" />
+        <StatSmall label="Web" value={typeCount('web')} color="var(--success)" />
+        <StatSmall label="Both" value={typeCount('both')} color="var(--warning)" />
+        <StatSmall label="Releases" value={releases.length} />
+      </div>
+
       {/* header */}
       <div
         style={{
@@ -868,7 +906,7 @@ function ProjectRow({
   });
 
   return (
-    <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+    <div className="mgr-card clickable" style={{ ...card, padding: 0, overflow: 'hidden' }}>
       {/* header */}
       <div
         onClick={() => setOpen((o) => !o)}

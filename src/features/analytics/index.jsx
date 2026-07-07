@@ -1,8 +1,11 @@
 /* Analytics feature — release/QA metrics dashboard + history/changelog.
    Moved verbatim out of ReleaseTracker.jsx (Phase 0 mechanical split). */
+export { ManagerDashboard } from './ManagerDashboard.jsx';
 import { useState, useMemo } from 'react';
-import { card, inputStyle, ghostButton, ModalShell, StatusBadge } from '@/ui.jsx';
-import { PageHeader, Kpi, DistBars, AnSection, avgDaysBetween } from '@shared/ui-kit.jsx';
+import { card, inputStyle, ghostButton, ModalShell, StatusBadge, Avatar } from '@/ui.jsx';
+import { PageHeader, Kpi, AnSection, avgDaysBetween } from '@shared/ui-kit.jsx';
+import { SubTabs, Donut, StackedBar, SegmentedTimeline, Pill } from '@shared/dashboard-kit.jsx';
+import { IconSliders } from '@/icons.jsx';
 import { filterBugs, filterReleases } from '@shared/filters.js';
 import { computeReleaseMetrics, computeBottlenecks, computeWorkload } from '@shared/releaseMetrics.js';
 import { assertBugReconcile } from '@shared/bugMetrics.js';
@@ -44,6 +47,7 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
     to: '',
   });
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const [matrixTab, setMatrixTab] = useState('dev');
   const reset = () =>
     setF({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
 
@@ -191,72 +195,196 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   };
   const td = { fontSize: 12, padding: '8px 8px', borderBottom: '1px solid var(--color-border-primary)' };
 
+  // combined "Team Members" filter — maps one picker onto the dev/qa filter keys
+  const memberValue =
+    f.developer !== 'all' ? `dev:${f.developer}` : f.qa !== 'all' ? `qa:${f.qa}` : 'all';
+  const onMember = (val) => {
+    const [kind, id] = val.split(':');
+    if (kind === 'dev') setF((s) => ({ ...s, developer: id, qa: 'all' }));
+    else if (kind === 'qa') setF((s) => ({ ...s, developer: 'all', qa: id }));
+    else setF((s) => ({ ...s, developer: 'all', qa: 'all' }));
+  };
+  const sevSegments = sevDist.map((s) => ({ label: s.label, value: s.n, color: s.color }));
+  const statusSegments = statusDist.map((s) => ({ label: s.label, value: s.n, color: s.color }));
+  const secHead = {
+    fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+    color: 'var(--color-text-tertiary)', marginBottom: 10,
+  };
+  const avatarCell = (name, role) => (
+    <td style={{ ...td, fontWeight: 500 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <Avatar name={name} role={role} size={24} />
+        {name}
+      </span>
+    </td>
+  );
+  // guide: an assignee carrying >20 open bugs is a bottleneck → soft amber pill
+  const overloadCell = (n) =>
+    n > 20 ? (
+      <td style={td}><Pill label={String(n)} tone="warning" /></td>
+    ) : (
+      <td style={{ ...td, color: n ? 'var(--danger)' : undefined }}>{n}</td>
+    );
+
+  const devTable =
+    devPerf.length === 0 ? (
+      <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', padding: '8px 2px' }}>No developer activity.</div>
+    ) : (
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={th}>Developer</th>
+              <th style={th}>Submitted</th>
+              <th style={th}>Awaiting fix</th>
+              <th style={th}>Active</th>
+              <th style={th}>Open bugs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {devPerf.map((d) => (
+              <tr key={d.id} className="mgr-row">
+                {avatarCell(d.name, 'Developer')}
+                <td style={td}>{d.submitted}</td>
+                <td style={{ ...td, color: d.awaitingFix ? 'var(--danger)' : undefined, fontWeight: d.awaitingFix > 5 ? 700 : 400 }}>{d.awaitingFix}</td>
+                <td style={td}>{d.active}</td>
+                {overloadCell(d.openBugs)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  const qaTable =
+    qaPerf.length === 0 ? (
+      <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', padding: '8px 2px' }}>No QA activity.</div>
+    ) : (
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={th}>QA engineer</th>
+              <th style={th}>Reported</th>
+              <th style={th}>Approve</th>
+              <th style={th}>Reject</th>
+              <th style={th}>Pending</th>
+              <th style={th}>In QA</th>
+              <th style={th}>Verify</th>
+            </tr>
+          </thead>
+          <tbody>
+            {qaPerf.map((q) => (
+              <tr key={q.id} className="mgr-row">
+                {avatarCell(q.name, 'QA')}
+                <td style={td}>{q.reported}</td>
+                <td style={{ ...td, color: 'var(--success)' }}>{q.approveRate}%</td>
+                <td style={{ ...td, color: 'var(--danger)' }}>{q.rejectRate}%</td>
+                <td style={td}>{q.pendingQa}</td>
+                <td style={{ ...td, color: q.inQa > 3 ? 'var(--danger)' : undefined, fontWeight: q.inQa > 3 ? 700 : 400 }}>{q.inQa}</td>
+                <td style={{ ...td, color: q.awaitingVerify ? 'var(--warning)' : undefined }}>{q.awaitingVerify}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+  const wlTable =
+    wlMembers.length === 0 ? (
+      <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', padding: '8px 2px' }}>No active assignments.</div>
+    ) : (
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={th}>Member</th>
+              <th style={th}>Role</th>
+              <th style={th}>Active releases</th>
+              <th style={th}>Pending reviews</th>
+              <th style={th}>Open bugs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {wlMembers.map((w) => (
+              <tr key={w.m.id} className="mgr-row">
+                {avatarCell(w.m.name, w.m.role)}
+                <td style={td}>{w.m.role}</td>
+                <td style={td}>{w.activeReleases}</td>
+                <td style={{ ...td, color: w.pendingReviews > 3 ? 'var(--danger)' : undefined, fontWeight: w.pendingReviews > 3 ? 700 : 400 }}>{w.pendingReviews}</td>
+                {overloadCell(w.openBugs)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
   const body = (
     <>
-      {/* filters */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
+      {/* filter ribbon — minimalist, funnel-anchored */}
+      <div
+        style={{
+          display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+          padding: '9px 12px', marginBottom: 18,
+          background: 'var(--color-background-primary)',
+          border: '1px solid #E2E8F0', borderRadius: 10,
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)', fontSize: 12, fontWeight: 600, paddingRight: 8, borderRight: '1px solid var(--color-border-tertiary)' }}>
+          <IconSliders size={15} /> Filters
+        </span>
         {isAdmin && (
           <select style={fSel} value={f.team} onChange={(e) => set('team', e.target.value)}>
             <option value="all">All teams</option>
             {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
+              <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         )}
         <select style={fSel} value={f.project} onChange={(e) => set('project', e.target.value)}>
           <option value="all">All projects</option>
           {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
+            <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
         <select style={fSel} value={f.platform} onChange={(e) => set('platform', e.target.value)}>
           <option value="all">All platforms</option>
           {RELEASE_PLATFORMS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
         <select style={fSel} value={f.environment} onChange={(e) => set('environment', e.target.value)}>
           <option value="all">All environments</option>
           {ENVIRONMENTS.map((e) => (
-            <option key={e} value={e}>
-              {e}
-            </option>
+            <option key={e} value={e}>{e}</option>
           ))}
         </select>
-        <select style={fSel} value={f.developer} onChange={(e) => set('developer', e.target.value)}>
-          <option value="all">All developers</option>
-          {devs.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
+        {/* combined Team Members (developers + QA) */}
+        <select style={fSel} value={memberValue} onChange={(e) => onMember(e.target.value)} title="Team member">
+          <option value="all">All team members</option>
+          <optgroup label="Developers">
+            {devs.map((p) => (
+              <option key={p.id} value={`dev:${p.id}`}>{p.name}</option>
+            ))}
+          </optgroup>
+          <optgroup label="QA">
+            {qas.map((p) => (
+              <option key={p.id} value={`qa:${p.id}`}>{p.name}</option>
+            ))}
+          </optgroup>
         </select>
-        <select style={fSel} value={f.qa} onChange={(e) => set('qa', e.target.value)}>
-          <option value="all">All QA</option>
-          {qas.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <input
-          style={{ ...fSel, width: 110 }}
-          value={f.version}
-          placeholder="Version…"
-          onChange={(e) => set('version', e.target.value)}
-        />
+        <input style={{ ...fSel, width: 110 }} value={f.version} placeholder="Version…" onChange={(e) => set('version', e.target.value)} />
         <input style={fSel} type="date" value={f.from} onChange={(e) => set('from', e.target.value)} title="From" />
         <input style={fSel} type="date" value={f.to} onChange={(e) => set('to', e.target.value)} title="To" />
-        <button style={{ ...ghostButton, padding: '6px 12px', fontSize: 12 }} onClick={reset}>
+        <button style={{ ...ghostButton, padding: '6px 12px', fontSize: 12, marginLeft: 'auto' }} onClick={reset}>
           Reset
         </button>
       </div>
+
+      <div className="an-workspace">
+        {/* LEFT — performance & data trends */}
+        <div style={{ minWidth: 0 }}>
 
       {/* QA quality + velocity KPIs */}
       <AnSection title="Release Quality">
@@ -284,247 +412,51 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
         </div>
       </AnSection>
 
-      {/* cycle stages + velocity trend */}
+      {/* cycle stages as a segmented timeline + velocity trend */}
       <AnSection title="Release Speed">
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
-              Average stage duration (days)
-            </div>
-            {[
-              ['Submission → QA assigned', toAssign],
-              ['QA assigned → QA complete', assignToDone],
-              ['Total cycle', cycleDays],
-            ].map(([label, v]) => (
-              <div key={label} style={{ marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-                  <span>{label}</span>
-                  <span className="tnum" style={{ color: 'var(--color-text-secondary)' }}>
-                    {v == null ? '—' : `${v.toFixed(1)}d`}
-                  </span>
-                </div>
-                <div style={{ height: 6, borderRadius: 999, background: 'var(--color-background-secondary)' }}>
-                  <div
-                    style={{
-                      height: '100%',
-                      borderRadius: 999,
-                      background: 'var(--brand)',
-                      width: `${Math.min(100, ((v || 0) / Math.max(0.1, cycleDays || 1)) * 100)}%`,
-                    }}
-                  />
-                </div>
+        <div style={{ ...card, padding: 16, marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Cycle time breakdown</span>
+            <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>
+              {cycleDays == null ? '—' : `${cycleDays.toFixed(1)}d total`}
+            </span>
+          </div>
+          <SegmentedTimeline
+            segments={[
+              { label: 'Submit → QA assigned', value: toAssign || 0, color: '#94A3B8' },
+              { label: 'QA assigned → QA complete', value: assignToDone || 0, color: '#0D9488' },
+            ]}
+          />
+        </div>
+        <div style={{ ...card, padding: 14 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+            Releases completed / month
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 80 }}>
+            {months.map((m) => (
+              <div key={m.key} style={{ flex: 1, textAlign: 'center' }}>
+                <div style={{ height: `${(m.n / maxMonth) * 64}px`, background: 'var(--brand)', borderRadius: 4, minHeight: 2 }} title={`${m.n} completed`} />
+                <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 4 }}>{m.label}</div>
               </div>
             ))}
           </div>
-          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
-              Releases completed / month
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 80 }}>
-              {months.map((m) => (
-                <div key={m.key} style={{ flex: 1, textAlign: 'center' }}>
-                  <div
-                    style={{
-                      height: `${(m.n / maxMonth) * 64}px`,
-                      background: 'var(--brand)',
-                      borderRadius: 4,
-                      minHeight: 2,
-                    }}
-                    title={`${m.n} completed`}
-                  />
-                  <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 4 }}>{m.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </AnSection>
 
-      {/* bottlenecks */}
-      <AnSection title="Delays & Attention Needed">
-        {bottlenecks.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>
-            No bottlenecks detected for the current filters.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {bottlenecks.map((b, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 9,
-                  padding: '9px 11px',
-                  background: 'var(--color-background-secondary)',
-                  border: '1px solid var(--color-border-tertiary)',
-                  borderRadius: 8,
-                  fontSize: 12.5,
-                }}
-              >
-                <span
-                  style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0 }}
-                />
-                {b.text}
-              </div>
-            ))}
-          </div>
-        )}
-      </AnSection>
+      {/* Delays, Bug Breakdown & QA Quality now live in the sticky sidebar → */}
 
-      {/* QA quality insights */}
-      <AnSection title="QA Quality Insights">
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-          {BUG_RESOLUTIONS.map((r) => (
-            <Kpi
-              key={r}
-              label={r}
-              value={resCounts[r]}
-              sub={`${totalBugs ? Math.round((resCounts[r] / totalBugs) * 100) : 0}% of bugs`}
-            />
-          ))}
-        </div>
-        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          {invalidPct}% of reported bugs were closed without a code fix.
-          {invalidPct >= 30
-            ? ' A high share can signal unclear requirements or outdated specs — worth a process review rather than blaming individuals.'
-            : ''}
-        </div>
-      </AnSection>
-
-      {/* charts */}
-      <AnSection title="Bug Breakdown">
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
-              By severity
-            </div>
-            <DistBars items={sevDist} />
-          </div>
-          <div style={{ ...card, padding: 14, flex: '1 1 240px' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
-              By status
-            </div>
-            <DistBars items={statusDist} />
-          </div>
-          <div style={{ ...card, padding: 14, flex: '1 1 200px' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
-              Open vs Closed
-            </div>
-            <DistBars
-              items={[
-                { key: 'open', label: 'Open', color: 'var(--danger)', n: openBugsCount },
-                { key: 'closed', label: 'Closed', color: 'var(--success)', n: closedBugs },
-              ]}
-            />
-          </div>
-        </div>
-      </AnSection>
-
-      {/* developer insights */}
-      <AnSection title="Developer Insights">
-        {devPerf.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No developer activity.</div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th}>Developer</th>
-                  <th style={th}>Releases submitted</th>
-                  <th style={th}>Awaiting fix</th>
-                  <th style={th}>Active releases</th>
-                  <th style={th}>Open bugs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {devPerf.map((d) => (
-                  <tr key={d.id}>
-                    <td style={{ ...td, fontWeight: 500 }}>{d.name}</td>
-                    <td style={td}>{d.submitted}</td>
-                    <td style={{ ...td, color: d.awaitingFix ? 'var(--danger)' : undefined, fontWeight: d.awaitingFix > 5 ? 700 : 400 }}>
-                      {d.awaitingFix}
-                    </td>
-                    <td style={td}>{d.active}</td>
-                    <td style={{ ...td, color: d.openBugs ? 'var(--danger)' : undefined }}>{d.openBugs}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </AnSection>
-
-      {/* QA insights */}
-      <AnSection title="QA Insights">
-        {qaPerf.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No QA activity.</div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th}>QA engineer</th>
-                  <th style={th}>Bugs reported</th>
-                  <th style={th}>Approval rate</th>
-                  <th style={th}>Rejection rate</th>
-                  <th style={th}>Pending QA</th>
-                  <th style={th}>In QA</th>
-                  <th style={th}>Awaiting verify</th>
-                </tr>
-              </thead>
-              <tbody>
-                {qaPerf.map((q) => (
-                  <tr key={q.id}>
-                    <td style={{ ...td, fontWeight: 500 }}>{q.name}</td>
-                    <td style={td}>{q.reported}</td>
-                    <td style={{ ...td, color: 'var(--success)' }}>{q.approveRate}%</td>
-                    <td style={{ ...td, color: 'var(--danger)' }}>{q.rejectRate}%</td>
-                    <td style={td}>{q.pendingQa}</td>
-                    <td style={{ ...td, color: q.inQa > 3 ? 'var(--danger)' : undefined, fontWeight: q.inQa > 3 ? 700 : 400 }}>
-                      {q.inQa}
-                    </td>
-                    <td style={{ ...td, color: q.awaitingVerify ? 'var(--warning)' : undefined }}>{q.awaitingVerify}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </AnSection>
-
-      {/* workload */}
-      <AnSection title="Workload by team member">
-        {wlMembers.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No active assignments.</div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={th}>Member</th>
-                  <th style={th}>Role</th>
-                  <th style={th}>Active releases</th>
-                  <th style={th}>Pending reviews</th>
-                  <th style={th}>Open bugs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {wlMembers.map((w) => (
-                  <tr key={w.m.id}>
-                    <td style={{ ...td, fontWeight: 500 }}>{w.m.name}</td>
-                    <td style={td}>{w.m.role}</td>
-                    <td style={td}>{w.activeReleases}</td>
-                    <td style={{ ...td, color: w.pendingReviews > 3 ? 'var(--danger)' : undefined, fontWeight: w.pendingReviews > 3 ? 700 : 400 }}>
-                      {w.pendingReviews}
-                    </td>
-                    <td style={td}>{w.openBugs}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      {/* consolidated resource matrix — Developers / QA / Workload */}
+      <AnSection title="Resource Matrix">
+        <SubTabs
+          tabs={[
+            ['dev', `Developers${devPerf.length ? ` (${devPerf.length})` : ''}`],
+            ['qa', `QA${qaPerf.length ? ` (${qaPerf.length})` : ''}`],
+            ['wl', `Workload${wlMembers.length ? ` (${wlMembers.length})` : ''}`],
+          ]}
+          active={matrixTab}
+          onChange={setMatrixTab}
+        />
+        {matrixTab === 'dev' ? devTable : matrixTab === 'qa' ? qaTable : wlTable}
       </AnSection>
 
       {/* per-project */}
@@ -567,6 +499,79 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
           </div>
         )}
       </AnSection>
+
+        </div>
+        {/* end LEFT */}
+
+        {/* RIGHT — sticky quality & attention sidebar */}
+        <aside className="an-side">
+          <div className="mgr-card" style={{ ...card, padding: 14 }}>
+            <div style={secHead}>Delays &amp; Attention Needed</div>
+            {bottlenecks.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                No bottlenecks detected for the current filters.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {bottlenecks.map((b, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px',
+                      background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)',
+                      borderRadius: 8, fontSize: 12,
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 4 }} />
+                    <span style={{ lineHeight: 1.45 }}>{b.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mgr-card" style={{ ...card, padding: 14 }}>
+            <div style={secHead}>Bug Breakdown</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>By severity</div>
+            <Donut segments={sevSegments} centerValue={totalBugs} centerLabel="bugs" />
+            <div style={{ height: 1, background: 'var(--color-border-primary)', margin: '14px 0' }} />
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>By status</div>
+            <StackedBar segments={statusSegments} />
+            <div style={{ height: 1, background: 'var(--color-border-primary)', margin: '14px 0' }} />
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>Open vs Closed</div>
+            <StackedBar
+              segments={[
+                { label: 'Open', value: openBugsCount, color: 'var(--danger)' },
+                { label: 'Closed', value: closedBugs, color: 'var(--success)' },
+              ]}
+            />
+          </div>
+
+          <div className="mgr-card" style={{ ...card, padding: 14 }}>
+            <div style={secHead}>QA Quality Insights</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 10 }}>
+              {BUG_RESOLUTIONS.map((r) => (
+                <div key={r} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: 'var(--color-text-secondary)' }}>{r}</span>
+                  <span className="tnum">
+                    <b>{resCounts[r]}</b>{' '}
+                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>
+                      {totalBugs ? Math.round((resCounts[r] / totalBugs) * 100) : 0}%
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+              {invalidPct}% of reported bugs were closed without a code fix.
+              {invalidPct >= 30
+                ? ' A high share can signal unclear requirements or outdated specs — worth a process review rather than blaming individuals.'
+                : ''}
+            </div>
+          </div>
+        </aside>
+      </div>
+      {/* end an-workspace */}
 
       <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
         Release-speed and attention metrics use submission, QA-assigned and QA-complete timestamps recorded from now on;

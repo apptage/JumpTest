@@ -19,6 +19,7 @@ import {
   Info,
 } from '@/ui.jsx';
 import { Field, sideHead, TagChip, SlaBadge, statusSince } from '@shared/ui-kit.jsx';
+import { BugActions } from '@shared/bug-actions.jsx';
 import {
   STATUSES,
   nextStatuses,
@@ -29,7 +30,6 @@ import {
   BUG_STATUSES,
   BUG_TAGS,
   BUG_FEATURES,
-  BUG_RESOLUTIONS,
   RELEASE_TYPES,
   RELEASE_TYPE_ORDER,
   RELEASE_COMPONENTS,
@@ -631,6 +631,7 @@ export function DetailModal({
   onAddBug,
   onBugStatus,
   onBugResolve,
+  onBugCloseReview,
   onDeleteBug,
   onAddComment,
   onDeleteComment,
@@ -817,6 +818,7 @@ export function DetailModal({
           onAddBug={onAddBug}
           onBugStatus={onBugStatus}
           onBugResolve={onBugResolve}
+          onBugCloseReview={onBugCloseReview}
           onDeleteBug={onDeleteBug}
         />
       )}
@@ -1238,6 +1240,7 @@ function BugsTab({
   onAddBug,
   onBugStatus,
   onBugResolve,
+  onBugCloseReview,
   onDeleteBug,
 }) {
   const [show, setShow] = useState(false);
@@ -1273,6 +1276,8 @@ function BugsTab({
   }, [wbsEnabled, release.id]);
 
   const isDev = user.role === 'Developer' || user.role === 'Admin';
+  // only a Team Lead / Admin verifies a developer's proposed close
+  const isManager = user.role === 'Team Lead' || user.role === 'Admin';
   const readOnly = isReadOnly(release);
   const wbsBug = wbsEnabled && releaseTasks.length > 0;
   const invalid = !form.title.trim() || (wbsBug && !form.wbsTaskId);
@@ -1461,10 +1466,12 @@ function BugsTab({
                 onCommentsChanged={refreshCounts}
                 isDev={isDev && !readOnly}
                 isQA={isQA && !readOnly}
+                isManager={isManager && !readOnly}
                 canDelete={!readOnly && (user.role === 'Admin' || bug.createdById === user.id)}
                 isSubmitting={isSubmitting}
                 onStatus={(st) => onBugStatus(release, bug, st)}
                 onResolve={(res) => onBugResolve(release, bug, res)}
+                onCloseReview={(decision) => onBugCloseReview(release, bug, decision)}
                 onDelete={() => onDeleteBug(bug)}
               />
             );
@@ -1550,27 +1557,15 @@ function BugRow({
   onCommentsChanged,
   isDev,
   isQA,
+  isManager,
   canDelete,
   isSubmitting,
   onStatus,
   onResolve,
+  onCloseReview,
   onDelete,
 }) {
   const [showThread, setShowThread] = useState(false);
-  // contextual transitions
-  const actions = [];
-  if (isDev) {
-    if (bug.status === 'open') actions.push(['in_progress', 'Start']);
-    if (['in_progress', 'open', 'disputed'].includes(bug.status))
-      actions.push(['fixed', 'Mark fixed']);
-  }
-  if (isQA) {
-    if (bug.status === 'fixed') actions.push(['verified', 'Verify']);
-    if (bug.status !== 'open') actions.push(['open', 'Reopen']);
-  }
-  // either side can flag for clarification
-  if (bug.status !== 'verified' && bug.status !== 'disputed')
-    actions.push(['disputed', 'Needs clarification']);
 
   return (
     <div style={{ ...card, padding: 12 }}>
@@ -1662,58 +1657,18 @@ function BugRow({
           />
         </a>
       )}
-      {(actions.length > 0 || canDelete || (isQA && bug.status !== 'verified')) && (
-        <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          {actions.map(([st, label]) => (
-            <button
-              key={st}
-              disabled={isSubmitting}
-              onClick={() => onStatus(st)}
-              style={{
-                ...ghostButton,
-                padding: '6px 10px',
-                fontSize: 12,
-                color: BUG_STATUSES[st].color,
-                borderColor: `${BUG_STATUSES[st].color}55`,
-              }}
-            >
-              {label}
-            </button>
-          ))}
-          {isQA && bug.status !== 'verified' && (
-            <select
-              value=""
-              disabled={isSubmitting}
-              onChange={(e) => e.target.value && onResolve(e.target.value)}
-              style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}
-              title="Close without a code fix"
-            >
-              <option value="">Close as…</option>
-              {BUG_RESOLUTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          )}
-          {canDelete && (
-            <button
-              disabled={isSubmitting}
-              onClick={onDelete}
-              style={{
-                ...ghostButton,
-                padding: '6px 10px',
-                fontSize: 12,
-                color: '#dc2626',
-                borderColor: '#dc262644',
-                marginLeft: 'auto',
-              }}
-            >
-              Delete
-            </button>
-          )}
-        </div>
-      )}
+      <BugActions
+        bug={bug}
+        isDev={isDev}
+        isQA={isQA}
+        isManager={isManager}
+        canDelete={canDelete}
+        isSubmitting={isSubmitting}
+        onStatus={onStatus}
+        onResolve={onResolve}
+        onCloseReview={onCloseReview}
+        onDelete={onDelete}
+      />
 
       {/* comment thread */}
       <div style={{ marginTop: 10, borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>

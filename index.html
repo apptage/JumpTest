@@ -138,6 +138,12 @@
       .anim-pop { animation: pop 0.2s cubic-bezier(0.2, 0.8, 0.3, 1.2); }
       .floaty { animation: floaty 5s ease-in-out infinite; }
 
+      /* manager dashboard interactions */
+      .mgr-row { transition: background 0.12s ease; }
+      .mgr-row:hover { background: var(--color-background-secondary); }
+      .mgr-card { transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease; }
+      .mgr-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 6px 16px -6px rgba(15,23,42,0.18); border-color: var(--color-border-tertiary); }
+
       @media (prefers-reduced-motion: reduce) {
         * { animation: none !important; transition: none !important; }
       }
@@ -172,6 +178,25 @@
           padding: 8px;
         }
         .page-area { padding: 16px; }
+      }
+
+      /* team-lead analytics 2-column workspace (70/30) with sticky sidebar */
+      .an-workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .an-side {
+        position: sticky;
+        top: 78px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      @media (max-width: 1000px) {
+        .an-workspace { grid-template-columns: 1fr; }
+        .an-side { position: static; }
       }
 
       .app-shell {

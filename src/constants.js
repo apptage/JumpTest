@@ -150,13 +150,16 @@ export const BUG_STATUSES = {
   in_progress: { label: 'In Progress', color: '#2563eb' },
   fixed: { label: 'Fixed', color: '#d97706' },
   disputed: { label: 'Needs Clarification', color: '#7c3aed' },
+  // a developer proposed closing the bug (Not a Bug / Out of Scope / Duplicate);
+  // held here until a Team Lead approves or rejects the decision
+  pending_tl: { label: 'Pending TL Verification', color: '#0891b2' },
   verified: { label: 'Verified', color: '#16a34a' },
 };
-export const BUG_STATUS_ORDER = ['open', 'in_progress', 'fixed', 'disputed', 'verified'];
+export const BUG_STATUS_ORDER = ['open', 'in_progress', 'fixed', 'disputed', 'pending_tl', 'verified'];
 
 /* Single global definition of bug lifecycle buckets — used by every page/metric.
    Active = still needs work/verification; Closed = verified (done). */
-export const ACTIVE_BUG_STATUSES = ['open', 'in_progress', 'disputed', 'fixed'];
+export const ACTIVE_BUG_STATUSES = ['open', 'in_progress', 'disputed', 'fixed', 'pending_tl'];
 export const CLOSED_BUG_STATUSES = ['verified'];
 export function isActiveBug(bug) {
   return CLOSED_BUG_STATUSES.indexOf(bug.status) === -1;
@@ -198,6 +201,10 @@ export const BUG_FEATURES = [
 
 /* Outcomes when a bug is closed without a code fix (QA quality insights). */
 export const BUG_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Cannot Reproduce', 'Duplicate'];
+
+/* Resolutions a developer may propose. Unlike QA, a developer's choice is not
+   applied immediately — it parks the bug in `pending_tl` for Team Lead review. */
+export const DEV_DISPUTE_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Duplicate'];
 
 /* ---- WBS (Work Breakdown Structure) ---- */
 export const WBS_STATUSES = {

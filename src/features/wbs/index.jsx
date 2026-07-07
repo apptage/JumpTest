@@ -5,6 +5,7 @@ import * as api from '@/api.js';
 import { parseWbsFile } from '@/wbs.js';
 import { card, inputStyle, ghostButton, primaryButton } from '@/ui.jsx';
 import { PageHeader, Empty, sideHead } from '@shared/ui-kit.jsx';
+import { StatSmall } from '@shared/dashboard-kit.jsx';
 import {
   WBS_STATUSES,
   WBS_STATUS_ORDER,
@@ -423,6 +424,25 @@ export function WbsPage({ user, projects, showToast }) {
           </>
         )}
       </div>
+
+      {platforms.length > 0 && (() => {
+        const allTasks = platforms.flatMap((p) => p.modules.flatMap((m) => m.tasks));
+        const anyTrack = (t, s) => t.backendStatus === s || t.frontendStatus === s;
+        const done = allTasks.filter((t) => t.backendStatus === 'complete' && t.frontendStatus === 'complete').length;
+        const inQa = allTasks.filter((t) => anyTrack(t, 'in_qa')).length;
+        const inProg = allTasks.filter(
+          (t) => (anyTrack(t, 'in_progress') || anyTrack(t, 'in_qa')) && !(t.backendStatus === 'complete' && t.frontendStatus === 'complete')
+        ).length;
+        return (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+            <StatSmall label="Platforms" value={platforms.length} />
+            <StatSmall label="Tasks" value={allTasks.length} />
+            <StatSmall label="In progress" value={inProg} color={inProg ? 'var(--brand)' : undefined} />
+            <StatSmall label="In QA" value={inQa} color={inQa ? 'var(--warning)' : undefined} />
+            <StatSmall label="Complete" value={done} color="var(--success)" />
+          </div>
+        );
+      })()}
 
       {platforms.length > 0 && (
         <div style={{ ...card, padding: 16, marginBottom: 14 }}>

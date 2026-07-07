@@ -108,7 +108,7 @@ import {
   TagChip,
 } from '@shared/ui-kit.jsx';
 import { WbsPage } from '@features/wbs';
-import { AnalyticsModal, HistoryModal } from '@features/analytics';
+import { AnalyticsModal, HistoryModal, ManagerDashboard } from '@features/analytics';
 import { ProjectsTab, UsersTab, TeamsTab } from '@features/admin';
 import { SubmitModal, EditReleaseModal, DetailModal } from '@features/releases';
 import { AuthScreen, SetPasswordScreen } from '@features/auth';
@@ -646,15 +646,77 @@ export default function ReleaseTracker() {
   }
 
   async function handleBugResolve(release, bug, resolution) {
+    // A plain developer's close is a *proposal*: park the bug in `pending_tl`
+    // and ask the project's Team Lead to verify. QA / Team Lead / Admin close
+    // immediately (they are the verifier).
+    const isDevProposal = user.role === 'Developer';
     const ok = await run(async () => {
-      await api.updateBug(bug.id, {
-        status: 'verified',
-        resolution,
-        verified_at: new Date().toISOString(),
-        verified_by_id: user.id,
-      });
-      await reconcileWbsTaskForBug(release, bug);
-    }, 'Bug closed');
+      if (isDevProposal) {
+        await api.updateBug(bug.id, {
+          status: 'pending_tl',
+          resolution,
+          resolution_by_id: user.id,
+        });
+        const teamId = projectsById[release.projectId]?.teamId;
+        const leads = profiles.filter(
+          (p) => p.role === 'Team Lead' && teamId && p.teamId === teamId
+        );
+        for (const lead of leads) {
+          await api.createNotification({
+            user_id: lead.id,
+            type: 'bug_close_requested',
+            message: `${user.name} marked bug "${bug.title}" as ${resolution} — needs your verification (v${release.version})`,
+            release_id: release.id,
+          });
+        }
+      } else {
+        await api.updateBug(bug.id, {
+          status: 'verified',
+          resolution,
+          verified_at: new Date().toISOString(),
+          verified_by_id: user.id,
+        });
+        await reconcileWbsTaskForBug(release, bug);
+      }
+    }, isDevProposal ? 'Sent for Team Lead verification' : 'Bug closed');
+    if (ok) refetchBugs();
+  }
+
+  // Team Lead approves or rejects a developer's proposed close (`pending_tl`).
+  async function handleBugCloseReview(release, bug, decision) {
+    const ok = await run(async () => {
+      if (decision === 'approve') {
+        await api.updateBug(bug.id, {
+          status: 'verified',
+          verified_at: new Date().toISOString(),
+          verified_by_id: user.id,
+        });
+        await reconcileWbsTaskForBug(release, bug);
+        if (bug.resolutionById) {
+          await api.createNotification({
+            user_id: bug.resolutionById,
+            type: 'bug_close_approved',
+            message: `${user.name} approved closing "${bug.title}" as ${bug.resolution} (v${release.version})`,
+            release_id: release.id,
+          });
+        }
+      } else {
+        // reject → it IS a real bug: send it back to the developer to fix
+        await api.updateBug(bug.id, {
+          status: 'in_progress',
+          resolution: '',
+          resolution_by_id: null,
+        });
+        if (bug.resolutionById) {
+          await api.createNotification({
+            user_id: bug.resolutionById,
+            type: 'bug_close_rejected',
+            message: `${user.name} rejected your "${bug.resolution}" decision on "${bug.title}" — please fix it (v${release.version})`,
+            release_id: release.id,
+          });
+        }
+      }
+    }, decision === 'approve' ? 'Bug closed' : 'Sent back to developer');
     if (ok) refetchBugs();
   }
 
@@ -1021,10 +1083,16 @@ export default function ReleaseTracker() {
                 profiles={profiles}
                 teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
                 isAdmin={isAdmin}
+                user={user}
+                isSubmitting={isSubmitting}
                 onOpenRelease={(id) => {
                   setSelectedId(id);
                   setPage('dashboard');
                 }}
+                onBugStatus={handleBugStatus}
+                onBugResolve={handleBugResolve}
+                onBugCloseReview={handleBugCloseReview}
+                onDeleteBug={handleDeleteBug}
               />
             )}
 
@@ -1033,16 +1101,29 @@ export default function ReleaseTracker() {
             )}
 
             {page === 'analytics' && canManage && (
-              <AnalyticsModal
-                embedded
-                projects={scopedProjects}
-                releases={scopedReleases}
-                bugs={scopedBugs}
-                profiles={profiles}
-                teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
-                isAdmin={isAdmin}
-                onOpenHistory={(p) => setHistoryProject(p)}
-              />
+              isAdmin ? (
+                <ManagerDashboard
+                  projects={scopedProjects}
+                  releases={scopedReleases}
+                  bugs={scopedBugs}
+                  profiles={profiles}
+                  teams={teams}
+                  projectsById={projectsById}
+                  profilesById={profilesById}
+                  onOpenRelease={(id) => setSelectedId(id)}
+                />
+              ) : (
+                <AnalyticsModal
+                  embedded
+                  projects={scopedProjects}
+                  releases={scopedReleases}
+                  bugs={scopedBugs}
+                  profiles={profiles}
+                  teams={teams.filter((t) => t.id === myTeamId)}
+                  isAdmin={isAdmin}
+                  onOpenHistory={(p) => setHistoryProject(p)}
+                />
+              )
             )}
 
             {page === 'users' && canManage && (
@@ -1142,6 +1223,7 @@ export default function ReleaseTracker() {
           onAddBug={handleAddBug}
           onBugStatus={handleBugStatus}
           onBugResolve={handleBugResolve}
+          onBugCloseReview={handleBugCloseReview}
           onDeleteBug={handleDeleteBug}
           onAddComment={handleAddComment}
           onDeleteComment={handleDeleteComment}

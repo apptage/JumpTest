@@ -2,6 +2,7 @@
    nav + at-a-glance), and the right panel. Moved verbatim from ReleaseTracker.jsx (Phase 0). */
 import { useState } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, StatusBadge, TypeBadge, Avatar, CountBadge } from '@/ui.jsx';
+import { Chevron, StatBig } from '@shared/dashboard-kit.jsx';
 import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime } from '@shared/ui-kit.jsx';
 import {
   STATUSES,
@@ -26,71 +27,43 @@ const STATUS_ICONS = {
   closed: IconPackage,
 };
 
+/* Map each release status onto a house soft-pill tone (dashboard-kit TONES). */
+const STATUS_TONE = {
+  qa_pending: 'warning',
+  qa_in_progress: 'info',
+  qa_done: 'info',
+  approved: 'success',
+  sent_back: 'danger',
+  closed: 'neutral',
+};
+
 export function StatCards({ counts }) {
+  const n = (k) => counts[k] || 0;
+  // KPI hierarchy: a few big headline numbers, then the full lifecycle as a chevron pipeline.
+  const awaiting = n('qa_pending');
+  const inQa = n('qa_in_progress') + n('qa_done');
+  const approved = n('approved');
+  const rework = n('sent_back');
+  // The happy-path pipeline (closed is off-board and shown as a headline instead).
+  const stages = ['qa_pending', 'qa_in_progress', 'qa_done', 'approved'].map((key) => ({
+    label: STATUSES[key].label,
+    count: n(key),
+    tone: STATUS_TONE[key],
+  }));
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))',
-        gap: 10,
-        marginBottom: 18,
-      }}
-    >
-      {STATUS_ORDER.map((key) => {
-        const s = STATUSES[key];
-        const Ico = STATUS_ICONS[key];
-        const n = counts[key];
-        const active = n > 0;
-        // zero-state cards stay fully neutral; only non-empty cards carry color
-        const accent = active ? s.color : 'var(--color-text-tertiary)';
-        return (
-          <div key={key} style={{ ...card, padding: 16 }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 12,
-              }}
-            >
-              <span style={{ color: accent, display: 'inline-flex' }}>
-                <Ico size={18} />
-              </span>
-              <span
-                className="tnum"
-                style={{
-                  fontSize: 26,
-                  fontWeight: 700,
-                  color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                }}
-              >
-                {n}
-              </span>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--color-text-secondary)',
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 999,
-                  background: accent,
-                  flexShrink: 0,
-                }}
-              />
-              {s.label}
-            </div>
-          </div>
-        );
-      })}
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+        <StatBig label="Awaiting QA" value={awaiting} accent="var(--warning)" sub="in the queue" />
+        <StatBig label="In QA" value={inQa} accent="var(--brand)" sub="being tested / reviewed" />
+        <StatBig label="Approved" value={approved} accent="var(--success)" sub="shipped clean" />
+        <StatBig
+          label="Needs Rework"
+          value={rework}
+          accent="var(--danger)"
+          sub={rework ? 'sent back to dev' : 'none pending'}
+        />
+      </div>
+      <Chevron stages={stages} />
     </div>
   );
 }
@@ -174,7 +147,9 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
         padding: 15,
         cursor: 'pointer',
         borderColor: hover ? 'var(--brand)' : 'var(--color-border-tertiary)',
-        transition: 'border-color .12s ease',
+        transform: hover ? 'translateY(-2px)' : 'none',
+        boxShadow: hover ? '0 6px 16px -6px rgba(15,23,42,0.18)' : 'none',
+        transition: 'border-color .12s ease, transform .15s ease, box-shadow .15s ease',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

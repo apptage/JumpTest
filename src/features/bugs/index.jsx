@@ -4,8 +4,10 @@
 import { useState, useMemo } from 'react';
 import { card, inputStyle, ghostButton, BugStatusBadge, SeverityBadge } from '@/ui.jsx';
 import { Empty, PageHeader, SlaBadge, TagChip, sideHead } from '@shared/ui-kit.jsx';
+import { StatSmall } from '@shared/dashboard-kit.jsx';
 import { filterBugs } from '@shared/filters.js';
 import { agingBugs, aggregateBugMetrics } from '@shared/bugMetrics.js';
+import { BugActions } from '@shared/bug-actions.jsx';
 import {
   SEVERITIES,
   SEVERITY_ORDER,
@@ -15,10 +17,27 @@ import {
   BUG_FEATURES,
   bugSlaLevel,
   humanizeSince,
+  isReadOnly,
   RELEASE_PLATFORMS,
 } from '@/constants.js';
 
-export function BugsPage({ bugs, releases, projects, projectsById, profilesById, profiles, teams, isAdmin, onOpenRelease }) {
+export function BugsPage({
+  bugs,
+  releases,
+  projects,
+  projectsById,
+  profilesById,
+  profiles,
+  teams,
+  isAdmin,
+  user,
+  isSubmitting,
+  onOpenRelease,
+  onBugStatus,
+  onBugResolve,
+  onBugCloseReview,
+  onDeleteBug,
+}) {
   const relById = useMemo(() => {
     const m = {};
     releases.forEach((r) => (m[r.id] = r));
@@ -56,25 +75,17 @@ export function BugsPage({ bugs, releases, projects, projectsById, profilesById,
   const aging = agingBugs(filtered, 6);
 
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
-  const stat = (label, value, color) => (
-    <div style={{ ...card, padding: '10px 14px', flex: '1 1 120px', minWidth: 110 }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>
-        {value}
-      </div>
-      <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
-    </div>
-  );
 
   return (
     <>
       <PageHeader title="Bugs" subtitle="Track and triage every bug across your releases" />
 
-      {/* summary */}
+      {/* summary — house KPI hierarchy */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        {stat('Total (filtered)', metrics.total)}
-        {stat('Active', metrics.active, metrics.active ? 'var(--danger)' : undefined)}
-        {stat('Closed', metrics.closed, 'var(--success)')}
-        {stat('Aging', aging.length, aging.length ? 'var(--warning)' : undefined)}
+        <StatSmall label="Total (filtered)" value={metrics.total} />
+        <StatSmall label="Active" value={metrics.active} color={metrics.active ? 'var(--danger)' : undefined} />
+        <StatSmall label="Closed" value={metrics.closed} color="var(--success)" />
+        <StatSmall label="Aging" value={aging.length} color={aging.length ? 'var(--warning)' : undefined} />
       </div>
 
       {/* filters */}
@@ -203,7 +214,13 @@ export function BugsPage({ bugs, releases, projects, projectsById, profilesById,
                 rel={relById[b.releaseId]}
                 proj={projectsById[relById[b.releaseId]?.projectId]}
                 reporter={b.createdBy || profilesById[b.createdById]?.name || ''}
+                user={user}
+                isSubmitting={isSubmitting}
                 onOpen={onOpenRelease}
+                onBugStatus={onBugStatus}
+                onBugResolve={onBugResolve}
+                onBugCloseReview={onBugCloseReview}
+                onDeleteBug={onDeleteBug}
               />
             ))}
           </div>
@@ -218,9 +235,28 @@ export function BugsPage({ bugs, releases, projects, projectsById, profilesById,
   );
 }
 
-function BugCard({ bug, rel, proj, reporter, onOpen }) {
+function BugCard({
+  bug,
+  rel,
+  proj,
+  reporter,
+  user,
+  isSubmitting,
+  onOpen,
+  onBugStatus,
+  onBugResolve,
+  onBugCloseReview,
+  onDeleteBug,
+}) {
   const [open, setOpen] = useState(false);
   const sev = SEVERITIES[bug.severity] || {};
+  // same role gating as the release Bugs tab; actions need an editable release
+  const canAct = !!rel && !isReadOnly(rel) && !!user;
+  const isManagerRole = user?.role === 'Team Lead' || user?.role === 'Admin';
+  const isDev = canAct && (user?.role === 'Developer' || user?.role === 'Admin');
+  const isQA = canAct && (user?.role === 'QA' || isManagerRole);
+  const isManager = canAct && isManagerRole;
+  const canDelete = canAct && (user?.role === 'Admin' || bug.createdById === user?.id);
   const desc = bug.description || '';
   const long = desc.length > 240;
   const shown = open || !long ? desc : desc.slice(0, 240).trimEnd() + '…';
@@ -291,6 +327,22 @@ function BugCard({ bug, rel, proj, reporter, onOpen }) {
           <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '10px 0 0', fontStyle: 'italic' }}>
             No description provided.
           </p>
+        )}
+
+        {/* role-aware actions (same as the release Bugs tab) */}
+        {canAct && (
+          <BugActions
+            bug={bug}
+            isDev={isDev}
+            isQA={isQA}
+            isManager={isManager}
+            canDelete={canDelete}
+            isSubmitting={isSubmitting}
+            onStatus={(st) => onBugStatus(rel, bug, st)}
+            onResolve={(res) => onBugResolve(rel, bug, res)}
+            onCloseReview={(dec) => onBugCloseReview(rel, bug, dec)}
+            onDelete={() => onDeleteBug(bug)}
+          />
         )}
 
         {/* tags + action */}
