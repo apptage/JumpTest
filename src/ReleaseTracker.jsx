@@ -479,6 +479,23 @@ export default function ReleaseTracker() {
         notes = form.releaseNotes.trim();
       }
 
+      // Auto-assign QA AT CREATION: if the project has exactly one eligible QA
+      // member, they own this release from the moment it exists — it never shows
+      // as Unassigned and no one has to open it first. (TL/Admin can reassign.)
+      const projectQaIds = new Set(
+        (projectMembers || [])
+          .filter(
+            (m) =>
+              m.projectId === form.projectId &&
+              api.membershipActive(m) &&
+              (m.projectRole === 'qa' || profilesById[m.userId]?.role === 'QA')
+          )
+          .map((m) => m.userId)
+      );
+      const eligibleQas = profiles.filter((p) => p.role === 'QA' && projectQaIds.has(p.id));
+      const autoQa = eligibleQas.length === 1 ? eligibleQas[0] : null;
+      const nowIso = new Date().toISOString();
+
       const releaseId = await api.createRelease({
         project_id: form.projectId,
         version: form.version.trim(),
@@ -495,6 +512,8 @@ export default function ReleaseTracker() {
         release_notes: notes,
         status: 'qa_pending',
         qa_note: '',
+        assigned_qa: autoQa ? autoQa.id : null,
+        qa_assigned_at: autoQa ? nowIso : null,
         supersedes_release_id: primaryPrior ? primaryPrior.id : null,
         wbs_platform_id: form.wbsPlatformId || null,
       });
@@ -512,7 +531,16 @@ export default function ReleaseTracker() {
         );
       }
 
-      // notify the team's reviewers (QA + Team Lead) that a build needs QA
+      // the auto-assigned QA gets a personal "assigned to you"; notify the rest
+      // of the team's reviewers (QA + Team Lead) that a build needs QA
+      if (autoQa && autoQa.id !== user.id) {
+        await api.notify([autoQa.id], {
+          type: 'qa_assigned',
+          title: 'Assigned to you',
+          message: `You were auto-assigned to QA ${newPlatform} v${form.version.trim()}`,
+          releaseId,
+        });
+      }
       const teamId = projectsById[form.projectId]?.teamId;
       const reviewers = profiles
         .filter(
@@ -520,7 +548,8 @@ export default function ReleaseTracker() {
             (p.role === 'QA' || p.role === 'Team Lead') &&
             teamId &&
             p.teamId === teamId &&
-            p.id !== user.id
+            p.id !== user.id &&
+            p.id !== autoQa?.id
         )
         .map((p) => p.id);
       await api.notify(reviewers, {

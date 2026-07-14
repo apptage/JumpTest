@@ -883,8 +883,6 @@ function DetailsTab({
   onEdit,
 }) {
   const assigned = release.assignedQa ? profilesById[release.assignedQa] : null;
-  const soleQa = qaList.length === 1 ? qaList[0] : null;
-  const autoAssignedRef = useRef(null);
   const [linkedTasks, setLinkedTasks] = useState([]);
   const [wbsPlatformName, setWbsPlatformName] = useState('');
 
@@ -905,18 +903,8 @@ function DetailsTab({
     };
   }, [release.id, release.wbsPlatformId, release.projectId]);
 
-  // one QA on the team → auto-assign, no selection dialog
-  useEffect(() => {
-    if (
-      isAdmin &&
-      soleQa &&
-      release.assignedQa !== soleQa.id &&
-      autoAssignedRef.current !== release.id
-    ) {
-      autoAssignedRef.current = release.id;
-      onAssignQa(soleQa.id);
-    }
-  }, [isAdmin, soleQa, release.assignedQa, release.id, onAssignQa]);
+  // (QA auto-assignment now happens at release creation, not on open — see
+  //  handleCreateRelease. Team Leads / Admins can still reassign manually below.)
 
   return (
     <>
