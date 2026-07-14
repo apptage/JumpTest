@@ -104,10 +104,27 @@ export function mapNotification(n) {
     id: n.id,
     userId: n.user_id,
     type: n.type,
+    title: n.title || '',
     message: n.message,
     releaseId: n.release_id,
+    bugId: n.bug_id || null,
+    data: n.data || {},
+    link: n.link || '',
     read: n.read,
     createdAt: n.created_at,
+  };
+}
+
+export function mapUserDevice(d) {
+  return {
+    id: d.id,
+    userId: d.user_id,
+    token: d.fcm_token,
+    platform: d.platform,
+    userAgent: d.user_agent || '',
+    enabled: d.enabled,
+    lastSeenAt: d.last_seen_at,
+    createdAt: d.created_at,
   };
 }
 
@@ -891,7 +908,7 @@ export async function fetchSentBackRelease(projectId, submitterId) {
 // Platform is 'Mobile' (covers both APK/Android and TestFlight/iOS) or 'Web',
 // so a new mobile build supersedes every open mobile cycle and carries all of
 // their bugs forward. Ordered newest-first (first item is the primary lineage).
-export async function fetchSentBackReleases(projectId, submitterId, platform) {
+export async function fetchSentBackReleases(projectId, submitterId, platform, component) {
   let q = supabase
     .from('releases')
     .select('*')
@@ -900,6 +917,12 @@ export async function fetchSentBackReleases(projectId, submitterId, platform) {
     .order('created_at', { ascending: false });
   if (submitterId) q = q.eq('submitted_by_id', submitterId);
   if (platform) q = q.eq('platform', platform);
+  // Web projects run an independent release stream per component (Web App,
+  // Admin Dashboard, Landing Page, Other), so a web follow-up only supersedes
+  // priors of the SAME component. Mobile has no component axis (a mobile
+  // follow-up intentionally spans both APK and TestFlight), so it's never
+  // scoped by component.
+  if (platform === 'Web') q = q.eq('component', component || '');
   const { data, error } = await q;
   if (error) throw error;
   return (data || []).map(mapRelease);
@@ -1031,10 +1054,115 @@ export async function fetchNotifications(userId) {
   return data.map(mapNotification);
 }
 
+/* ---- FCM devices (see fixes13.sql + src/push/*) ---- */
+export async function upsertUserDevice({ token, platform = 'web', userAgent = '' }) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !token) return;
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('user_devices').upsert(
+    {
+      user_id: user.id,
+      fcm_token: token,
+      platform,
+      user_agent: userAgent,
+      enabled: true,
+      updated_at: now,
+      last_seen_at: now,
+    },
+    { onConflict: 'fcm_token' }
+  );
+  if (error) console.warn('[push] upsertUserDevice failed', error.message);
+}
+
+export async function disableUserDevice(token) {
+  if (!token) return;
+  await supabase
+    .from('user_devices')
+    .update({ enabled: false, updated_at: new Date().toISOString() })
+    .eq('fcm_token', token);
+}
+
+export async function fetchUserDevices(userId) {
+  const { data, error } = await supabase
+    .from('user_devices')
+    .select('*')
+    .eq('user_id', userId)
+    .order('last_seen_at', { ascending: false });
+  if (error) throw error;
+  return data.map(mapUserDevice);
+}
+
+/* Map a notifications row → the FCM message the Edge Function will deliver.
+   FCM data values MUST be strings. */
+function toPushMessage(row) {
+  return {
+    user_id: row.user_id,
+    title: row.title || 'JumpTest',
+    body: row.message,
+    data: {
+      type: row.type || '',
+      releaseId: row.release_id || '',
+      bugId: row.bug_id || '',
+      link: row.link || '',
+      notificationId: row.id || '',
+    },
+  };
+}
+
+/* Hand a batch of messages to the send-push Edge Function. Best-effort: a push
+   failure must never break the action that produced it. */
+export async function sendPush(messages) {
+  if (!messages || !messages.length) return;
+  try {
+    const { error } = await supabase.functions.invoke('send-push', {
+      body: { messages },
+    });
+    if (error) console.warn('[push] send-push invoke error', error.message);
+  } catch (e) {
+    console.warn('[push] send-push threw', e?.message || e);
+  }
+}
+
+/* The one notification entry point: writes history row(s) AND fires push.
+   `recipients` is an array of user ids (deduped; falsy dropped). */
+export async function notify(recipients, base) {
+  const ids = [...new Set((recipients || []).filter(Boolean))];
+  if (!ids.length) return;
+  const rows = ids.map((uid) => ({
+    user_id: uid,
+    type: base.type,
+    title: base.title || null,
+    message: base.message,
+    release_id: base.releaseId || null,
+    bug_id: base.bugId || null,
+    data: base.data || {},
+    link: base.link || null,
+  }));
+  const { data, error } = await supabase.from('notifications').insert(rows).select();
+  if (error) {
+    console.warn('[notify] insert failed', error.message);
+    return;
+  }
+  // fire-and-forget push
+  sendPush((data || []).map(toPushMessage));
+}
+
+/* Back-compat single-recipient helper — every existing caller now also pushes.
+   Accepts the old { user_id, type, message, release_id } shape plus optional
+   title / bug_id / data / link. */
 export async function createNotification(payload) {
-  // best-effort: never block the main action on a failed notification
   if (!payload.user_id) return;
-  await supabase.from('notifications').insert(payload);
+  return notify([payload.user_id], {
+    type: payload.type,
+    title: payload.title,
+    message: payload.message,
+    releaseId: payload.release_id,
+    bugId: payload.bug_id,
+    data: payload.data,
+    link: payload.link,
+  });
 }
 
 export async function markNotificationRead(id) {

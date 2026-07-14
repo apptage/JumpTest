@@ -164,10 +164,23 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     }));
   }
 
-  // follow-up detection: ALL open sent-back cycles for this project on the same
-  // platform (Mobile = APK + TestFlight). Submitting supersedes every one of them.
+  // the component value actually stored on a release (web only; '' for mobile)
+  const resolvedComponent =
+    form.platform === 'Web'
+      ? form.component === 'Other'
+        ? form.componentOther.trim()
+        : form.component
+      : '';
+
+  // follow-up detection: open sent-back cycles for this project on the same
+  // stream. Mobile = one stream (APK + TestFlight). Web = one stream PER
+  // component (Web App / Admin Dashboard / Landing Page / Other), so a web
+  // follow-up only supersedes priors of the same component.
   const priorSentBackList = sentBackReleases.filter(
-    (r) => r.projectId === form.projectId && r.platform === form.platform
+    (r) =>
+      r.projectId === form.projectId &&
+      r.platform === form.platform &&
+      (form.platform !== 'Web' || (r.component || '') === resolvedComponent)
   );
   const priorSentBack = priorSentBackList[0] || null;
   const priorOpenBugs = priorSentBackList.reduce(
@@ -193,15 +206,10 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
   function submit() {
     if (invalid) return;
-    const component = isWeb
-      ? form.component === 'Other'
-        ? form.componentOther.trim()
-        : form.component
-      : '';
     const picked = isWbs
       ? wbsTasks.filter((t) => selectedTasks.includes(t.id)).map((t) => ({ id: t.id, name: t.name }))
       : [];
-    onSubmit({ ...form, component, wbsTasks: picked });
+    onSubmit({ ...form, component: resolvedComponent, wbsTasks: picked });
   }
 
   if (projects.length === 0) {
@@ -248,7 +256,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
             border: '1px solid var(--color-border-tertiary)',
           }}
         >
-          You have {priorSentBackList.length} open {form.platform} QA cycle
+          You have {priorSentBackList.length} open {isWeb ? resolvedComponent : form.platform} QA cycle
           {priorSentBackList.length === 1 ? '' : 's'} (<strong>{priorVersions}</strong>) with {priorOpenBugs} unresolved
           bug{priorOpenBugs === 1 ? '' : 's'}. Submitting closes {priorSentBackList.length === 1 ? 'it' : 'them all'} and
           carries every unresolved &amp; fixed-pending-verification bug into this new release.

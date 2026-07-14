@@ -116,6 +116,8 @@ import { BugsPage } from '@features/bugs';
 import { StatCards, FilterBar, ReleaseCard, Sidebar, RightPanel } from '@features/dashboard';
 import { NavRail, Header, SettingsPage } from '@/shell';
 import { useAppData } from '@shared/useAppData.js';
+import { usePush } from '@/push/usePush.js';
+import { unregisterDevice } from '@/push/pushClient.js';
 
 /* ================================================================== */
 /* Root                                                               */
@@ -219,6 +221,19 @@ export default function ReleaseTracker() {
     };
   }, [session]);
 
+  // Cold-start deep-link: the service worker may open a fresh tab at
+  // /?release=<id> when a background notification is tapped with no tab open.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const rel = params.get('release');
+    if (rel) {
+      setSelectedId(rel);
+      setPage('dashboard');
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
   /* ---- server state via React Query ----
      Independent queries (no fragile Promise.all), auto-fetch when a user is
      present, notifications poll every 30s. refetchX() are cache invalidations
@@ -243,6 +258,23 @@ export default function ReleaseTracker() {
     refetchNotifications,
     resetAll,
   } = useAppData(session, user, showToast);
+
+  /* ---- push notifications (FCM) ---- */
+  usePush(user, {
+    // app is focused → surface as a toast + refresh the bell
+    onForeground: ({ title, body }) => {
+      showToast(body || title || 'New notification');
+      refetchNotifications();
+    },
+    // a backgrounded notification was tapped → deep-link to the release/bug
+    onOpen: (data) => {
+      if (data?.releaseId) {
+        setSelectedId(data.releaseId);
+        setPage('dashboard');
+        setShowNotif(false);
+      }
+    },
+  });
 
   /* ---- derived ---- */
   const projectsById = useMemo(() => {
@@ -399,6 +431,7 @@ export default function ReleaseTracker() {
   }
 
   async function handleSignOut() {
+    await unregisterDevice(); // stop this browser receiving the prev user's pushes
     await supabase.auth.signOut();
     resetAll();
     setSelectedId(null);
@@ -423,7 +456,14 @@ export default function ReleaseTracker() {
       // on the same platform. Mobile spans both APK/Android and TestFlight/iOS,
       // so a mobile follow-up carries bugs from both; Web spans web releases.
       const newPlatform = form.platform || platformForReleaseType(form.releaseType);
-      const priors = await api.fetchSentBackReleases(form.projectId, user.id, newPlatform);
+      // web streams are per-component; mobile has no component axis
+      const newComponent = newPlatform === 'Web' ? form.component || '' : '';
+      const priors = await api.fetchSentBackReleases(
+        form.projectId,
+        user.id,
+        newPlatform,
+        newComponent
+      );
       const primaryPrior = priors[0] || null;
 
       // Release notes:
@@ -471,6 +511,24 @@ export default function ReleaseTracker() {
           'in_qa'
         );
       }
+
+      // notify the team's reviewers (QA + Team Lead) that a build needs QA
+      const teamId = projectsById[form.projectId]?.teamId;
+      const reviewers = profiles
+        .filter(
+          (p) =>
+            (p.role === 'QA' || p.role === 'Team Lead') &&
+            teamId &&
+            p.teamId === teamId &&
+            p.id !== user.id
+        )
+        .map((p) => p.id);
+      await api.notify(reviewers, {
+        type: 'release_submitted',
+        title: 'New release for QA',
+        message: `${user.name} submitted ${newPlatform} v${form.version.trim()} for QA`,
+        releaseId,
+      });
 
       // Close every superseded release (all open cycles on this platform) and
       // carry all their unresolved bugs onto the new release.
@@ -533,6 +591,21 @@ export default function ReleaseTracker() {
           await api.setWbsTrackStatus([l.taskId], l.track, target);
         }
       }
+      // notify the developer who submitted the release of the QA milestone
+      const verb = {
+        qa_in_progress: 'started QA on',
+        qa_done: 'completed QA on',
+        approved: 'approved',
+        sent_back: 'sent back',
+      }[newStatus];
+      if (verb && release.submittedById && release.submittedById !== user.id) {
+        await api.notify([release.submittedById], {
+          type: `release_${newStatus}`,
+          title: 'Release update',
+          message: `${user.name} ${verb} v${release.version}`,
+          releaseId: release.id,
+        });
+      }
     }, 'Release updated');
     if (ok) refetchReleases();
   }
@@ -553,7 +626,17 @@ export default function ReleaseTracker() {
       () => api.updateRelease(release.id, patch),
       'Tester assigned'
     );
-    if (ok) refetchReleases();
+    if (ok) {
+      if (qaId && qaId !== user.id) {
+        await api.notify([qaId], {
+          type: 'qa_assigned',
+          title: 'Assigned to you',
+          message: `${user.name} assigned you to QA v${release.version}`,
+          releaseId: release.id,
+        });
+      }
+      refetchReleases();
+    }
   }
 
   async function handleDeleteRelease(release) {
@@ -735,16 +818,46 @@ export default function ReleaseTracker() {
 
   /* ---- comments ---- */
   async function handleAddComment(release, body, parentId) {
-    return run(() =>
+    const text = body.trim();
+    const ok = await run(() =>
       api.createComment({
         release_id: release.id,
         parent_id: parentId || null,
         author_id: user.id,
         author_name: user.name,
         author_role: user.role,
-        body: body.trim(),
+        body: text,
       })
     );
+    // notify @mentions + the release participants (best-effort)
+    try {
+      const lower = text.toLowerCase();
+      const mentionIds = profiles
+        .filter((p) => p.id !== user.id && p.name && lower.includes('@' + p.name.toLowerCase()))
+        .map((p) => p.id);
+      if (mentionIds.length) {
+        await api.notify(mentionIds, {
+          type: 'mention',
+          title: 'You were mentioned',
+          message: `${user.name} mentioned you on v${release.version}`,
+          releaseId: release.id,
+        });
+      }
+      const participants = [release.submittedById, release.assignedQa].filter(
+        (id) => id && id !== user.id && !mentionIds.includes(id)
+      );
+      if (participants.length) {
+        await api.notify(participants, {
+          type: 'comment',
+          title: 'New comment',
+          message: `${user.name} commented on v${release.version}`,
+          releaseId: release.id,
+        });
+      }
+    } catch {
+      /* notifications are best-effort */
+    }
+    return ok;
   }
   async function handleDeleteComment(id) {
     return run(() => api.deleteComment(id));

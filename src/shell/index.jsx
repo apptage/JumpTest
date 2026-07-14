@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, Logo, Avatar, CountBadge } from '@/ui.jsx';
 import { PageHeader, sideHead, relativeTime, greeting } from '@shared/ui-kit.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
+import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
 import { EDIT_WINDOW_HOURS, SLA_HOURS, BUG_SLA_DAYS } from '@/constants.js';
 import {
   IconBell, IconBug, IconChart, IconCog, IconFolder, IconGrid,
@@ -76,6 +77,20 @@ export function NavRail({ page, onNavigate, teamName, canManage, isAdmin }) {
 }
 
 export function SettingsPage({ user, team, onSignOut }) {
+  const [pushMsg, setPushMsg] = useState('');
+  const [pushBusy, setPushBusy] = useState(false);
+  async function enablePush() {
+    setPushBusy(true);
+    const { permission } = await requestPushPermission(user);
+    setPushBusy(false);
+    setPushMsg(
+      permission === 'granted'
+        ? 'Push notifications enabled on this device.'
+        : permission === 'denied'
+          ? 'Blocked — enable notifications for this site in your browser settings.'
+          : 'Notifications are not available in this browser.'
+    );
+  }
   const row = (label, value) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 0', borderBottom: '1px solid var(--color-border-primary)' }}>
       <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{label}</span>
@@ -108,6 +123,21 @@ export function SettingsPage({ user, team, onSignOut }) {
             Sign out
           </button>
         </div>
+        {pushConfigured && (
+          <div style={{ ...card, padding: 18 }}>
+            <div style={{ ...sideHead, marginBottom: 10 }}>Notifications</div>
+            <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.6, margin: '0 0 12px' }}>
+              Get push notifications on this device for assignments, QA updates, comments and
+              mentions — even when the tab is closed.
+            </p>
+            <button style={{ ...primaryButton(pushBusy) }} disabled={pushBusy} onClick={enablePush}>
+              {pushBusy ? 'Enabling…' : 'Enable push on this device'}
+            </button>
+            {pushMsg && (
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>{pushMsg}</div>
+            )}
+          </div>
+        )}
         <div style={{ ...card, padding: 18 }}>
           <div style={{ ...sideHead, marginBottom: 10 }}>About SLAs</div>
           <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.6, margin: 0 }}>
