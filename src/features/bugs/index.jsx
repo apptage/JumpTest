@@ -7,7 +7,7 @@ import { Empty, PageHeader, SlaBadge, TagChip, sideHead } from '@shared/ui-kit.j
 import { StatSmall } from '@shared/dashboard-kit.jsx';
 import { filterBugs } from '@shared/filters.js';
 import { agingBugs, aggregateBugMetrics } from '@shared/bugMetrics.js';
-import { BugActions } from '@shared/bug-actions.jsx';
+import { BugActions, ProposedCloseBanner } from '@shared/bug-actions.jsx';
 import {
   SEVERITIES,
   SEVERITY_ORDER,
@@ -214,6 +214,7 @@ export function BugsPage({
                 rel={relById[b.releaseId]}
                 proj={projectsById[relById[b.releaseId]?.projectId]}
                 reporter={b.createdBy || profilesById[b.createdById]?.name || ''}
+                proposerName={b.resolutionById ? profilesById[b.resolutionById]?.name || '' : ''}
                 user={user}
                 isSubmitting={isSubmitting}
                 onOpen={onOpenRelease}
@@ -240,6 +241,7 @@ function BugCard({
   rel,
   proj,
   reporter,
+  proposerName,
   user,
   isSubmitting,
   onOpen,
@@ -328,6 +330,9 @@ function BugCard({
             No description provided.
           </p>
         )}
+
+        {/* developer's proposed close — resolution, reason, who + when */}
+        <ProposedCloseBanner bug={bug} proposerName={proposerName} />
 
         {/* role-aware actions (same as the release Bugs tab) */}
         {canAct && (

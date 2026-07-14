@@ -740,12 +740,19 @@ export default function ReleaseTracker() {
     // and ask the project's Team Lead to verify. QA / Team Lead / Admin close
     // immediately (they are the verifier).
     const isDevProposal = user.role === 'Developer';
+    // capture the developer's optional reason up front (outside run(), so the
+    // submit spinner doesn't spin behind a blocking prompt)
+    const note = isDevProposal
+      ? (window.prompt(`Optionally add a reason for marking "${bug.title}" as ${resolution}:`, '') || '').trim()
+      : '';
     const ok = await run(async () => {
       if (isDevProposal) {
         await api.updateBug(bug.id, {
           status: 'pending_tl',
           resolution,
           resolution_by_id: user.id,
+          resolution_note: note || null,
+          resolution_at: new Date().toISOString(),
         });
         const teamId = projectsById[release.projectId]?.teamId;
         const leads = profiles.filter(
@@ -755,8 +762,9 @@ export default function ReleaseTracker() {
           await api.createNotification({
             user_id: lead.id,
             type: 'bug_close_requested',
-            message: `${user.name} marked bug "${bug.title}" as ${resolution} — needs your verification (v${release.version})`,
+            message: `${user.name} marked bug "${bug.title}" as ${resolution}${note ? ` — "${note}"` : ''} — needs your verification (v${release.version})`,
             release_id: release.id,
+            bug_id: bug.id,
           });
         }
       } else {

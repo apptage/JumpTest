@@ -72,6 +72,8 @@ export function mapBug(b) {
     feature: b.feature || '',
     resolution: b.resolution || '',
     resolutionById: b.resolution_by_id || null,
+    resolutionNote: b.resolution_note || '',
+    resolutionAt: b.resolution_at || null,
     wbsTaskId: b.wbs_task_id || null,
     bugKey: b.bug_key || null,
     originReleaseId: b.origin_release_id || null,

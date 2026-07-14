@@ -4,7 +4,53 @@
    fold in read-only/scope rules) and handlers already bound to the bug's
    release, e.g. onStatus={(st) => onBugStatus(release, bug, st)}. */
 import { ghostButton, inputStyle } from '@/ui.jsx';
-import { BUG_STATUSES, BUG_RESOLUTIONS, DEV_DISPUTE_RESOLUTIONS } from '@/constants.js';
+import { BUG_STATUSES, BUG_RESOLUTIONS, DEV_DISPUTE_RESOLUTIONS, humanizeSince } from '@/constants.js';
+
+/* Shown to the Team Lead on a `pending_tl` bug: the resolution the developer
+   proposed, their optional reason, and who marked it + when — everything needed
+   to approve or reject informedly. Used on the release Bugs tab AND the Bugs
+   page so the two stay identical. */
+export function ProposedCloseBanner({ bug, proposerName }) {
+  if (bug.status !== 'pending_tl') return null;
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: '10px 12px',
+        background: '#ECFEFF',
+        border: '1px solid #A5F3FC',
+        borderRadius: 8,
+        fontSize: 12.5,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 700, color: '#0e7490' }}>Proposed close</span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            padding: '2px 9px',
+            borderRadius: 999,
+            background: '#fff',
+            border: '1px solid #A5F3FC',
+            color: '#0e7490',
+          }}
+        >
+          {bug.resolution || '—'}
+        </span>
+      </div>
+      {bug.resolutionNote && (
+        <div style={{ marginTop: 6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap' }}>
+          “{bug.resolutionNote}”
+        </div>
+      )}
+      <div style={{ marginTop: 6, color: 'var(--color-text-tertiary)', fontSize: 11.5 }}>
+        by {proposerName || 'a developer'}
+        {bug.resolutionAt ? ` · ${humanizeSince(bug.resolutionAt)}` : ''}
+      </div>
+    </div>
+  );
+}
 
 export function BugActions({
   bug,

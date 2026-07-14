@@ -19,7 +19,7 @@ import {
   Info,
 } from '@/ui.jsx';
 import { Field, sideHead, TagChip, SlaBadge, statusSince } from '@shared/ui-kit.jsx';
-import { BugActions } from '@shared/bug-actions.jsx';
+import { BugActions, ProposedCloseBanner } from '@shared/bug-actions.jsx';
 import {
   STATUSES,
   nextStatuses,
@@ -1477,6 +1477,11 @@ function BugsTab({
                 isManager={isManager && !readOnly}
                 canDelete={!readOnly && (user.role === 'Admin' || bug.createdById === user.id)}
                 isSubmitting={isSubmitting}
+                proposerName={
+                  bug.resolutionById
+                    ? profiles.find((p) => p.id === bug.resolutionById)?.name || ''
+                    : ''
+                }
                 onStatus={(st) => onBugStatus(release, bug, st)}
                 onResolve={(res) => onBugResolve(release, bug, res)}
                 onCloseReview={(decision) => onBugCloseReview(release, bug, decision)}
@@ -1568,6 +1573,7 @@ function BugRow({
   isManager,
   canDelete,
   isSubmitting,
+  proposerName,
   onStatus,
   onResolve,
   onCloseReview,
@@ -1665,6 +1671,7 @@ function BugRow({
           />
         </a>
       )}
+      <ProposedCloseBanner bug={bug} proposerName={proposerName} />
       <BugActions
         bug={bug}
         isDev={isDev}
