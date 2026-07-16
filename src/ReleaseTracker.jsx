@@ -43,6 +43,8 @@ import {
   TEAM_ASSIGNABLE_ROLES,
   ALLOWED_EMAIL_DOMAIN,
   emailDomainOk,
+  normalizeVersion,
+  formatVersion,
 } from './constants.js';
 import {
   card,
@@ -116,6 +118,7 @@ import { BugsPage } from '@features/bugs';
 import { StatCards, FilterBar, ReleaseCard, Sidebar, RightPanel } from '@features/dashboard';
 import { NavRail, Header, SettingsPage } from '@/shell';
 import { useAppData } from '@shared/useAppData.js';
+import { filterBugs } from '@shared/filters.js';
 import { usePush } from '@/push/usePush.js';
 import { unregisterDevice } from '@/push/pushClient.js';
 
@@ -336,13 +339,35 @@ export default function ReleaseTracker() {
     [bugs, adminScope, scopedProjectIds, releaseProjectId]
   );
 
+  // Deduped, live bug set — the SAME shared pipeline the Bugs page & Analytics
+  // use (excludes carry-forward copies on closed/superseded releases). Dashboard
+  // counts must derive from this, never from raw scopedBugs, or the sidebar will
+  // over-count every historical carry instance.
+  const releaseById = useMemo(() => {
+    const m = {};
+    releases.forEach((r) => (m[r.id] = r));
+    return m;
+  }, [releases]);
+  const scopedActiveBugs = useMemo(
+    () => filterBugs(scopedBugs, {}, { releaseById, projectById: projectsById }),
+    [scopedBugs, releaseById, projectsById]
+  );
+  const openBugTotal = useMemo(
+    () => scopedActiveBugs.filter((b) => b.status === 'open').length,
+    [scopedActiveBugs]
+  );
+  const disputedTotal = useMemo(
+    () => scopedActiveBugs.filter((b) => b.status === 'disputed').length,
+    [scopedActiveBugs]
+  );
+
   const openBugCountByRelease = useMemo(() => {
     const m = {};
-    scopedBugs.forEach((b) => {
+    scopedActiveBugs.forEach((b) => {
       if (b.status === 'open') m[b.releaseId] = (m[b.releaseId] || 0) + 1;
     });
     return m;
-  }, [scopedBugs]);
+  }, [scopedActiveBugs]);
 
   // releases in the current project + platform + type context (no status filter)
   const contextReleases = scopedReleases.filter(
@@ -496,9 +521,25 @@ export default function ReleaseTracker() {
       const autoQa = eligibleQas.length === 1 ? eligibleQas[0] : null;
       const nowIso = new Date().toISOString();
 
+      // Reject a duplicate version in the same stream up front (the DB unique
+      // index is the hard guard; this gives a friendly message before it fires).
+      const normV = normalizeVersion(form.version);
+      const dupRel = releases.find(
+        (r) =>
+          r.projectId === form.projectId &&
+          r.platform === newPlatform &&
+          (newPlatform !== 'Web' || (r.component || '') === newComponent) &&
+          normalizeVersion(r.version) === normV
+      );
+      if (dupRel) {
+        throw new Error(
+          `Version ${formatVersion(form.version)} already exists for this ${newPlatform}${newComponent ? ` · ${newComponent}` : ''} stream — use a different version.`
+        );
+      }
+
       const releaseId = await api.createRelease({
         project_id: form.projectId,
-        version: form.version.trim(),
+        version: normalizeVersion(form.version),
         release_type: form.releaseType,
         platform: form.platform || platformForReleaseType(form.releaseType),
         environment: form.environment || 'Production',
@@ -559,24 +600,16 @@ export default function ReleaseTracker() {
         releaseId,
       });
 
-      // Close every superseded release (all open cycles on this platform) and
-      // carry all their unresolved bugs onto the new release.
+      // Close every superseded release and MOVE its unresolved bugs onto the
+      // new release atomically (one bug = one row — no duplicate carry-forward).
       if (priors.length) {
-        let pendingVerify = 0;
-        let unresolved = 0;
-        const qaIds = new Set();
-        for (const prior of priors) {
-          await api.closeRelease(prior.id);
-          const s = await api.carryForwardBugs(prior.id, releaseId);
-          pendingVerify += s.pendingVerify;
-          unresolved += s.unresolved;
-          if (prior.assignedQa) qaIds.add(prior.assignedQa);
-        }
+        const s = await api.moveBugsToRelease(releaseId, priors.map((p) => p.id), user.id);
+        const qaIds = new Set(priors.map((p) => p.assignedQa).filter(Boolean));
         for (const qaId of qaIds) {
           await api.createNotification({
             user_id: qaId,
             type: 'release_followup',
-            message: `${user.name} submitted a follow-up v${form.version.trim()} for QA — ${pendingVerify} fix(es) to verify, ${unresolved} still open.`,
+            message: `${user.name} submitted a follow-up ${formatVersion(form.version)} for QA — ${s.pendingVerify} fix(es) to verify, ${s.unresolved} still open.`,
             release_id: releaseId,
           });
         }
@@ -590,6 +623,8 @@ export default function ReleaseTracker() {
   }
 
   async function handleEditRelease(release, patch) {
+    // keep stored versions bare (no leading "v") so the UI never double-prefixes
+    if (patch && patch.version != null) patch.version = normalizeVersion(patch.version);
     const ok = await run(() => api.updateRelease(release.id, patch), 'Release updated');
     if (ok) {
       setEditingRelease(null);
@@ -685,7 +720,7 @@ export default function ReleaseTracker() {
     const ok = await run(async () => {
       let screenshotUrl = '';
       if (file) screenshotUrl = await api.uploadFile('screenshots', file);
-      await api.createBug({
+      const created = await api.createBug({
         release_id: release.id,
         title: form.title.trim(),
         description: form.description.trim(),
@@ -698,6 +733,13 @@ export default function ReleaseTracker() {
         origin_release_id: release.id,
         created_by: user.name,
         created_by_id: user.id,
+      });
+      await api.logBugHistory({
+        bug_id: created.id,
+        release_id: release.id,
+        action: 'created',
+        new_status: 'open',
+        moved_by: user.id,
       });
       // WBS: a bug against a task means it isn't done — pull the
       // verified track(s) back to In Progress.
@@ -741,6 +783,17 @@ export default function ReleaseTracker() {
         patch.verified_by_id = user.id;
       }
       await api.updateBug(bug.id, patch);
+      await api.logBugHistory({
+        bug_id: bug.id,
+        release_id: release.id,
+        action:
+          { verified: 'approved', fixed: 'fixed', open: 'reopened', disputed: 'qa_failed', in_progress: 'assigned' }[
+            newStatus
+          ] || newStatus,
+        previous_status: bug.status,
+        new_status: newStatus,
+        moved_by: user.id,
+      });
       if (newStatus === 'verified') await reconcileWbsTaskForBug(release, bug);
       if (newStatus === 'fixed') {
         await api.createNotification({
@@ -783,6 +836,15 @@ export default function ReleaseTracker() {
           resolution_note: note || null,
           resolution_at: new Date().toISOString(),
         });
+        await api.logBugHistory({
+          bug_id: bug.id,
+          release_id: release.id,
+          action: 'proposed_close',
+          previous_status: bug.status,
+          new_status: 'pending_tl',
+          moved_by: user.id,
+          notes: `${resolution}${note ? `: ${note}` : ''}`,
+        });
         const teamId = projectsById[release.projectId]?.teamId;
         const leads = profiles.filter(
           (p) => p.role === 'Team Lead' && teamId && p.teamId === teamId
@@ -803,6 +865,15 @@ export default function ReleaseTracker() {
           verified_at: new Date().toISOString(),
           verified_by_id: user.id,
         });
+        await api.logBugHistory({
+          bug_id: bug.id,
+          release_id: release.id,
+          action: 'closed',
+          previous_status: bug.status,
+          new_status: 'verified',
+          moved_by: user.id,
+          notes: resolution,
+        });
         await reconcileWbsTaskForBug(release, bug);
       }
     }, isDevProposal ? 'Sent for Team Lead verification' : 'Bug closed');
@@ -817,6 +888,15 @@ export default function ReleaseTracker() {
           status: 'verified',
           verified_at: new Date().toISOString(),
           verified_by_id: user.id,
+        });
+        await api.logBugHistory({
+          bug_id: bug.id,
+          release_id: release.id,
+          action: 'approved',
+          previous_status: bug.status,
+          new_status: 'verified',
+          moved_by: user.id,
+          notes: bug.resolution || null,
         });
         await reconcileWbsTaskForBug(release, bug);
         if (bug.resolutionById) {
@@ -833,6 +913,14 @@ export default function ReleaseTracker() {
           status: 'in_progress',
           resolution: '',
           resolution_by_id: null,
+        });
+        await api.logBugHistory({
+          bug_id: bug.id,
+          release_id: release.id,
+          action: 'rejected',
+          previous_status: bug.status,
+          new_status: 'in_progress',
+          moved_by: user.id,
         });
         if (bug.resolutionById) {
           await api.createNotification({
@@ -1123,8 +1211,8 @@ export default function ReleaseTracker() {
                 projects={scopedProjects}
                 releases={scopedReleases}
                 teamName={isAdmin ? null : myTeam?.name}
-                openBugTotal={scopedBugs.filter((b) => b.status === 'open').length}
-                disputedTotal={scopedBugs.filter((b) => b.status === 'disputed').length}
+                openBugTotal={openBugTotal}
+                disputedTotal={disputedTotal}
                 projectFilter={projectFilter}
                 platformFilter={platformFilter}
                 onSelect={(pid, plat) => {
@@ -1142,8 +1230,7 @@ export default function ReleaseTracker() {
                 <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
                   {scopedReleases.length} release{scopedReleases.length === 1 ? '' : 's'} ·{' '}
                   {scopedProjects.length} project{scopedProjects.length === 1 ? '' : 's'} ·{' '}
-                  {scopedBugs.filter((b) => b.status === 'open').length} open bug
-                  {scopedBugs.filter((b) => b.status === 'open').length === 1 ? '' : 's'}
+                  {openBugTotal} open bug{openBugTotal === 1 ? '' : 's'}
                 </p>
               </div>
 

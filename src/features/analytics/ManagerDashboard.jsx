@@ -3,14 +3,15 @@
    come from the shared metrics layer; nothing is fabricated. */
 import { useState, useMemo } from 'react';
 import { card, ModalShell, StatusBadge, SeverityBadge, Avatar, inputStyle } from '@/ui.jsx';
-import { PageHeader, sideHead, statusSince } from '@shared/ui-kit.jsx';
-import { filterBugs, filterReleases } from '@shared/filters.js';
+import { PageHeader, sideHead } from '@shared/ui-kit.jsx';
+import { historicalBugs, filterReleases } from '@shared/filters.js';
 import { computeReleaseMetrics, computeBottlenecks, computeWorkload } from '@shared/releaseMetrics.js';
-import { aggregateBugMetrics, isActiveBug } from '@shared/bugMetrics.js';
+import { aggregateBugMetrics, bugWorkflow, isActiveBug } from '@shared/bugMetrics.js';
+import { ReleaseHistory } from './ReleaseHistory.jsx';
 import {
   SubTabs, Segmented, StatBig, StatSmall, PassRing, Pill, AlertCard, Chevron, DataTable, passTone,
 } from '@shared/dashboard-kit.jsx';
-import { humanizeSince, isClosedStatus } from '@/constants.js';
+import { isClosedStatus, formatVersion } from '@/constants.js';
 
 const ymd = (d) => d.toISOString().slice(0, 10);
 function rangeWindow(range, from, to) {
@@ -42,13 +43,17 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
   const ctxR = { projectById: projectsById };
   const ctxB = { releaseById, projectById: projectsById };
 
+  // HISTORICAL dataset — all releases (active + closed) = complete project history
   const relAll = filterReleases(releases, {}, ctxR);
-  const bugsAll = filterBugs(bugs, {}, ctxB);
+  const bugsAll = historicalBugs(bugs, {}, ctxB);
   const relRange = filterReleases(releases, { from: win.from, to: win.to }, ctxR);
 
   const mAll = computeReleaseMetrics(relAll, bugsAll, { releaseById });
   const mRange = computeReleaseMetrics(relRange, bugsAll, { releaseById });
   const bugAgg = aggregateBugMetrics(bugsAll);
+  // One bug = one row — straight counts, no dedup.
+  const carriedAll = bugsAll.filter((b) => b.carriedForward).length;
+  const wfAll = bugWorkflow(bugAgg);
 
   const devs = profiles.filter((p) => p.role === 'Developer');
   const qas = profiles.filter((p) => p.role === 'QA');
@@ -88,7 +93,6 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
     return { id: p.id, name: p.name, team: teamsById[p.teamId]?.name || '—', active, open, crit, rate, decided: pm.decided, health: projectHealth(open, crit, rate) };
   });
 
-  const recent = relAll.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.createdAt < b.createdAt ? 1 : -1)).slice(0, 25);
   const workload = computeWorkload(profiles, relAll, bugsAll, 'all');
 
   const attention = (() => {
@@ -120,6 +124,14 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
         onChange={setTab}
       />
 
+      {/* dataset scope — executive reporting over the whole project history */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 12 }}>
+        <span style={{ fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
+          Scope: Entire Project History
+        </span>
+        <span style={{ color: 'var(--color-text-tertiary)' }}>Metrics include all releases (active and closed).</span>
+      </div>
+
       {tab === 'overview' && (
         <>
           {attention.length > 0 && (
@@ -143,9 +155,9 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
 
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <StatBig label="Projects" value={projects.length} accent="var(--brand)" />
-            <StatBig label="Open bugs" value={bugAgg.active} accent="var(--danger)" />
-            <StatBig label="Critical bugs" value={activeCritical} accent={activeCritical ? 'var(--danger)' : 'var(--success)'} />
-            <StatBig label="Avg release time" value={mAll.cycleDays == null ? '—' : `${mAll.cycleDays.toFixed(1)}d`} accent="var(--brand)" />
+            <StatBig label="Currently Active Bugs" value={bugAgg.active} accent="var(--danger)" />
+            <StatBig label="Critical Bugs" value={activeCritical} accent={activeCritical ? 'var(--danger)' : 'var(--success)'} />
+            <StatBig label="Average Release Cycle" value={mAll.cycleDays == null ? '—' : `${mAll.cycleDays.toFixed(1)}d`} accent="var(--brand)" />
             <PassRing pct={mAll.passRate} label="Overall QA pass rate" sub="approved ÷ decided" />
           </div>
 
@@ -153,10 +165,10 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
             <StatSmall label="Teams" value={teams.length} />
             <StatSmall label="Developers" value={devs.length} />
             <StatSmall label="QA Engineers" value={qas.length} />
-            <StatSmall label="Submitted" value={relRange.length} sub="in range" />
-            <StatSmall label="Approved" value={mRange.approved} color="var(--success)" sub="in range" />
-            <StatSmall label="Sent back" value={mRange.rejected} color={mRange.rejected ? 'var(--danger)' : undefined} sub="in range" />
-            <StatSmall label="Production bugs" value={prodBugs} color={prodBugs ? 'var(--danger)' : undefined} />
+            <StatSmall label="Releases" value={relRange.length} sub="in range" />
+            <StatSmall label="QA Approved" value={mRange.approved} color="var(--success)" sub="in range" />
+            <StatSmall label="Returned for Rework" value={mRange.rejected} color={mRange.rejected ? 'var(--danger)' : undefined} sub="in range" />
+            <StatSmall label="Production Bugs" value={prodBugs} color={prodBugs ? 'var(--danger)' : undefined} />
           </div>
 
           <div style={{ ...sideHead, marginBottom: 10 }}>Release pipeline</div>
@@ -176,7 +188,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
                 { label: 'Projects', render: (r) => r.projects },
                 { label: 'Releases', render: (r) => r.releases },
                 { label: 'Approval', render: (r) => (r.decided ? <Pill label={`${r.pass}%`} tone={passTone(r.pass)} /> : '—') },
-                { label: 'Open bugs', render: (r) => (r.open ? <Pill label={r.open} tone="danger" /> : 0) },
+                { label: 'Active Bugs', render: (r) => (r.open ? <Pill label={r.open} tone="danger" /> : 0) },
                 { label: 'Critical', render: (r) => (r.critical ? <Pill label={r.critical} tone="danger" /> : 0) },
                 { label: 'Avg release', render: (r) => (r.cycle == null ? '—' : `${r.cycle.toFixed(1)}d`) },
               ]}
@@ -197,7 +209,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
               { label: 'Team', render: (r) => r.teamName },
               { label: 'Active projects', render: (r) => r.activeProjects },
               { label: 'Releases / Bugs', render: (r) => (r.isQa ? `${r.reported} reported` : `${r.releases} releases`) },
-              { label: 'Open bugs', render: (r) => (r.isQa ? '—' : r.open ? <Pill label={r.open} tone="danger" /> : 0) },
+              { label: 'Active Bugs', render: (r) => (r.isQa ? '—' : r.open ? <Pill label={r.open} tone="danger" /> : 0) },
               { label: 'Approval', render: (r) => (r.decided ? <Pill label={`${r.pass}%`} tone={passTone(r.pass)} /> : '—') },
             ]}
           />
@@ -216,7 +228,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
               { label: 'Project', render: (r) => <span style={{ fontWeight: 600 }}>{r.name}</span> },
               { label: 'Team', render: (r) => r.team },
               { label: 'Active release', render: (r) => (r.active ? <span style={{ fontFamily: 'var(--font-mono)' }}>v{r.active.version}</span> : '—') },
-              { label: 'Open bugs', render: (r) => (r.open ? <Pill label={r.open} tone="danger" /> : 0) },
+              { label: 'Active Bugs', render: (r) => (r.open ? <Pill label={r.open} tone="danger" /> : 0) },
               { label: 'Critical', render: (r) => (r.crit ? <Pill label={r.crit} tone="danger" /> : 0) },
               { label: 'Pass rate', render: (r) => (r.decided ? <Pill label={`${r.rate}%`} tone={passTone(r.rate)} /> : '—') },
               { label: 'Health', render: (r) => <Pill label={r.health.label} tone={r.health.tone} /> },
@@ -230,34 +242,40 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
           <div style={{ ...sideHead, marginBottom: 10 }}>Monthly trends</div>
           <div style={{ marginBottom: 22 }}><MonthlyCombo releases={relAll} bugs={bugsAll} /></div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Bug overview (current)</div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 22 }}>
-            <StatSmall label="Open" value={(bugAgg.byStatus.open || 0) + (bugAgg.byStatus.in_progress || 0) + (bugAgg.byStatus.disputed || 0)} color="var(--danger)" />
-            <StatSmall label="Fixed" value={bugAgg.byStatus.fixed || 0} color="var(--warning)" />
-            <StatSmall label="Verified" value={bugAgg.byStatus.verified || 0} color="var(--success)" />
-            <StatSmall label="Critical" value={bugAgg.bySeverity.critical || 0} color={bugAgg.bySeverity.critical ? 'var(--danger)' : undefined} />
-            <StatSmall label="Major" value={bugAgg.bySeverity.major || 0} />
-            <StatSmall label="Minor" value={bugAgg.bySeverity.minor || 0} />
-            <StatSmall label="Production" value={prodBugs} color={prodBugs ? 'var(--danger)' : undefined} />
-            <StatSmall label="Carried fwd" value={mAll.carriedBugs} sub={`${mAll.carryRate}%`} />
+          <div style={{ ...sideHead, marginBottom: 10 }}>Bug Workflow</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            <StatSmall label="Total Bugs" value={wfAll.total} />
+            <StatSmall label="Needs Development" value={wfAll.needsDev} color={wfAll.needsDev ? 'var(--danger)' : undefined} />
+            <StatSmall label="Awaiting QA" value={wfAll.awaitingQa} color={wfAll.awaitingQa ? 'var(--warning)' : undefined} />
+            <StatSmall label="Verified Bugs" value={wfAll.verified} color="var(--success)" />
+            <StatSmall label="Carried Forward Bugs" value={carriedAll} color={carriedAll ? 'var(--warning)' : undefined} />
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 22, lineHeight: 1.5 }}>
+            Each bug is a single record — a carried-forward bug moves to the new build rather than being copied,
+            so every count is a straight row count that reconciles with the KPIs.
           </div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Recent releases</div>
+          <div style={{ ...sideHead, marginBottom: 10 }}>By severity &amp; environment</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 22 }}>
+            <StatSmall label="Critical Bugs" value={bugAgg.bySeverity.critical || 0} color={bugAgg.bySeverity.critical ? 'var(--danger)' : undefined} />
+            <StatSmall label="Major Bugs" value={bugAgg.bySeverity.major || 0} />
+            <StatSmall label="Minor Bugs" value={bugAgg.bySeverity.minor || 0} />
+            <StatSmall label="Production Bugs" value={prodBugs} color={prodBugs ? 'var(--danger)' : undefined} />
+          </div>
+
+          <div style={{ ...sideHead, marginBottom: 10 }}>Release history — every release</div>
+          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+            Complete audit across all teams and projects. Every bug exists only once — a carried-forward bug
+            <strong> moves</strong> to the new build. Bug counts are historical (from each bug’s timeline):
+            reported on this build vs. carried in, and they don’t change as bugs move on. Click a row to open the release.
+          </div>
           <div style={{ marginBottom: 22 }}>
-            <DataTable
-              rows={recent}
-              rowKey={(r) => r.id}
-              searchText={(r) => `${r.version} ${projectsById[r.projectId]?.name || ''}`}
-              searchPlaceholder="Search releases…"
+            <ReleaseHistory
+              releases={relAll}
+              projectsById={projectsById}
+              profilesById={profilesById}
               onRowClick={(r) => onOpenRelease(r.id)}
-              columns={[
-                { label: 'Project', render: (r) => <span style={{ fontWeight: 600 }}>{projectsById[r.projectId]?.name || '—'}</span> },
-                { label: 'Version', render: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>v{r.version}</span> },
-                { label: 'Submitted by', render: (r) => r.submittedBy },
-                { label: 'QA', render: (r) => (r.assignedQa ? profilesById[r.assignedQa]?.name || '—' : '—') },
-                { label: 'Status', render: (r) => <StatusBadge status={r.status} /> },
-                { label: 'Time in QA', render: (r) => (r.status === 'qa_in_progress' || r.status === 'qa_pending' ? humanizeSince(statusSince(r)) : '—') },
-              ]}
+              pageSize={15}
             />
           </div>
 
@@ -363,9 +381,9 @@ function MemberModal({ member, releases, bugs, projectsById, teamsById, onOpenRe
       </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
         <StatSmall label={isQa ? 'Releases tested' : 'Releases'} value={theirRel.length} />
-        <StatSmall label="Approved" value={approved} color="var(--success)" />
-        <StatSmall label="Sent back" value={sentBack} color={sentBack ? 'var(--danger)' : undefined} />
-        <StatSmall label={isQa ? 'Bugs reported' : 'Open bugs'} value={isQa ? theirBugs.length : theirBugs.filter(isActiveBug).length} />
+        <StatSmall label="QA Approved" value={approved} color="var(--success)" />
+        <StatSmall label="Returned for Rework" value={sentBack} color={sentBack ? 'var(--danger)' : undefined} />
+        <StatSmall label={isQa ? 'Bugs reported' : 'Active Bugs'} value={isQa ? theirBugs.length : theirBugs.filter(isActiveBug).length} />
       </div>
       <div style={{ ...sideHead, marginBottom: 8 }}>Assigned projects</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
@@ -375,7 +393,7 @@ function MemberModal({ member, releases, bugs, projectsById, teamsById, onOpenRe
       <div style={{ ...card, padding: '2px 0', marginBottom: 16, maxHeight: 220, overflowY: 'auto' }}>
         {theirRel.length === 0 ? <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No releases.</div> : theirRel.slice(0, 40).map((r) => (
           <div key={r.id} className="mgr-row" onClick={() => { onClose(); onOpenRelease(r.id); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: '1px solid var(--color-border-primary)', cursor: 'pointer' }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>v{r.version}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>{formatVersion(r.version)}</span>
             <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', flex: 1 }}>{projectsById[r.projectId]?.name}</span>
             <StatusBadge status={r.status} />
             <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{r.date}</span>

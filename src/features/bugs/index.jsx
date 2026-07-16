@@ -5,9 +5,11 @@ import { useState, useMemo } from 'react';
 import { card, inputStyle, ghostButton, BugStatusBadge, SeverityBadge } from '@/ui.jsx';
 import { Empty, PageHeader, SlaBadge, TagChip, sideHead } from '@shared/ui-kit.jsx';
 import { StatSmall } from '@shared/dashboard-kit.jsx';
-import { filterBugs } from '@shared/filters.js';
-import { agingBugs, aggregateBugMetrics } from '@shared/bugMetrics.js';
-import { BugActions, ProposedCloseBanner } from '@shared/bug-actions.jsx';
+import { filterBugs, filterReleases } from '@shared/filters.js';
+import { computeBottlenecks } from '@shared/releaseMetrics.js';
+import { agingBugs, aggregateBugMetrics, bugWorkflow } from '@shared/bugMetrics.js';
+import { ScopeSummary } from '@shared/scope-summary.jsx';
+import { BugActions, ProposedCloseBanner, BugTimeline } from '@shared/bug-actions.jsx';
 import {
   SEVERITIES,
   SEVERITY_ORDER,
@@ -19,6 +21,7 @@ import {
   humanizeSince,
   isReadOnly,
   RELEASE_PLATFORMS,
+  SLA_COLORS,
 } from '@/constants.js';
 
 export function BugsPage({
@@ -74,18 +77,69 @@ export function BugsPage({
   // aging = active bugs from the SAME filtered dataset, at/over SLA, oldest first
   const aging = agingBugs(filtered, 6);
 
+  // Each bug is a single row now — carried is a plain per-bug flag.
+  const carried = filtered.filter((b) => b.carriedForward).length;
+  const wf = bugWorkflow(metrics);
+
+  // Delays & Attention Needed — operational bottlenecks (over-SLA releases,
+  // developer/reviewer overload). Lives here on the live board, not Analytics.
+  // Uses the live releases in the same scope + the current filtered live bugs.
+  const relScoped = filterReleases(releases || [], bugFilter, { projectById: projectsById });
+  const bottlenecks = computeBottlenecks(relScoped, filtered, {
+    projectsById,
+    profilesById,
+    profiles,
+    teams,
+    teamFilter: team,
+  });
+
+  // whole-scope denominator (this page's data, no filters) for "X of Y"
+  const scopeOpen = aggregateBugMetrics(
+    filterBugs(bugs, {}, { releaseById: relById, projectById: projectsById })
+  ).active;
+
+  // human-readable active-filter breadcrumb
+  const pName = (id) => profiles.find((p) => p.id === id)?.name || id;
+  const crumbs = [];
+  if (team !== 'all') crumbs.push((teams || []).find((t) => t.id === team)?.name || 'Team');
+  if (project !== 'all') crumbs.push(projectsById[project]?.name || 'Project');
+  if (platform !== 'all') crumbs.push(platform);
+  if (status !== 'all') crumbs.push(BUG_STATUSES[status]?.label || status);
+  if (sev !== 'all') crumbs.push(SEVERITIES[sev]?.label || sev);
+  if (tag !== 'all') crumbs.push(tag);
+  if (feature !== 'all') crumbs.push(feature);
+  if (developer !== 'all') crumbs.push(pName(developer));
+  if (qa !== 'all') crumbs.push(pName(qa));
+  if (from || to) crumbs.push(`${from || '…'} → ${to || '…'}`);
+  if (q.trim()) crumbs.push(`"${q.trim()}"`);
+
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
 
   return (
     <>
       <PageHeader title="Bugs" subtitle="Track and triage every bug across your releases" />
 
-      {/* summary — house KPI hierarchy */}
+      {/* dataset scope — the live operational board */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 12 }}>
+        <span style={{ fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
+          Scope: Active Releases
+        </span>
+        <span style={{ color: 'var(--color-text-tertiary)' }}>
+          Showing bugs from active (non-closed) releases only — for the full history, see Analytics.
+        </span>
+      </div>
+
+      {/* what am I looking at? */}
+      <ScopeSummary shown={metrics.active} total={scopeOpen} noun="active bugs" crumbs={crumbs} />
+
+      {/* the workflow at a glance — who holds the ball right now */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <StatSmall label="Total (filtered)" value={metrics.total} />
-        <StatSmall label="Active" value={metrics.active} color={metrics.active ? 'var(--danger)' : undefined} />
-        <StatSmall label="Closed" value={metrics.closed} color="var(--success)" />
-        <StatSmall label="Aging" value={aging.length} color={aging.length ? 'var(--warning)' : undefined} />
+        <StatSmall label="Total Bugs" value={wf.total} sub="in scope" />
+        <StatSmall label="Needs Development" value={wf.needsDev} color={wf.needsDev ? 'var(--danger)' : undefined} sub="with the developer" />
+        <StatSmall label="Awaiting QA" value={wf.awaitingQa} color={wf.awaitingQa ? 'var(--warning)' : undefined} sub="waiting for QA" />
+        <StatSmall label="Verified Bugs" value={wf.verified} color="var(--success)" sub="closed" />
+        <StatSmall label="Carried Forward Bugs" value={carried} color={carried ? 'var(--warning)' : undefined} sub="from a prior build" />
+        <StatSmall label="Aging Bugs" value={aging.length} color={aging.length ? 'var(--warning)' : undefined} sub="over SLA" />
       </div>
 
       {/* filters */}
@@ -201,6 +255,34 @@ export function BugsPage({
         </div>
       )}
 
+      {/* Delays & Attention Needed — operational bottlenecks (moved here from
+          Analytics: it's about current active work, not project history) */}
+      {bottlenecks.length > 0 && (
+        <div style={{ ...card, padding: 14, marginBottom: 16 }}>
+          <div style={{ ...sideHead, marginBottom: 10 }}>Delays &amp; Attention Needed</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {bottlenecks.map((b, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 9,
+                  padding: '9px 11px',
+                  background: 'var(--color-background-secondary)',
+                  border: '1px solid var(--color-border-tertiary)',
+                  borderRadius: 8,
+                  fontSize: 12.5,
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 4 }} />
+                <span style={{ lineHeight: 1.45 }}>{b.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* list */}
       {filtered.length === 0 ? (
         <Empty>No bugs match your filters.</Empty>
@@ -215,6 +297,7 @@ export function BugsPage({
                 proj={projectsById[relById[b.releaseId]?.projectId]}
                 reporter={b.createdBy || profilesById[b.createdById]?.name || ''}
                 proposerName={b.resolutionById ? profilesById[b.resolutionById]?.name || '' : ''}
+                releasesById={relById}
                 user={user}
                 isSubmitting={isSubmitting}
                 onOpen={onOpenRelease}
@@ -242,6 +325,7 @@ function BugCard({
   proj,
   reporter,
   proposerName,
+  releasesById,
   user,
   isSubmitting,
   onOpen,
@@ -333,6 +417,9 @@ function BugCard({
 
         {/* developer's proposed close — resolution, reason, who + when */}
         <ProposedCloseBanner bug={bug} proposerName={proposerName} />
+
+        {/* full lifecycle timeline (from bug_history) */}
+        <BugTimeline bugId={bug.id} releasesById={releasesById} />
 
         {/* role-aware actions (same as the release Bugs tab) */}
         {canAct && (

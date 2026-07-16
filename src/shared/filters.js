@@ -3,45 +3,64 @@
    so identical filters always yield identical datasets. No page-level custom
    filtering logic is allowed.
 
-   Date semantics (unified & documented):
-     - bugs are filtered by bug.createdAt
-     - releases are filtered by release.date
-   Bugs on closed (superseded) releases are excluded everywhere: their unresolved
-   bugs were carried onto the successor release, so counting both double-counts.
+   TWO shared bug datasets — the only two that exist (see the app's scope model):
+     • liveBugs (filterBugs)   — bugs on ACTIVE (non-closed) releases only. This
+       is the Bugs page's operational working board. Because a bug MOVES to its
+       current release under one-bug-one-record, a superseded build keeps only
+       the verified bugs that were resolved there, which the live board hides.
+     • historicalBugs          — bugs across ALL releases (active + closed). This
+       is the Analytics dataset: complete project history. Note that ACTIVE bugs
+       never sit on a closed release, so "Active Bugs" is identical in both; the
+       datasets differ only by the resolved/verified bugs on superseded builds.
 
-   A filter object may set any subset of keys; unset keys ('all' / '') don't
-   constrain. Context supplies the release/project lookups a bug needs to resolve
-   its project / platform / team / developer / QA.
+   Date semantics: bugs filtered by bug.createdAt, releases by release.date. A
+   filter object may set any subset of keys; unset keys ('all' / '') don't
+   constrain. Context supplies the release/project lookups a bug needs.
 */
 import { isClosedStatus } from '@/constants.js';
 
 const any = (v) => v == null || v === '' || v === 'all';
 
+// shared predicate for everything EXCEPT the closed-release rule
+function matchBug(b, rel, proj, f, term) {
+  if (!any(f.status) && b.status !== f.status) return false;
+  if (!any(f.severity) && b.severity !== f.severity) return false;
+  if (!any(f.platform) && rel.platform !== f.platform) return false;
+  if (!any(f.tag) && !(b.tags || []).includes(f.tag)) return false;
+  if (!any(f.feature) && (b.feature || 'Unassigned') !== f.feature) return false;
+  if (!any(f.project) && rel.projectId !== f.project) return false;
+  if (!any(f.team) && (proj?.teamId || '') !== f.team) return false;
+  if (!any(f.environment) && (rel.environment || 'Production') !== f.environment) return false;
+  if (!any(f.developer) && rel.submittedById !== f.developer) return false;
+  if (!any(f.qa) && rel.assignedQa !== f.qa) return false;
+  if (f.from && (b.createdAt || '').slice(0, 10) < f.from) return false;
+  if (f.to && (b.createdAt || '').slice(0, 10) > f.to) return false;
+  if (term) {
+    const name = proj?.name || '';
+    if (!b.title.toLowerCase().includes(term) && !name.toLowerCase().includes(term)) return false;
+  }
+  return true;
+}
+
+// LIVE dataset — active (non-closed) releases only. Used by the Bugs page.
 export function filterBugs(bugs, f = {}, ctx = {}) {
   const { releaseById = {}, projectById = {} } = ctx;
   const term = (f.search || '').trim().toLowerCase();
   return bugs.filter((b) => {
     const rel = releaseById[b.releaseId];
+    if (!rel || isClosedStatus(rel.status)) return false;
+    return matchBug(b, rel, projectById[rel.projectId], f, term);
+  });
+}
+
+// HISTORICAL dataset — every release (active + closed). Used by Analytics.
+export function historicalBugs(bugs, f = {}, ctx = {}) {
+  const { releaseById = {}, projectById = {} } = ctx;
+  const term = (f.search || '').trim().toLowerCase();
+  return bugs.filter((b) => {
+    const rel = releaseById[b.releaseId];
     if (!rel) return false;
-    if (isClosedStatus(rel.status)) return false; // carried-forward dedup
-    const proj = projectById[rel.projectId];
-    if (!any(f.status) && b.status !== f.status) return false;
-    if (!any(f.severity) && b.severity !== f.severity) return false;
-    if (!any(f.platform) && rel.platform !== f.platform) return false;
-    if (!any(f.tag) && !(b.tags || []).includes(f.tag)) return false;
-    if (!any(f.feature) && (b.feature || 'Unassigned') !== f.feature) return false;
-    if (!any(f.project) && rel.projectId !== f.project) return false;
-    if (!any(f.team) && (proj?.teamId || '') !== f.team) return false;
-    if (!any(f.environment) && (rel.environment || 'Production') !== f.environment) return false;
-    if (!any(f.developer) && rel.submittedById !== f.developer) return false;
-    if (!any(f.qa) && rel.assignedQa !== f.qa) return false;
-    if (f.from && (b.createdAt || '').slice(0, 10) < f.from) return false;
-    if (f.to && (b.createdAt || '').slice(0, 10) > f.to) return false;
-    if (term) {
-      const name = proj?.name || '';
-      if (!b.title.toLowerCase().includes(term) && !name.toLowerCase().includes(term)) return false;
-    }
-    return true;
+    return matchBug(b, rel, projectById[rel.projectId], f, term);
   });
 }
 

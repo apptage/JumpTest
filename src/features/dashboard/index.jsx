@@ -12,6 +12,7 @@ import {
   RELEASE_PLATFORMS,
   slaLevel,
   platformsForProjectType,
+  formatVersion,
 } from '@/constants.js';
 import {
   IconBug, IconChart, IconCheck, IconClock, IconFolder,
@@ -53,14 +54,14 @@ export function StatCards({ counts }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <StatBig label="Awaiting QA" value={awaiting} accent="var(--warning)" sub="in the queue" />
-        <StatBig label="In QA" value={inQa} accent="var(--brand)" sub="being tested / reviewed" />
-        <StatBig label="Approved" value={approved} accent="var(--success)" sub="shipped clean" />
+        <StatBig label="Awaiting QA" value={awaiting} accent="var(--warning)" sub="releases in the queue" />
+        <StatBig label="In QA" value={inQa} accent="var(--brand)" sub="releases being reviewed" />
+        <StatBig label="QA Approved" value={approved} accent="var(--success)" sub="releases shipped clean" />
         <StatBig
-          label="Needs Rework"
+          label="Returned for Rework"
           value={rework}
           accent="var(--danger)"
-          sub={rework ? 'sent back to dev' : 'none pending'}
+          sub={rework ? 'releases sent back to dev' : 'none pending'}
         />
       </div>
       <Chevron stages={stages} />
@@ -155,7 +156,7 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <TypeBadge type={release.releaseType} />
         <span className="tnum" style={{ fontSize: 13.5, fontWeight: 600 }}>
-          v{release.version}
+          {formatVersion(release.version)}
         </span>
         <StatusBadge status={release.status} />
         <StatusAge release={release} />
@@ -448,7 +449,7 @@ export function RightPanel({
       id: 'r' + r.id,
       t: r.createdAt || r.date,
       kind: 'release',
-      text: `${r.submittedBy} submitted ${RELEASE_TYPES[r.releaseType]?.label || ''} v${r.version}`,
+      text: `${r.submittedBy} submitted ${RELEASE_TYPES[r.releaseType]?.label || ''} ${formatVersion(r.version)}`,
       releaseId: r.id,
     })
   );

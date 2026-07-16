@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
 import { card, Logo, CenteredMessage } from '@/ui.jsx';
+import { formatVersion } from '@/constants.js';
 import { sideHead } from '@shared/ui-kit.jsx';
 import { WbsBadge, latestEst } from '@features/wbs';
 
@@ -185,7 +186,7 @@ export function ClientDashboard({ token }) {
       <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>
-          v{r.version}{' '}
+          {formatVersion(r.version)}{' '}
           <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
             {r.platform}
             {r.component ? ` · ${r.component}` : ''} · {r.environment}

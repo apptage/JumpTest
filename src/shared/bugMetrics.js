@@ -21,6 +21,27 @@ export function aggregateBugMetrics(bugsF) {
   return { total: bugsF.length, active, closed, byStatus, bySeverity };
 }
 
+/* Workflow buckets — the ONE mapping from internal statuses to the words users
+   see everywhere (Bugs page, Analytics, Manager dashboard). Groups by who holds
+   the ball so a manager reads the pipeline in seconds:
+     needsDev    — bugs still requiring developer work (open + in progress + needs clarification)
+     awaitingQa  — bugs waiting on QA / Team-Lead verification (fixed + pending TL)
+     verified    — fully verified / closed
+   needsDev + awaitingQa === active (not verified). */
+export function bugWorkflow(m) {
+  const s = m.byStatus || {};
+  return {
+    total: m.total,
+    needsDev: (s.open || 0) + (s.in_progress || 0) + (s.disputed || 0),
+    awaitingQa: (s.fixed || 0) + (s.pending_tl || 0),
+    verified: s.verified || 0,
+  };
+}
+
+// NOTE: dedup-by-bugKey aggregation was removed in the "one bug = one record"
+// refactor (fixes15.sql). Each logical bug is now a single row, so counts come
+// straight from aggregateBugMetrics — no dedup needed.
+
 // Dev-only sanity check: totals must reconcile. Because every page derives from
 // the same filterBugs() pipeline, identical filters yield identical datasets;
 // this guards the aggregation invariants (active + closed = total, status sum = total).

@@ -6,9 +6,11 @@ import { card, inputStyle, ghostButton, ModalShell, StatusBadge, Avatar } from '
 import { PageHeader, Kpi, AnSection, avgDaysBetween } from '@shared/ui-kit.jsx';
 import { SubTabs, Donut, StackedBar, SegmentedTimeline, Pill } from '@shared/dashboard-kit.jsx';
 import { IconSliders } from '@/icons.jsx';
-import { filterBugs, filterReleases } from '@shared/filters.js';
-import { computeReleaseMetrics, computeBottlenecks, computeWorkload } from '@shared/releaseMetrics.js';
-import { assertBugReconcile } from '@shared/bugMetrics.js';
+import { historicalBugs, filterReleases } from '@shared/filters.js';
+import { computeReleaseMetrics, computeWorkload } from '@shared/releaseMetrics.js';
+import { assertBugReconcile, aggregateBugMetrics, bugWorkflow } from '@shared/bugMetrics.js';
+import { ScopeSummary } from '@shared/scope-summary.jsx';
+import { ReleaseHistory } from './ReleaseHistory.jsx';
 import {
   STATUSES,
   SEVERITIES,
@@ -16,7 +18,7 @@ import {
   BUG_STATUSES,
   BUG_STATUS_ORDER,
   isActiveStatus,
-  SLA_COLORS,
+  formatVersion,
   BUG_RESOLUTIONS,
   ENVIRONMENTS,
   RELEASE_TYPES,
@@ -51,12 +53,35 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   const reset = () =>
     setF({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
 
-  // ---- single shared dataset pipeline (same functions the Bugs page uses) ----
+  // ---- HISTORICAL dataset: Analytics reports the COMPLETE project history, so
+  //      it counts bugs across ALL releases (active + closed), unlike the Bugs
+  //      page which shows the live board only. Same shared services either way.
   const releaseById = {};
   releases.forEach((r) => (releaseById[r.id] = r));
   const relF = filterReleases(releases, f, { projectById: projectsById });
-  const bugsF = filterBugs(bugs, f, { releaseById, projectById: projectsById });
+  const bugsF = historicalBugs(bugs, f, { releaseById, projectById: projectsById });
   assertBugReconcile(bugsF, 'analytics'); // dev-only reconcile guard
+
+  // One bug = one row, so metrics come straight off the filtered set — no dedup.
+  const bugMetricsF = aggregateBugMetrics(bugsF);
+  const overallHistorical = historicalBugs(bugs, {}, { releaseById, projectById: projectsById });
+  const filteredActive = bugMetricsF.active;
+  const overallMetrics = aggregateBugMetrics(overallHistorical);
+  const overallActive = overallMetrics.active;
+  const carriedF = bugsF.filter((b) => b.carriedForward).length;
+  const wfF = bugWorkflow(bugMetricsF);
+
+  // active-filter breadcrumb for the scope summary
+  const crumbLabel = (id) => profilesById[id]?.name || id;
+  const scopeCrumbs = [];
+  if (isAdmin && f.team !== 'all') scopeCrumbs.push((teams || []).find((t) => t.id === f.team)?.name || 'Team');
+  if (f.project !== 'all') scopeCrumbs.push(projectsById[f.project]?.name || 'Project');
+  if (f.platform !== 'all') scopeCrumbs.push(f.platform);
+  if (f.environment !== 'all') scopeCrumbs.push(f.environment);
+  if (f.developer !== 'all') scopeCrumbs.push(crumbLabel(f.developer));
+  if (f.qa !== 'all') scopeCrumbs.push(crumbLabel(f.qa));
+  if (f.version && f.version.trim()) scopeCrumbs.push(`v${f.version.trim()}`);
+  if (f.from || f.to) scopeCrumbs.push(`${f.from || '…'} → ${f.to || '…'}`);
 
   const metrics = computeReleaseMetrics(relF, bugsF, { releaseById });
   const blockedReleaseIds = metrics.blocked;
@@ -82,15 +107,8 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   });
   const maxMonth = Math.max(1, ...months.map((m) => m.n));
 
-  // ---- workload + bottlenecks (shared, project-aggregated, deduped) ----
+  // ---- workload (shared, project-aggregated) ----
   const wlMembers = computeWorkload(profiles, relF, bugsF, f.team);
-  const bottlenecks = computeBottlenecks(relF, bugsF, {
-    projectsById,
-    profilesById,
-    profiles,
-    teams,
-    teamFilter: f.team,
-  });
 
   // ---- QA quality (resolution outcomes) ----
   const resCounts = {};
@@ -235,10 +253,10 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
           <thead>
             <tr>
               <th style={th}>Developer</th>
-              <th style={th}>Submitted</th>
-              <th style={th}>Awaiting fix</th>
-              <th style={th}>Active</th>
-              <th style={th}>Open bugs</th>
+              <th style={th}>Releases</th>
+              <th style={th}>Needs Dev</th>
+              <th style={th}>Active Releases</th>
+              <th style={th}>Active Bugs</th>
             </tr>
           </thead>
           <tbody>
@@ -300,9 +318,9 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
             <tr>
               <th style={th}>Member</th>
               <th style={th}>Role</th>
-              <th style={th}>Active releases</th>
-              <th style={th}>Pending reviews</th>
-              <th style={th}>Open bugs</th>
+              <th style={th}>Active Releases</th>
+              <th style={th}>Pending Reviews</th>
+              <th style={th}>Active Bugs</th>
             </tr>
           </thead>
           <tbody>
@@ -382,29 +400,40 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
         </button>
       </div>
 
+      {/* dataset scope — Analytics reports the whole project history */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 12 }}>
+        <span style={{ fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
+          Scope: Entire Project History
+        </span>
+        <span style={{ color: 'var(--color-text-tertiary)' }}>Metrics include all releases (active and closed).</span>
+      </div>
+
+      {/* what scope do these numbers represent? */}
+      <ScopeSummary shown={filteredActive} total={overallActive} noun="currently active bugs" crumbs={scopeCrumbs} />
+
       <div className="an-workspace">
         {/* LEFT — performance & data trends */}
         <div style={{ minWidth: 0 }}>
 
-      {/* QA quality + velocity KPIs */}
-      <AnSection title="Release Quality">
+      {/* release overview KPIs */}
+      <AnSection title="Release Overview">
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Kpi label="Submitted" value={submitted} />
-          <Kpi label="Approved" value={approved} sub={`${passRate}% passed QA`} color="var(--success)" />
-          <Kpi label="Sent back" value={rejected} sub={`${rejRate}% returned to dev`} color="var(--danger)" />
+          <Kpi label="Total Releases" value={submitted} />
+          <Kpi label="QA Approved Releases" value={approved} sub={`${passRate}% pass rate`} color="var(--success)" />
+          <Kpi label="Returned for Rework" value={rejected} sub={`${rejRate}% of decided`} color="var(--danger)" />
           <Kpi
-            label="Avg release time"
+            label="Average Release Cycle"
             value={cycleDays == null ? 'In progress' : `${cycleDays.toFixed(1)}d`}
             sub="submit → QA done"
           />
           <Kpi
-            label="Production Defects"
+            label="Production Bugs"
             value={prodBugs}
-            sub="bugs reported in production"
+            sub="on production builds"
             color={prodBugs > 0 ? 'var(--danger)' : undefined}
           />
           <Kpi
-            label="Carried forward"
+            label="Carried Forward Bugs"
             value={carriedBugs}
             sub={`${carryRate}% of bugs${avgIterations ? ` · ~${avgIterations} builds to verify` : ''}`}
             color={carryRate >= 30 ? 'var(--warning)' : undefined}
@@ -412,11 +441,28 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
         </div>
       </AnSection>
 
+      {/* Bug workflow — who holds the ball; one bug = one row (straight counts). */}
+      <AnSection title="Bug Workflow">
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Kpi label="Total Bugs" value={wfF.total} sub="in scope" />
+          <Kpi label="Needs Development" value={wfF.needsDev} sub="with the developer" color={wfF.needsDev ? 'var(--danger)' : undefined} />
+          <Kpi label="Awaiting QA" value={wfF.awaitingQa} sub="waiting for QA" color={wfF.awaitingQa ? 'var(--warning)' : undefined} />
+          <Kpi label="Verified Bugs" value={wfF.verified} sub="closed" color="var(--success)" />
+          <Kpi label="Carried Forward Bugs" value={carriedF} sub="from a prior build" color={carriedF ? 'var(--warning)' : undefined} />
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 8, lineHeight: 1.5 }}>
+          {scopeCrumbs.length > 0 ? 'Filtered scope above.' : 'Whole scope.'} Overall (all-time, unfiltered):{' '}
+          <strong>{overallMetrics.total}</strong> total bugs · <strong>{overallMetrics.active}</strong> currently active ·{' '}
+          <strong>{overallMetrics.closed}</strong> verified. Each bug is a single record — a carried-forward bug
+          moves to the new build, it isn’t copied, so every count is a straight row count.
+        </div>
+      </AnSection>
+
       {/* cycle stages as a segmented timeline + velocity trend */}
       <AnSection title="Release Speed">
         <div style={{ ...card, padding: 16, marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Cycle time breakdown</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>QA Cycle Time</span>
             <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>
               {cycleDays == null ? '—' : `${cycleDays.toFixed(1)}d total`}
             </span>
@@ -500,35 +546,27 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
         )}
       </AnSection>
 
+      <AnSection title="Release History">
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+          Every release in the current scope (all statuses). Every bug exists only once — a carried-forward
+          bug <strong>moves</strong> to the new build, it isn’t copied. Bug counts here are historical (from
+          each bug’s timeline): reported on this build vs. carried in, and they don’t change as bugs move on.
+          Notes, changelog and WBS tasks live on each release — click a row to open it.
+        </div>
+        <ReleaseHistory
+          releases={relF}
+          projectsById={projectsById}
+          profilesById={profilesById}
+          onRowClick={(r) => onOpenHistory(projectsById[r.projectId])}
+        />
+      </AnSection>
+
         </div>
         {/* end LEFT */}
 
-        {/* RIGHT — sticky quality & attention sidebar */}
+        {/* RIGHT — sticky quality sidebar (operational "Delays & Attention"
+            now lives on the Bugs page; Analytics stays historical) */}
         <aside className="an-side">
-          <div className="mgr-card" style={{ ...card, padding: 14 }}>
-            <div style={secHead}>Delays &amp; Attention Needed</div>
-            {bottlenecks.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-                No bottlenecks detected for the current filters.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {bottlenecks.map((b, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px',
-                      background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)',
-                      borderRadius: 8, fontSize: 12,
-                    }}
-                  >
-                    <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 4 }} />
-                    <span style={{ lineHeight: 1.45 }}>{b.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
 
           <div className="mgr-card" style={{ ...card, padding: 14 }}>
             <div style={secHead}>Bug Breakdown</div>
@@ -538,11 +576,11 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
             <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>By status</div>
             <StackedBar segments={statusSegments} />
             <div style={{ height: 1, background: 'var(--color-border-primary)', margin: '14px 0' }} />
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>Open vs Closed</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 10 }}>Active vs Verified</div>
             <StackedBar
               segments={[
-                { label: 'Open', value: openBugsCount, color: 'var(--danger)' },
-                { label: 'Closed', value: closedBugs, color: 'var(--success)' },
+                { label: 'Active', value: openBugsCount, color: 'var(--danger)' },
+                { label: 'Verified', value: closedBugs, color: 'var(--success)' },
               ]}
             />
           </div>
@@ -691,7 +729,7 @@ export function HistoryModal({ project, releases, showToast, onClose }) {
               />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>
-                  v{r.version}{' '}
+                  {formatVersion(r.version)}{' '}
                   <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-secondary)' }}>
                     {RELEASE_TYPES[r.releaseType]?.label}
                   </span>

@@ -44,6 +44,18 @@ export function isReadOnly(release) {
   return release?.status === 'closed';
 }
 
+/* Version helpers — one canonical way to store and render a release version.
+   Store the bare number (no leading "v"); render with exactly one "v". This
+   fixes the "vv1.0.1" double-prefix (users typed the v AND the UI prepended one)
+   and stays defensive against legacy rows that already contain a leading v. */
+export function normalizeVersion(v) {
+  return String(v || '').trim().replace(/^v+\s*/i, '');
+}
+export function formatVersion(v) {
+  const s = normalizeVersion(v);
+  return s ? `v${s}` : '';
+}
+
 /* Release delivery types */
 export const RELEASE_TYPES = {
   apk: { label: 'APK', icon: '📦' },

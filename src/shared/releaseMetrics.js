@@ -95,7 +95,7 @@ export function computeBottlenecks(releasesF, bugsF, ctx = {}) {
       out.push({
         level: 'over',
         text:
-          `${name} has ${info.total} active bug${info.total === 1 ? '' : 's'} across ${info.releases.length} release${info.releases.length === 1 ? '' : 's'}` +
+          `${name} — ${info.total} active bug${info.total === 1 ? '' : 's'} across ${info.releases.length} release${info.releases.length === 1 ? '' : 's'}` +
           (worst ? ` (worst: v${worst.version} — ${worst.n})` : '') +
           (blocking ? ` · ${blocking} Major/Critical` : ''),
       });
@@ -121,7 +121,7 @@ export function computeBottlenecks(releasesF, bugsF, ctx = {}) {
   Object.entries(reviewerLoad)
     .filter(([, n]) => n > 3)
     .forEach(([id, n]) =>
-      out.push({ level: 'warn', text: `${profilesById[id]?.name || 'A tester'} has ${n} active reviews — possibly overloaded.` })
+      out.push({ level: 'warn', text: `${profilesById[id]?.name || 'A tester'} — ${n} release${n === 1 ? '' : 's'} awaiting review` })
     );
 
   // teams with releases waiting but no QA
@@ -146,7 +146,7 @@ export function computeBottlenecks(releasesF, bugsF, ctx = {}) {
   Object.entries(devOpen)
     .filter(([, n]) => n > 8)
     .forEach(([id, n]) =>
-      out.push({ level: 'warn', text: `${profilesById[id]?.name || 'A developer'} has ${n} active bugs to fix — possibly overloaded.` })
+      out.push({ level: 'warn', text: `${profilesById[id]?.name || 'A developer'} — ${n} active bug${n === 1 ? '' : 's'} assigned` })
     );
 
   return out;

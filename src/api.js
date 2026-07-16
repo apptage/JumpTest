@@ -848,46 +848,83 @@ export async function closeRelease(id) {
   if (error) throw error;
 }
 
-// Copy unresolved bugs from a closed release onto its successor, preserving
-// stable identity (bug_key) and lineage. Verified bugs stay behind as history.
-//  - fixed (not yet verified) → carried as 'fixed' (pending verification)
-//  - open / in_progress / disputed → carried as 'open' (unresolved)
-export async function carryForwardBugs(fromReleaseId, toReleaseId) {
-  const { data: src, error } = await supabase
-    .from('bugs')
-    .select('*')
-    .eq('release_id', fromReleaseId)
-    .neq('status', 'verified');
+// Atomically close the prior (sent-back) releases and MOVE their unresolved
+// bugs onto the new release, logging a carried_forward history event for each.
+// One bug = one row: a bug is moved (UPDATE), never copied — so duplicate
+// carry-forward is impossible and the call is idempotent (re-running moves
+// nothing because the priors are already closed/emptied). Runs in a single
+// transaction inside the move_bugs_to_release RPC (see fixes15.sql).
+//  - fixed (not yet verified) → stays 'fixed' (pending verification)
+//  - open / in_progress / disputed → becomes 'open' (unresolved)
+export async function moveBugsToRelease(toReleaseId, priorIds, movedBy) {
+  if (!toReleaseId || !priorIds || !priorIds.length) {
+    return { moved: 0, pendingVerify: 0, unresolved: 0 };
+  }
+  const { data, error } = await supabase.rpc('move_bugs_to_release', {
+    p_to_release: toReleaseId,
+    p_prior_ids: priorIds,
+    p_moved_by: movedBy || null,
+  });
   if (error) throw error;
-  const carry = (src || []).filter((b) => b.status !== 'verified');
-  if (!carry.length) return { carried: 0, pendingVerify: 0, unresolved: 0 };
-
-  const rows = carry.map((b) => ({
-    release_id: toReleaseId,
-    title: b.title,
-    description: b.description,
-    severity: b.severity,
-    screenshot_url: b.screenshot_url,
-    status: b.status === 'fixed' ? 'fixed' : 'open',
-    feature: b.feature || null,
-    tags: Array.isArray(b.tags) ? b.tags : [],
-    wbs_task_id: b.wbs_task_id || null,
-    resolution: null,
-    bug_key: b.bug_key,
-    origin_release_id: b.origin_release_id || b.release_id,
-    carried_from_release_id: fromReleaseId,
-    carried_forward: true,
-    iteration: (b.iteration || 1) + 1,
-    created_by: b.created_by,
-    created_by_id: b.created_by_id,
-  }));
-  const { error: insErr } = await supabase.from('bugs').insert(rows);
-  if (insErr) throw insErr;
   return {
-    carried: rows.length,
-    pendingVerify: rows.filter((r) => r.status === 'fixed').length,
-    unresolved: rows.filter((r) => r.status === 'open').length,
+    moved: data?.moved || 0,
+    pendingVerify: data?.pendingVerify || 0,
+    unresolved: data?.unresolved || 0,
   };
+}
+
+/* ---- bug history (audit trail; see fixes15.sql) ---- */
+export function mapBugHistory(h) {
+  return {
+    id: h.id,
+    bugId: h.bug_id,
+    releaseId: h.release_id,
+    action: h.action,
+    previousStatus: h.previous_status || null,
+    newStatus: h.new_status || null,
+    movedBy: h.moved_by || null,
+    notes: h.notes || '',
+    createdAt: h.created_at,
+  };
+}
+
+// best-effort audit log — never block the action that produced it
+export async function logBugHistory(payload) {
+  if (!payload?.bug_id || !payload?.action) return;
+  const { error } = await supabase.from('bug_history').insert(payload);
+  if (error) console.warn('[bug_history] insert failed', error.message);
+}
+
+export async function fetchBugHistory(bugId) {
+  if (!bugId) return [];
+  const { data, error } = await supabase
+    .from('bug_history')
+    .select('*')
+    .eq('bug_id', bugId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data.map(mapBugHistory);
+}
+
+// Historically-accurate per-release bug counts from bug_history — NOT live bugs
+// (those move off superseded builds). reported = bugs first found on the build;
+// carried = bugs that moved onto it. These never change as bugs move on.
+// Returns { [releaseId]: { reported, carried, total } }.
+export async function fetchReleaseBugStats() {
+  const { data, error } = await supabase
+    .from('bug_history')
+    .select('release_id, action')
+    .in('action', ['created', 'carried_forward'])
+    .not('release_id', 'is', null);
+  if (error) throw error;
+  const m = {};
+  (data || []).forEach((h) => {
+    const r = (m[h.release_id] ||= { reported: 0, carried: 0, total: 0 });
+    if (h.action === 'created') r.reported += 1;
+    else r.carried += 1;
+    r.total += 1;
+  });
+  return m;
 }
 
 // Most recent still-open "sent back" release for a project (optionally a dev),

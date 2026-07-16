@@ -3,8 +3,78 @@
    behave identically. The caller passes already-computed role flags (each may
    fold in read-only/scope rules) and handlers already bound to the bug's
    release, e.g. onStatus={(st) => onBugStatus(release, bug, st)}. */
+import { useState } from 'react';
+import * as api from '@/api.js';
 import { ghostButton, inputStyle } from '@/ui.jsx';
-import { BUG_STATUSES, BUG_RESOLUTIONS, DEV_DISPUTE_RESOLUTIONS, humanizeSince } from '@/constants.js';
+import { BUG_STATUSES, BUG_RESOLUTIONS, DEV_DISPUTE_RESOLUTIONS, humanizeSince, formatVersion } from '@/constants.js';
+
+/* Lifecycle timeline for one bug, from bug_history (see fixes15.sql). Lazy —
+   fetches only when expanded. releasesById (optional) maps release_id → release
+   so events can show the build version. */
+const HISTORY_LABEL = {
+  created: 'Created',
+  carried_forward: 'Moved to build',
+  fixed: 'Marked fixed',
+  approved: 'Approved (closed)',
+  closed: 'Closed',
+  proposed_close: 'Proposed close',
+  rejected: 'Rejected — reopened',
+  qa_failed: 'Needs clarification',
+  reopened: 'Reopened',
+  assigned: 'Marked in progress',
+  sent_back: 'Sent back',
+};
+
+export function BugTimeline({ bugId, releasesById = {} }) {
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState(null);
+  const [loading, setLoading] = useState(false);
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && events === null) {
+      setLoading(true);
+      try {
+        setEvents(await api.fetchBugHistory(bugId));
+      } catch {
+        setEvents([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+  }
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        onClick={toggle}
+        style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 0 }}
+      >
+        {open ? 'Hide timeline' : 'Timeline'}
+      </button>
+      {open && (
+        <div style={{ marginTop: 8, borderLeft: '2px solid var(--color-border-tertiary)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {loading && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Loading…</div>}
+          {!loading && events && events.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No history recorded yet.</div>
+          )}
+          {!loading &&
+            (events || []).map((e) => {
+              const rel = releasesById[e.releaseId];
+              const ver = rel ? formatVersion(rel.version) : '';
+              return (
+                <div key={e.id} style={{ fontSize: 12 }}>
+                  <span style={{ fontWeight: 600 }}>{HISTORY_LABEL[e.action] || e.action}</span>
+                  {ver && <span> · {ver}</span>}
+                  <span style={{ color: 'var(--color-text-tertiary)' }}> · {humanizeSince(e.createdAt)}</span>
+                  {e.notes && <div style={{ color: 'var(--color-text-secondary)', marginTop: 2 }}>{e.notes}</div>}
+                </div>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* Shown to the Team Lead on a `pending_tl` bug: the resolution the developer
    proposed, their optional reason, and who marked it + when — everything needed

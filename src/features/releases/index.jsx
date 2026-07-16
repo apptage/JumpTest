@@ -19,7 +19,7 @@ import {
   Info,
 } from '@/ui.jsx';
 import { Field, sideHead, TagChip, SlaBadge, statusSince } from '@shared/ui-kit.jsx';
-import { BugActions, ProposedCloseBanner } from '@shared/bug-actions.jsx';
+import { BugActions, ProposedCloseBanner, BugTimeline } from '@shared/bug-actions.jsx';
 import {
   STATUSES,
   nextStatuses,
@@ -45,6 +45,7 @@ import {
   slaLevel,
   bugSlaLevel,
   humanizeSince,
+  formatVersion,
 } from '@/constants.js';
 import { IconDownload, IconExternal } from '@/icons.jsx';
 
@@ -187,7 +188,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     (n, r) => n + bugs.filter((b) => b.releaseId === r.id && b.status !== 'verified').length,
     0
   );
-  const priorVersions = priorSentBackList.map((r) => `v${r.version}`).join(', ');
+  const priorVersions = priorSentBackList.map((r) => formatVersion(r.version)).join(', ');
 
   // A WBS project with prior sent-back cycle(s) may be submitted as a
   // bug-fix-only release (no WBS task selection required).
@@ -544,7 +545,7 @@ export function EditReleaseModal({ release, project, isSubmitting, onClose, onSa
   return (
     <ModalShell onClose={onClose} title="Edit release">
       <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
-        {project ? project.name : 'Project'} · {release.platform} · v{release.version}
+        {project ? project.name : 'Project'} · {release.platform} · {formatVersion(release.version)}
       </div>
 
       <div style={{ display: 'flex', gap: 10 }}>
@@ -757,7 +758,7 @@ export function DetailModal({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <TypeBadge type={release.releaseType} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 600 }}>
-          v{release.version}
+          {formatVersion(release.version)}
         </span>
         <StatusBadge status={release.status} />
         {project && (
@@ -1672,6 +1673,8 @@ function BugRow({
         onCloseReview={onCloseReview}
         onDelete={onDelete}
       />
+
+      <BugTimeline bugId={bug.id} />
 
       {/* comment thread */}
       <div style={{ marginTop: 10, borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>
