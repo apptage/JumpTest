@@ -945,23 +945,29 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
       ) : filtered.length === 0 ? (
         <Empty>No items match the filter.</Empty>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 16, alignItems: 'start' }}>
+        // masonry via CSS multi-column: short cards pack tight, the next card
+        // flows up into the gap instead of grid-row alignment leaving dead space
+        <div style={{ columnWidth: 400, columnGap: 16 }}>
           {groupList.map((g) => (
-            <ModuleCard
+            <div
               key={g.key}
-              group={g}
-              canManage={canManage}
-              canEdit={canEdit}
-              profiles={profiles}
-              bugsByItem={bugsByItem}
-              collapsed={isCol(g.key)}
-              onToggle={() => toggleCol(g.key)}
-              onAddTask={addTaskToGroup}
-              onSaveItem={save}
-              onDeleteItem={del}
-              onReorderItem={reorder}
-              onSaveMeta={saveModuleMeta}
-            />
+              style={{ breakInside: 'avoid', WebkitColumnBreakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: 16 }}
+            >
+              <ModuleCard
+                group={g}
+                canManage={canManage}
+                canEdit={canEdit}
+                profiles={profiles}
+                bugsByItem={bugsByItem}
+                collapsed={isCol(g.key)}
+                onToggle={() => toggleCol(g.key)}
+                onAddTask={addTaskToGroup}
+                onSaveItem={save}
+                onDeleteItem={del}
+                onReorderItem={reorder}
+                onSaveMeta={saveModuleMeta}
+              />
+            </div>
           ))}
         </div>
       )}
