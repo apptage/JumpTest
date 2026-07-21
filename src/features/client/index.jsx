@@ -2,10 +2,24 @@
    ?client=<token>. Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
-import { card, Logo, CenteredMessage } from '@/ui.jsx';
-import { formatVersion } from '@/constants.js';
+import { card, inputStyle, Logo, CenteredMessage } from '@/ui.jsx';
+import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER } from '@/constants.js';
 import { sideHead } from '@shared/ui-kit.jsx';
 import { WbsBadge, latestEst } from '@features/wbs';
+
+// relative "updated Xm ago" — coarse, no external dep
+function relTime(iso) {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
 
 const CLIENT_STATUS = {
   qa_pending: { label: 'In development', color: '#d97706' },
@@ -17,20 +31,33 @@ const CLIENT_STATUS = {
 };
 
 function publicWbsPct(items) {
-  let done = 0;
-  let total = 0;
-  items.forEach((t) => {
-    total += 2;
-    if (t.backend === 'complete') done += 1;
-    if (t.frontend === 'complete') done += 1;
-  });
-  return total ? Math.round((done / total) * 100) : 0;
+  const work = items.filter((t) => t.type !== 'milestone');
+  if (!work.length) return 0;
+  return Math.round((work.filter((t) => t.status === 'completed').length / work.length) * 100);
 }
 
 function ClientWbsView({ wbs }) {
-  const work = wbs.filter((t) => t.type !== 'milestone');
+  const [q, setQ] = useState('');
+  const [sf, setSf] = useState('all');
+
+  const allWork = wbs.filter((t) => t.type !== 'milestone');
   const milestones = wbs.filter((t) => t.type === 'milestone');
-  const pct = publicWbsPct(work);
+  const pct = publicWbsPct(allWork); // overall % is on the full scope, not the filtered subset
+
+  // status stat strip (full scope)
+  const byStatus = (s) => allWork.filter((t) => t.status === s).length;
+  const stats = [
+    { key: 'total', label: 'Total items', value: allWork.length },
+    { key: 'not_started', label: 'Not started', value: byStatus('not_started') },
+    { key: 'in_progress', label: 'In progress', value: byStatus('in_progress'), color: 'var(--brand)' },
+    { key: 'in_qa', label: 'In QA', value: byStatus('in_qa'), color: 'var(--warning)' },
+    { key: 'completed', label: 'Completed', value: byStatus('completed'), color: 'var(--success)' },
+    ...(byStatus('blocked') ? [{ key: 'blocked', label: 'Blocked', value: byStatus('blocked'), color: 'var(--danger)' }] : []),
+  ];
+
+  const work = allWork.filter(
+    (t) => (sf === 'all' || t.status === sf) && (!q.trim() || (t.name || '').toLowerCase().includes(q.trim().toLowerCase()))
+  );
   const platforms = Array.from(new Set(work.map((t) => t.platform).filter(Boolean)));
 
   const groups = {};
@@ -54,25 +81,56 @@ function ClientWbsView({ wbs }) {
       }}
     >
       <span style={{ fontSize: 13, flex: 1, minWidth: 140 }}>{t.name}</span>
-      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>Backend</span>
-      <WbsBadge status={t.backend} />
-      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>Frontend</span>
-      <WbsBadge status={t.frontend} />
+      <WbsBadge status={t.status} />
       {t.est && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t.est}</span>}
     </div>
   );
 
   return (
     <div>
-      <div style={{ ...card, padding: 18, marginBottom: 18 }}>
+      {/* status stat strip */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+        {stats.map((s) => (
+          <div key={s.key} style={{ ...card, padding: '12px 16px', flex: '1 1 110px', minWidth: 100 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: s.color || 'var(--color-text-primary)' }}>{s.value}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ ...card, padding: 18, marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Overall project completion</span>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
         </div>
         <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
           <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
         </div>
       </div>
+
+      {/* search + status filter (read-only, viewer convenience) */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+        <input
+          style={{ ...inputStyle, flex: '1 1 180px', width: 'auto', padding: '8px 12px', fontSize: 13 }}
+          value={q}
+          placeholder="Search items…"
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <select
+          style={{ ...inputStyle, width: 'auto', padding: '8px 12px', fontSize: 13 }}
+          value={sf}
+          onChange={(e) => setSf(e.target.value)}
+        >
+          <option value="all">All statuses</option>
+          {WBS_STATUS_ORDER.map((s) => <option key={s} value={s}>{WBS_STATUSES[s].label}</option>)}
+        </select>
+      </div>
+
+      {work.length === 0 && (
+        <div style={{ ...card, padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 18 }}>
+          No items match your filter.
+        </div>
+      )}
 
       {Object.entries(groups).map(([pk, sections]) => (
         <div key={pk} style={{ marginBottom: 18 }}>
@@ -131,15 +189,28 @@ function ClientWbsView({ wbs }) {
 export function ClientDashboard({ token }) {
   const [data, setData] = useState(undefined); // undefined=loading, null=invalid
   const [error, setError] = useState('');
+  const [fetchedAt, setFetchedAt] = useState(null); // when this view last synced
+  const [, forceTick] = useState(0); // re-render so the "ago" label stays fresh
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .fetchPublicStatus(token)
-      .then((d) => !cancelled && setData(d))
-      .catch((e) => !cancelled && setError(e.message));
+    const pull = () =>
+      api
+        .fetchPublicStatus(token)
+        .then((d) => {
+          if (cancelled) return;
+          setData(d);
+          setFetchedAt(Date.now());
+        })
+        .catch((e) => !cancelled && setError(e.message));
+    pull();
+    // lightweight live sync: re-pull every 60s; tick the clock every 30s
+    const poll = setInterval(pull, 60000);
+    const tick = setInterval(() => !cancelled && forceTick((n) => n + 1), 30000);
     return () => {
       cancelled = true;
+      clearInterval(poll);
+      clearInterval(tick);
     };
   }, [token]);
 
@@ -228,10 +299,32 @@ export function ClientDashboard({ token }) {
       </header>
 
       <div style={{ maxWidth: 880, margin: '0 auto', padding: '28px 20px 64px' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{data.project.name}</h1>
-        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 20px' }}>
-          Project status overview
-        </p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{data.project.name}</h1>
+            <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
+              {showWbs ? 'Live work breakdown · read-only' : 'Project status overview'}
+            </p>
+          </div>
+          {/* live sync indicator */}
+          <div
+            title="This page auto-refreshes"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600,
+              color: 'var(--success)', background: '#16a34a1a', border: '1px solid #16a34a33',
+              padding: '6px 12px', borderRadius: 999,
+            }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--success)' }} />
+            Live
+            {(() => {
+              const stamp = data.lastUpdated || (fetchedAt ? new Date(fetchedAt).toISOString() : null);
+              const ago = relTime(stamp);
+              return ago ? <span style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>· updated {ago}</span> : null;
+            })()}
+          </div>
+        </div>
+        <div style={{ height: 20 }} />
 
         {showWbs && <ClientWbsView wbs={wbs} />}
 

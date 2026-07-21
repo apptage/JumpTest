@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import {
   STATUSES,
   RELEASE_TYPES,
@@ -237,8 +238,13 @@ export function CountBadge({ count, color = '#dc2626' }) {
 
 /* ---------- modal shell ---------- */
 
-export function ModalShell({ children, onClose, title, maxWidth = 520, right }) {
-  return (
+export function ModalShell({ children, onClose, title, subtitle, footer, maxWidth = 520, right, zIndex = 50 }) {
+  // header/body/footer flex layout: header + footer stay pinned, body scrolls.
+  const hasHeader = !!(title || subtitle);
+  // Portal to <body> so the fixed overlay covers the whole viewport instead of
+  // being trapped inside the animated `.page-area` (its `slideUp` transform makes
+  // it the containing block for `position: fixed` descendants).
+  return createPortal(
     <div
       className="anim-overlay"
       onClick={onClose}
@@ -250,7 +256,7 @@ export function ModalShell({ children, onClose, title, maxWidth = 520, right }) 
         alignItems: 'flex-start',
         justifyContent: 'center',
         padding: '40px 16px',
-        zIndex: 50,
+        zIndex,
         overflowY: 'auto',
       }}
     >
@@ -263,20 +269,62 @@ export function ModalShell({ children, onClose, title, maxWidth = 520, right }) 
           boxShadow: 'var(--shadow-lg)',
           width: '100%',
           maxWidth,
-          padding: 24,
+          padding: 0,
+          overflow: 'hidden',
+          maxHeight: 'calc(100vh - 80px)',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        {title ? (
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, flex: 1, letterSpacing: '-0.02em' }}>
-              {title}
+        {hasHeader && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 12,
+              padding: '18px 24px',
+              borderBottom: '1px solid var(--color-border-primary)',
+              flex: '0 0 auto',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {title && <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</div>}
+              {subtitle && (
+                <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: title ? 3 : 0 }}>
+                  {subtitle}
+                </div>
+              )}
             </div>
             {right}
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1,
+                color: 'var(--color-text-tertiary)', padding: 2, marginTop: -2, flex: '0 0 auto',
+              }}
+            >
+              ✕
+            </button>
           </div>
-        ) : null}
-        {children}
+        )}
+        {/* body scrolls if the content is taller than the viewport */}
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 24 }}>{children}</div>
+        {footer && (
+          <div
+            style={{
+              flex: '0 0 auto',
+              borderTop: '1px solid var(--color-border-primary)',
+              background: 'var(--color-background-secondary)',
+              padding: '14px 24px',
+            }}
+          >
+            {footer}
+          </div>
+        )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

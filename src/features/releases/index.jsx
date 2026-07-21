@@ -38,7 +38,6 @@ import {
   platformsForProjectType,
   platformForReleaseType,
   projectTypeLabel,
-  WBS_TRACKS,
   EDIT_WINDOW_HOURS,
   withinEditWindow,
   linkIssue,
@@ -66,72 +65,50 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     componentOther: '',
     linkUrl: '',
     releaseNotes: '',
-    track: 'both',
     additionalNote: '',
-    wbsPlatformId: '',
+    wbsPlatformType: '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const [wbsPlatforms, setWbsPlatforms] = useState([]);
-  const [wbsTasks, setWbsTasks] = useState([]);
-  const [selectedTasks, setSelectedTasks] = useState([]); // task ids
+  const [wbsItems, setWbsItems] = useState([]);
+  const [selectedTasks, setSelectedTasks] = useState([]); // item ids
 
   const project = projectById(form.projectId);
   const isWbs = !!project?.wbsEnabled;
 
-  // load the project's WBS platforms; default to the first one
+  // load the project's WBS items once; platform types + picker derive from them
   useEffect(() => {
     let cancelled = false;
     setSelectedTasks([]);
-    setWbsTasks([]);
     if (!project?.wbsEnabled) {
-      setWbsPlatforms([]);
-      setForm((f) => ({ ...f, wbsPlatformId: '' }));
+      setWbsItems([]);
+      setForm((f) => ({ ...f, wbsPlatformType: '' }));
       return;
     }
     api
-      .fetchWbsPlatforms(project.id)
-      .then((pl) => {
+      .fetchWbsItems(project.id)
+      .then((list) => {
         if (cancelled) return;
-        setWbsPlatforms(pl);
-        setForm((f) => ({ ...f, wbsPlatformId: pl[0]?.id || '' }));
+        setWbsItems(list);
+        const first = [...new Set(list.map((i) => i.platformType).filter(Boolean))][0] || '';
+        setForm((f) => ({ ...f, wbsPlatformType: first }));
       })
-      .catch(() => !cancelled && setWbsPlatforms([]));
+      .catch(() => !cancelled && setWbsItems([]));
     return () => {
       cancelled = true;
     };
   }, [project?.id, project?.wbsEnabled]);
 
-  // load selectable tasks for the chosen platform
-  useEffect(() => {
-    let cancelled = false;
-    setSelectedTasks([]);
-    if (!isWbs || !form.wbsPlatformId) {
-      setWbsTasks([]);
-      return;
-    }
-    api
-      .fetchWbsTasksForPlatform(project.id, form.wbsPlatformId)
-      .then((ts) => {
-        if (cancelled) return;
-        // selectable: non-milestone tasks not already fully sent to QA / complete
-        setWbsTasks(
-          ts.filter(
-            (t) =>
-              t.type !== 'milestone' &&
-              !(
-                ['in_qa', 'complete'].includes(t.backendStatus) &&
-                ['in_qa', 'complete'].includes(t.frontendStatus)
-              )
-          )
-        );
-      })
-      .catch(() => !cancelled && setWbsTasks([]));
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isWbs, form.wbsPlatformId, project?.id]);
+  useEffect(() => { setSelectedTasks([]); }, [form.wbsPlatformType]);
+
+  const wbsPlatformTypes = [...new Set(wbsItems.map((i) => i.platformType).filter(Boolean))];
+  // selectable: non-milestone items on the chosen platform, not already in QA/completed
+  const wbsTasks = wbsItems.filter(
+    (t) =>
+      t.type !== 'milestone' &&
+      (!form.wbsPlatformType || t.platformType === form.wbsPlatformType) &&
+      !['in_qa', 'completed'].includes(t.status)
+  );
 
   const toggleTask = (id) =>
     setSelectedTasks((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -202,13 +179,13 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     componentBad ||
     !!linkErr ||
     (isWbs
-      ? !form.wbsPlatformId || (!bugFixEligible && selectedTasks.length === 0) // platform required; feature release needs ≥1 task
+      ? !bugFixEligible && selectedTasks.length === 0 // feature release needs ≥1 item
       : !form.releaseNotes.trim());
 
   function submit() {
     if (invalid) return;
     const picked = isWbs
-      ? wbsTasks.filter((t) => selectedTasks.includes(t.id)).map((t) => ({ id: t.id, name: t.name }))
+      ? wbsTasks.filter((t) => selectedTasks.includes(t.id)).map((t) => ({ id: t.id, name: t.title }))
       : [];
     onSubmit({ ...form, component: resolvedComponent, wbsTasks: picked });
   }
@@ -384,50 +361,22 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
       {isWbs ? (
         <>
-          <Field label="WBS platform">
-            <select style={inputStyle} value={form.wbsPlatformId} onChange={(e) => set('wbsPlatformId', e.target.value)}>
-              {wbsPlatforms.length === 0 && <option value="">No WBS platforms</option>}
-              {wbsPlatforms.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 5 }}>
-              This release targets one platform — only its tasks are shown, and QA/completion are tracked for it.
-            </div>
-          </Field>
-          <Field label="QA should verify">
-            <div style={{ display: 'flex', gap: 8 }}>
-              {WBS_TRACKS.map((t) => {
-                const active = form.track === t;
-                return (
-                  <button
-                    key={t}
-                    onClick={() => set('track', t)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 10px',
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      textTransform: 'capitalize',
-                      borderRadius: 'var(--r-input)',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      color: active ? '#fff' : 'var(--color-text-primary)',
-                      background: active ? 'var(--brand)' : 'var(--color-background-primary)',
-                      border: `1px solid ${active ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
-                    }}
-                  >
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
+          {wbsPlatformTypes.length > 0 && (
+            <Field label="WBS platform">
+              <select style={inputStyle} value={form.wbsPlatformType} onChange={(e) => set('wbsPlatformType', e.target.value)}>
+                <option value="">All platforms</option>
+                {wbsPlatformTypes.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 5 }}>
+                Filters the item picker below; linked items are moved through QA/completion by this release.
+              </div>
+            </Field>
+          )}
 
           <Field
-            label={`WBS tasks (${selectedTasks.length} selected)${bugFixEligible ? ' — optional' : ''}`}
+            label={`WBS items (${selectedTasks.length} selected)${bugFixEligible ? ' — optional' : ''}`}
           >
             {bugFixEligible && (
               <div
@@ -464,9 +413,9 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12.5 }}
                   >
                     <input type="checkbox" checked={selectedTasks.includes(t.id)} onChange={() => toggleTask(t.id)} />
-                    <span style={{ flex: 1 }}>{t.name}</span>
-                    {t.section && (
-                      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.section}</span>
+                    <span style={{ flex: 1 }}>{t.title}</span>
+                    {t.module && (
+                      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.module}</span>
                     )}
                   </label>
                 ))}
@@ -543,7 +492,9 @@ export function EditReleaseModal({ release, project, isSubmitting, onClose, onSa
   }
 
   return (
-    <ModalShell onClose={onClose} title="Edit release">
+    // higher z-index than the release-details modal it opens from, so it stacks
+    // in front instead of behind (both otherwise share ModalShell's default 50)
+    <ModalShell onClose={onClose} title="Edit release" zIndex={60}>
       <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
         {project ? project.name : 'Project'} · {release.platform} · {formatVersion(release.version)}
       </div>
@@ -885,7 +836,7 @@ function DetailsTab({
 }) {
   const assigned = release.assignedQa ? profilesById[release.assignedQa] : null;
   const [linkedTasks, setLinkedTasks] = useState([]);
-  const [wbsPlatformName, setWbsPlatformName] = useState('');
+  const wbsPlatformName = release.wbsPlatformType || '';
 
   useEffect(() => {
     let cancelled = false;
@@ -893,16 +844,10 @@ function DetailsTab({
       .fetchReleaseTasks(release.id)
       .then((t) => !cancelled && setLinkedTasks(t))
       .catch(() => {});
-    if (release.wbsPlatformId && release.projectId) {
-      api
-        .fetchWbsPlatforms(release.projectId)
-        .then((pl) => !cancelled && setWbsPlatformName(pl.find((p) => p.id === release.wbsPlatformId)?.name || ''))
-        .catch(() => {});
-    }
     return () => {
       cancelled = true;
     };
-  }, [release.id, release.wbsPlatformId, release.projectId]);
+  }, [release.id]);
 
   // (QA auto-assignment now happens at release creation, not on open — see
   //  handleCreateRelease. Team Leads / Admins can still reassign manually below.)
@@ -1000,7 +945,7 @@ function DetailsTab({
           }}
         >
           <div style={{ ...labelStyle, marginBottom: 8 }}>
-            {wbsPlatformName ? `${wbsPlatformName} · ` : ''}Linked WBS tasks · verify {linkedTasks[0]?.track}
+            {wbsPlatformName ? `${wbsPlatformName} · ` : ''}Linked WBS items
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {linkedTasks.map((t) => (
@@ -1377,12 +1322,12 @@ function BugsTab({
               </div>
 
               {wbsBug ? (
-                <Field label="WBS task">
+                <Field label="WBS item">
                   <select style={inputStyle} value={form.wbsTaskId} onChange={(e) => set('wbsTaskId', e.target.value)}>
-                    <option value="">Select the task this bug is against…</option>
+                    <option value="">Select the item this bug is against…</option>
                     {releaseTasks.map((t) => (
                       <option key={t.id} value={t.taskId}>
-                        {t.taskName} ({t.track})
+                        {t.taskName}
                       </option>
                     ))}
                   </select>

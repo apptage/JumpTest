@@ -35,10 +35,6 @@ import {
   BUG_TAGS,
   BUG_FEATURES,
   BUG_RESOLUTIONS,
-  WBS_STATUSES,
-  WBS_STATUS_ORDER,
-  WBS_DEV_STATUSES,
-  WBS_TRACKS,
   ROLES,
   TEAM_ASSIGNABLE_ROLES,
   ALLOWED_EMAIL_DOMAIN,
@@ -556,20 +552,16 @@ export default function ReleaseTracker() {
         assigned_qa: autoQa ? autoQa.id : null,
         qa_assigned_at: autoQa ? nowIso : null,
         supersedes_release_id: primaryPrior ? primaryPrior.id : null,
-        wbs_platform_id: form.wbsPlatformId || null,
+        wbs_platform_type: form.wbsPlatformType || null,
       });
 
       if (wbsItems.length) {
         await api.createReleaseTasks(
           releaseId,
-          wbsItems.map((t) => ({ taskId: t.id, taskName: t.name, track: form.track || 'both' }))
+          wbsItems.map((t) => ({ taskId: t.id, taskName: t.name }))
         );
-        // selected tasks move to In QA (locked for developers)
-        await api.setWbsTrackStatus(
-          wbsItems.map((t) => t.id),
-          form.track || 'both',
-          'in_qa'
-        );
+        // linked items move to In QA (locked for developers)
+        await api.setWbsItemStatus(wbsItems.map((t) => t.id), 'in_qa');
       }
 
       // the auto-assigned QA gets a personal "assigned to you"; notify the rest
@@ -644,15 +636,13 @@ export default function ReleaseTracker() {
       //  sent_back → linked tasks back to In Progress
       if (newStatus === 'approved' || newStatus === 'sent_back') {
         const links = (await api.fetchReleaseTasks(release.id)).filter((l) => l.taskId);
-        const taskIds = [...new Set(links.map((l) => l.taskId))];
-        const openByTask =
-          newStatus === 'approved' ? await api.fetchOpenBugCountsByTask(taskIds) : {};
-        for (const l of links) {
+        const itemIds = [...new Set(links.map((l) => l.taskId))];
+        const openByItem =
+          newStatus === 'approved' ? await api.fetchOpenBugCountsByTask(itemIds) : {};
+        for (const id of itemIds) {
           const target =
-            newStatus === 'sent_back' || (openByTask[l.taskId] || 0) > 0
-              ? 'in_progress'
-              : 'complete';
-          await api.setWbsTrackStatus([l.taskId], l.track, target);
+            newStatus === 'sent_back' || (openByItem[id] || 0) > 0 ? 'in_progress' : 'completed';
+          await api.setWbsItemStatus([id], target);
         }
       }
       // notify the developer who submitted the release of the QA milestone
@@ -741,14 +731,9 @@ export default function ReleaseTracker() {
         new_status: 'open',
         moved_by: user.id,
       });
-      // WBS: a bug against a task means it isn't done — pull the
-      // verified track(s) back to In Progress.
+      // WBS: a bug against an item means it isn't done — pull it back to In Progress.
       if (form.wbsTaskId) {
-        const links = await api.fetchReleaseTasks(release.id);
-        const tracks = new Set(links.filter((l) => l.taskId === form.wbsTaskId).map((l) => l.track));
-        for (const track of tracks) {
-          await api.setWbsTrackStatus([form.wbsTaskId], track, 'in_progress');
-        }
+        await api.setWbsItemStatus([form.wbsTaskId], 'in_progress');
       }
       // notify the developer who submitted this release
       await api.createNotification({
@@ -761,17 +746,13 @@ export default function ReleaseTracker() {
     if (ok) refetchBugs();
   }
 
-  // When a WBS-linked bug is verified/closed, complete its track(s) if the task
-  // no longer has any open bugs across active releases.
+  // When a WBS-linked bug is verified/closed, complete the item if it no longer
+  // has any open bugs across active releases.
   async function reconcileWbsTaskForBug(release, bug) {
     if (!bug.wbsTaskId) return;
     const open = await api.fetchOpenBugCountsByTask([bug.wbsTaskId]);
     if ((open[bug.wbsTaskId] || 0) > 0) return;
-    const links = await api.fetchReleaseTasks(release.id);
-    const tracks = new Set(links.filter((l) => l.taskId === bug.wbsTaskId).map((l) => l.track));
-    for (const track of tracks) {
-      await api.setWbsTrackStatus([bug.wbsTaskId], track, 'complete');
-    }
+    await api.setWbsItemStatus([bug.wbsTaskId], 'completed');
   }
 
   async function handleBugStatus(release, bug, newStatus) {
@@ -1341,7 +1322,7 @@ export default function ReleaseTracker() {
             )}
 
             {page === 'wbs' && (
-              <WbsPage user={user} projects={scopedProjects} showToast={showToast} />
+              <WbsPage user={user} projects={scopedProjects} profiles={profiles} showToast={showToast} />
             )}
 
             {page === 'analytics' && canManage && (

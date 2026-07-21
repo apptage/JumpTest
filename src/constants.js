@@ -219,16 +219,73 @@ export const BUG_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Cannot Reproduce',
 export const DEV_DISPUTE_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Duplicate'];
 
 /* ---- WBS (Work Breakdown Structure) ---- */
+/* WBS is a FLAT item model (see fixes16.sql): one status per item, no
+   backend/frontend tracks, platform_type + module are free-text grouping tags. */
 export const WBS_STATUSES = {
   not_started: { label: 'Not Started', color: '#64748b' },
   in_progress: { label: 'In Progress', color: '#d97706' },
   in_qa: { label: 'In QA', color: '#2563eb' },
-  complete: { label: 'Complete', color: '#16a34a' },
+  completed: { label: 'Completed', color: '#16a34a' },
+  blocked: { label: 'Blocked', color: '#dc2626' },
 };
-export const WBS_STATUS_ORDER = ['not_started', 'in_progress', 'in_qa', 'complete'];
-// statuses a developer may set (never QA-verified Complete / In QA)
-export const WBS_DEV_STATUSES = ['not_started', 'in_progress'];
-export const WBS_TRACKS = ['backend', 'frontend', 'both'];
+export const WBS_STATUS_ORDER = ['not_started', 'in_progress', 'in_qa', 'completed', 'blocked'];
+// statuses a developer may set directly (QA drives in_qa/completed via releases)
+export const WBS_DEV_STATUSES = ['not_started', 'in_progress', 'blocked'];
+
+// project_type on projects (fixes16). `type` ('mobile'/'web') stays for legacy use.
+export const WBS_PROJECT_TYPES = [
+  { value: 'mobile_app', label: 'Mobile App' },
+  { value: 'web_app', label: 'Web App' },
+  { value: 'admin_panel', label: 'Admin Panel' },
+  { value: 'other', label: 'Other' },
+];
+export function wbsProjectTypeLabel(v) {
+  return WBS_PROJECT_TYPES.find((t) => t.value === v)?.label || 'Other';
+}
+// suggested platform-type grouping tags (free text — used only as datalist hints)
+export const WBS_PLATFORM_TYPES = ['Mobile App', 'Web App', 'Admin Panel', 'Other'];
+export const WBS_PRIORITIES = ['Low', 'Medium', 'High'];
+
+/* Preset scope packs — standard software modules used to seed a WBS fast.
+   Each pack becomes a module (name) with a baseline set of item titles. Users
+   pick a pack in the Bulk Add modal; it drops in as a `## <name>` block they can
+   trim before importing. */
+export const WBS_PRESETS = [
+  {
+    key: 'auth',
+    name: 'Authentication',
+    items: [
+      'Onboarding Screens', 'Signup with Email', 'Login', 'OTP Verification', 'Resend OTP',
+      'Google Login', 'Apple Login', 'Forgot Password', 'Reset Password', 'Logout',
+    ],
+  },
+  {
+    key: 'profile',
+    name: 'Profile Management',
+    items: [
+      'View Profile', 'Edit Profile', 'Avatar Upload', 'Change Password',
+      'Notification Settings', 'Delete Account',
+    ],
+  },
+  {
+    key: 'ecommerce',
+    name: 'E-Commerce & Payment',
+    items: [
+      'Product Catalog', 'Product Details', 'Search & Filter', 'Cart', 'Checkout',
+      'Payment Gateway', 'Order History', 'Refunds',
+    ],
+  },
+  {
+    key: 'notifications',
+    name: 'Notifications',
+    items: ['Push Notifications', 'In-App Notifications', 'Email Notifications', 'Notification Preferences'],
+  },
+  {
+    key: 'admin',
+    name: 'Admin Panel',
+    items: ['User Management', 'Roles & Permissions', 'Dashboard & Analytics', 'Audit Logs', 'App Settings'],
+  },
+];
 
 /* Roles */
 export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
