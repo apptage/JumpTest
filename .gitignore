@@ -35,3 +35,7 @@ Thumbs.db
 .supabase/
 supabase/.temp/
 .vercel/
+
+# Local SQL migrations
+fixes*.sql
+fixes_*.sql

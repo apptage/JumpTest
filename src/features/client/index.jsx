@@ -36,9 +36,21 @@ function publicWbsPct(items) {
   return Math.round((work.filter((t) => t.status === 'completed').length / work.length) * 100);
 }
 
-function ClientWbsView({ wbs }) {
+// format an ISO date ('YYYY-MM-DD') without a TZ off-by-one
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(`${d}T00:00`);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function ClientWbsView({ wbs, platformTargets = [] }) {
   const [q, setQ] = useState('');
   const [sf, setSf] = useState('all');
+
+  // platform milestones keyed the same way the groups are (empty → 'General')
+  const targetMap = {};
+  (platformTargets || []).forEach((t) => { targetMap[t.platform || 'General'] = t; });
 
   const allWork = wbs.filter((t) => t.type !== 'milestone');
   const milestones = wbs.filter((t) => t.type === 'milestone');
@@ -132,9 +144,25 @@ function ClientWbsView({ wbs }) {
         </div>
       )}
 
-      {Object.entries(groups).map(([pk, sections]) => (
+      {Object.entries(groups).map(([pk, sections]) => {
+        const tgt = targetMap[pk];
+        const comp = fmtDate(tgt?.completionDate);
+        const dep = fmtDate(tgt?.deploymentDate);
+        const showName = platforms.length > 1;
+        const showDates = comp || dep;
+        return (
         <div key={pk} style={{ marginBottom: 18 }}>
-          {platforms.length > 1 && <div style={{ ...sideHead, marginBottom: 8 }}>{pk}</div>}
+          {(showName || showDates) && (
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+              {showName ? <div style={{ ...sideHead }}>{pk}</div> : <span />}
+              {showDates && (
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  {comp && <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{comp}</strong></span>}
+                  {dep && <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{dep}</strong></span>}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {Object.entries(sections).map(([sk, ts]) => (
               <div key={sk} style={{ ...card, padding: '4px 16px' }}>
@@ -159,7 +187,8 @@ function ClientWbsView({ wbs }) {
             ))}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {milestones.length > 0 && (
         <div style={{ marginBottom: 18 }}>
@@ -326,7 +355,7 @@ export function ClientDashboard({ token }) {
         </div>
         <div style={{ height: 20 }} />
 
-        {showWbs && <ClientWbsView wbs={wbs} />}
+        {showWbs && <ClientWbsView wbs={wbs} platformTargets={data.platformTargets} />}
 
         {!showWbs && (
         <>

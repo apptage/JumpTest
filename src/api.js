@@ -407,6 +407,44 @@ export async function deleteWbsItem(id) {
   const { error } = await supabase.from('wbs_items').delete().eq('id', id);
   if (error) throw error;
 }
+/* ---- WBS platform milestones (completion / deployment dates) ---- */
+function mapWbsPlatformTarget(t) {
+  return {
+    id: t.id,
+    projectId: t.project_id,
+    platformType: t.platform_type,
+    completionDate: t.completion_date || '',
+    deploymentDate: t.deployment_date || '',
+  };
+}
+export async function fetchWbsPlatformTargets(projectId) {
+  const { data, error } = await supabase
+    .from('wbs_platform_targets')
+    .select('*')
+    .eq('project_id', projectId);
+  if (error) throw error;
+  return data.map(mapWbsPlatformTarget);
+}
+// upsert one platform's milestones (keyed on project_id + platform_type)
+export async function upsertWbsPlatformTarget(projectId, platformType, { completionDate = '', deploymentDate = '' }) {
+  const { data, error } = await supabase
+    .from('wbs_platform_targets')
+    .upsert(
+      {
+        project_id: projectId,
+        platform_type: platformType,
+        completion_date: completionDate || null,
+        deployment_date: deploymentDate || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'project_id,platform_type' }
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return mapWbsPlatformTarget(data);
+}
+
 // bulk metadata patch across a set of items (module-level fields: platform_type,
 // module, estimated_completion_date, assigned_to). Does NOT touch status.
 export async function updateWbsItems(ids, patch) {

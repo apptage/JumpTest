@@ -580,6 +580,73 @@ function WbsItemRow({ item, canManage, canEdit, profiles, bugs = [], onSave, onD
   );
 }
 
+// format an ISO date ('YYYY-MM-DD') for display without a TZ off-by-one
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt = new Date(`${d}T00:00`);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/* Platform section header — shows the platform's milestone dates (Completion /
+   Deployment). These are platform-level, independent of modules and tasks. */
+function PlatformHeader({ platform, items, target, canManage, open, onToggle, onSaveTarget }) {
+  const [editing, setEditing] = useState(false);
+  const [comp, setComp] = useState(target?.completionDate || '');
+  const [dep, setDep] = useState(target?.deploymentDate || '');
+  useEffect(() => {
+    if (!editing) {
+      setComp(target?.completionDate || '');
+      setDep(target?.deploymentDate || '');
+    }
+  }, [target, editing]);
+
+  const label = platform || 'Ungrouped';
+  const done = pctDone(items);
+  const dateInput = { ...inputStyle, width: 'auto', padding: '5px 8px', fontSize: 12 };
+  const meta = { fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }} onClick={onToggle}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', width: 12 }}>{open ? '▾' : '▸'}</span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{label}</span>
+          <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>{items.length} item{items.length === 1 ? '' : 's'} · {done}%</span>
+        </div>
+        <span style={{ flex: 1 }} />
+        {editing ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <label style={{ ...meta, display: 'flex', alignItems: 'center', gap: 5 }}>Completion
+              <input type="date" style={dateInput} value={comp} onChange={(e) => setComp(e.target.value)} />
+            </label>
+            <label style={{ ...meta, display: 'flex', alignItems: 'center', gap: 5 }}>Deployment
+              <input type="date" style={dateInput} value={dep} onChange={(e) => setDep(e.target.value)} />
+            </label>
+            <button style={ghostButton} onClick={() => setEditing(false)}>Cancel</button>
+            <button
+              style={primaryButton(false)}
+              onClick={async () => { await onSaveTarget(platform, { completionDate: comp, deploymentDate: dep }); setEditing(false); }}
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <span style={meta}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.completionDate)}</strong></span>
+            <span style={meta}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.deploymentDate)}</strong></span>
+            {canManage && (
+              <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+                Edit dates
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* One module = one (platform, module) group. Holds the shared metadata (target
    date, assignee) once in its header; tasks below only carry title/status/priority.
    A fast inline adder appends tasks that inherit the module's metadata. */
@@ -712,6 +779,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [items, setItems] = useState([]);
   const [bugsByItem, setBugsByItem] = useState({});
+  const [platformTargets, setPlatformTargets] = useState({}); // platformType -> {completionDate, deploymentDate}
   const [loading, setLoading] = useState(false);
   const [statusF, setStatusF] = useState('all');
   const [q, setQ] = useState('');
@@ -739,9 +807,12 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
   const canManage = user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
   const canEdit = user.role === 'Developer' || canManage;
 
-  const load = useCallback(async () => {
+  // silent data pull — no `spinner` flag flip, so callers can refresh without
+  // blanking the whole board to "Loading…". Only the initial/project-switch load
+  // shows the spinner.
+  const refresh = useCallback(async ({ spinner = false } = {}) => {
     if (!projectId) return;
-    setLoading(true);
+    if (spinner) setLoading(true);
     try {
       const list = await api.fetchWbsItems(projectId);
       setItems(list);
@@ -753,26 +824,50 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
       } catch {
         setBugsByItem({});
       }
+      try {
+        const targets = await api.fetchWbsPlatformTargets(projectId);
+        const tm = {};
+        targets.forEach((t) => { tm[t.platformType] = t; });
+        setPlatformTargets(tm);
+      } catch {
+        setPlatformTargets({});
+      }
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
-      setLoading(false);
+      if (spinner) setLoading(false);
     }
   }, [projectId, showToast]);
 
-  useEffect(() => { load(); }, [load]);
+  // initial load / project switch shows the spinner; later refreshes are silent
+  useEffect(() => { refresh({ spinner: true }); }, [refresh]);
 
   const run = async (fn, msg) => {
     try {
       await fn();
       if (msg) showToast(msg);
-      await load();
+      await refresh();
     } catch (e) {
       showToast(e.message, 'error');
     }
   };
 
-  const save = (item, patch) => run(() => api.updateWbsItem(item.id, patch));
+  // patch keys are DB columns; map the ones we render back to camelCase for the
+  // optimistic local update
+  const OPTIMISTIC_KEYS = { status: 'status', title: 'title', description: 'description', priority: 'priority', dev_comments: 'devComments' };
+  // single-item field edits (status / note / title / priority) update local state
+  // immediately and persist in the background — no refetch, no page flash
+  const save = async (item, patch) => {
+    const local = {};
+    for (const [k, v] of Object.entries(patch)) if (k in OPTIMISTIC_KEYS) local[OPTIMISTIC_KEYS[k]] = v;
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...local } : i)));
+    try {
+      await api.updateWbsItem(item.id, patch);
+    } catch (e) {
+      showToast(e.message, 'error');
+      refresh(); // resync from server on failure
+    }
+  };
   const del = (item) => {
     if (window.confirm(`Delete "${item.title}"? Release history keeps its name.`)) run(() => api.deleteWbsItem(item.id), 'Item deleted');
   };
@@ -813,6 +908,17 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
   // edit module-level metadata → apply to every item in the group at once
   const saveModuleMeta = (group, patch) =>
     run(() => api.updateWbsItems(group.items.map((i) => i.id), patch), 'Module updated');
+  // platform-level milestone dates — optimistic local update + background upsert
+  const saveTarget = async (platform, patch) => {
+    setPlatformTargets((prev) => ({ ...prev, [platform]: { ...(prev[platform] || {}), ...patch } }));
+    try {
+      const saved = await api.upsertWbsPlatformTarget(projectId, platform, patch);
+      setPlatformTargets((prev) => ({ ...prev, [platform]: saved }));
+    } catch (e) {
+      showToast(e.message, 'error');
+      refresh();
+    }
+  };
   const deleteWholeWbs = () => {
     if (window.confirm('Delete the ENTIRE WBS for this project? Release history is preserved. This cannot be undone.'))
       run(() => api.deleteWbs(projectId), 'WBS deleted');
@@ -864,11 +970,20 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     }
     groupMap.get(key).items.push(i);
   });
+  // group the module cards by platform, preserving first-seen order
+  const platformOrder = [];
+  const platformMap = new Map();
+  groupList.forEach((g) => {
+    if (!platformMap.has(g.platform)) { platformMap.set(g.platform, []); platformOrder.push(g.platform); }
+    platformMap.get(g.platform).push(g);
+  });
+
   const overall = pctDone(items);
   const byStatus = (s) => items.filter((i) => i.status === s).length;
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
 
-  const allGroupKeys = groupList.map((g) => g.key);
+  // collapse-all operates on the platform sections
+  const allGroupKeys = platformOrder.map((p) => `plat:${p}`);
   const allCollapsed = allGroupKeys.length > 0 && allGroupKeys.every((k) => collapsed.has(k));
 
   return (
@@ -945,30 +1060,53 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
       ) : filtered.length === 0 ? (
         <Empty>No items match the filter.</Empty>
       ) : (
-        // masonry via CSS multi-column: short cards pack tight, the next card
-        // flows up into the gap instead of grid-row alignment leaving dead space
-        <div style={{ columnWidth: 400, columnGap: 16 }}>
-          {groupList.map((g) => (
-            <div
-              key={g.key}
-              style={{ breakInside: 'avoid', WebkitColumnBreakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: 16 }}
-            >
-              <ModuleCard
-                group={g}
-                canManage={canManage}
-                canEdit={canEdit}
-                profiles={profiles}
-                bugsByItem={bugsByItem}
-                collapsed={isCol(g.key)}
-                onToggle={() => toggleCol(g.key)}
-                onAddTask={addTaskToGroup}
-                onSaveItem={save}
-                onDeleteItem={del}
-                onReorderItem={reorder}
-                onSaveMeta={saveModuleMeta}
-              />
-            </div>
-          ))}
+        // platform sections: each header carries the platform's milestone dates;
+        // its module cards masonry below (short cards pack tight, no dead space)
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+          {platformOrder.map((platform) => {
+            const mods = platformMap.get(platform);
+            const platItems = mods.flatMap((m) => m.items);
+            const pKey = `plat:${platform}`;
+            const pOpen = !isCol(pKey);
+            return (
+              <div key={platform}>
+                <PlatformHeader
+                  platform={platform}
+                  items={platItems}
+                  target={platformTargets[platform]}
+                  canManage={canManage}
+                  open={pOpen}
+                  onToggle={() => toggleCol(pKey)}
+                  onSaveTarget={saveTarget}
+                />
+                {pOpen && (
+                  <div style={{ columnWidth: 400, columnGap: 16, marginTop: 12 }}>
+                    {mods.map((g) => (
+                      <div
+                        key={g.key}
+                        style={{ breakInside: 'avoid', WebkitColumnBreakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: 16 }}
+                      >
+                        <ModuleCard
+                          group={g}
+                          canManage={canManage}
+                          canEdit={canEdit}
+                          profiles={profiles}
+                          bugsByItem={bugsByItem}
+                          collapsed={isCol(g.key)}
+                          onToggle={() => toggleCol(g.key)}
+                          onAddTask={addTaskToGroup}
+                          onSaveItem={save}
+                          onDeleteItem={del}
+                          onReorderItem={reorder}
+                          onSaveMeta={saveModuleMeta}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
