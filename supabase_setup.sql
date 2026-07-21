@@ -61,6 +61,8 @@ alter table releases add column if not exists submitted_by_id uuid references pr
 alter table releases add column if not exists assigned_qa uuid references profiles(id) on delete set null;
 alter table releases add column if not exists qa_completed_at timestamptz;
 alter table releases add column if not exists created_at timestamptz not null default now();
+-- drop the legacy v1 column (replaced by release_type); its NOT NULL blocks inserts
+alter table releases drop column if exists "type";
 
 -- ------------------------------------------------------------
 -- bugs (QA -> Developer)
