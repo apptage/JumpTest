@@ -697,8 +697,9 @@ function PlatformHeader({ platform, items, target, canManage, open, onToggle, on
 /* One module = one (platform, module) group. Holds the shared metadata (target
    date, assignee) once in its header; tasks below only carry title/status/priority.
    A fast inline adder appends tasks that inherit the module's metadata. */
-function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta }) {
+function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll }) {
   const { platform, module, items } = group;
+  const allDone = items.length > 0 && items.every((i) => i.status === 'completed');
   const [text, setText] = useState('');
   const [adding, setAdding] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
@@ -768,9 +769,16 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
               <span style={metaItem}>Target: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{est || '—'}</strong></span>
               <span style={metaItem}>Lead: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{assigneeLabel}</strong></span>
               {canManage && (
-                <button onClick={openMeta} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0, marginLeft: 'auto' }}>
-                  Edit module
-                </button>
+                <span style={{ display: 'inline-flex', gap: 14, marginLeft: 'auto' }}>
+                  {!allDone && (
+                    <button onClick={() => onCompleteAll(group)} style={{ background: 'none', border: 'none', color: 'var(--success)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit', padding: 0 }}>
+                      ✓ Mark all complete
+                    </button>
+                  )}
+                  <button onClick={openMeta} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+                    Edit module
+                  </button>
+                </span>
               )}
             </div>
           )
@@ -955,6 +963,21 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
   // edit module-level metadata → apply to every item in the group at once
   const saveModuleMeta = (group, patch) =>
     run(() => api.updateWbsItems(group.items.map((i) => i.id), patch), 'Module updated');
+  // mark every task in a module completed — optimistic + background bulk update
+  const completeModule = async (group) => {
+    const ids = group.items.map((i) => i.id);
+    if (!ids.length) return;
+    const n = ids.length;
+    if (!window.confirm(`Mark all ${n} task${n === 1 ? '' : 's'} in "${group.module || 'General'}" as Completed?`)) return;
+    const idSet = new Set(ids);
+    setItems((prev) => prev.map((i) => (idSet.has(i.id) ? { ...i, status: 'completed' } : i)));
+    try {
+      await api.setWbsItemStatus(ids, 'completed');
+    } catch (e) {
+      showToast(e.message, 'error');
+      refresh();
+    }
+  };
   // platform-level milestone dates — optimistic local update + background upsert
   const saveTarget = async (platform, patch) => {
     setPlatformTargets((prev) => ({ ...prev, [platform]: { ...(prev[platform] || {}), ...patch } }));
@@ -1146,6 +1169,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
                           onDeleteItem={del}
                           onReorderItem={reorder}
                           onSaveMeta={saveModuleMeta}
+                          onCompleteAll={completeModule}
                         />
                       </div>
                     ))}
