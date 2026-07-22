@@ -232,6 +232,21 @@ export const WBS_STATUS_ORDER = ['not_started', 'in_progress', 'in_qa', 'complet
 // statuses a developer may set directly (QA drives in_qa/completed via releases)
 export const WBS_DEV_STATUSES = ['not_started', 'in_progress', 'blocked'];
 
+// Normalize a raw spreadsheet status string (e.g. 'Complete', 'In Progress',
+// 'Done', '') to a WBS status enum key. Empty / unknown → 'not_started'.
+export function normalizeWbsStatus(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s) return 'not_started';
+  if (['complete', 'completed', 'done', 'finished'].includes(s)) return 'completed';
+  if (['in progress', 'in-progress', 'inprogress', 'wip', 'ongoing', 'started'].includes(s)) return 'in_progress';
+  if (['in qa', 'qa', 'testing', 'in testing', 'in review', 'review'].includes(s)) return 'in_qa';
+  if (['blocked', 'on hold', 'hold', 'stuck'].includes(s)) return 'blocked';
+  if (['not started', 'not-started', 'todo', 'to do', 'pending', 'backlog', 'new'].includes(s)) return 'not_started';
+  // already a valid enum key (e.g. 'in_progress')? keep it; else default
+  const key = s.replace(/[\s-]+/g, '_');
+  return WBS_STATUS_ORDER.includes(key) ? key : 'not_started';
+}
+
 // project_type on projects (fixes16). `type` ('mobile'/'web') stays for legacy use.
 export const WBS_PROJECT_TYPES = [
   { value: 'mobile_app', label: 'Mobile App' },

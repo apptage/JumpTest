@@ -15,6 +15,7 @@ import {
   WBS_PLATFORM_TYPES,
   WBS_PRIORITIES,
   WBS_PRESETS,
+  normalizeWbsStatus,
   SEVERITIES,
   BUG_STATUSES,
 } from '@/constants.js';
@@ -129,17 +130,63 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
     const c = map[key];
     return c == null || c < 0 ? '' : String(r[c] ?? '').trim();
   };
-  const items = rows
-    .map((r) => ({
-      title: val(r, 'title'),
-      module: val(r, 'module'),
-      platform_type: val(r, 'platform_type'),
-      description: val(r, 'description'),
-      est: val(r, 'est'),
-      priority: val(r, 'priority'),
-      status: WBS_STATUS_ORDER.includes(val(r, 'status')) ? val(r, 'status') : 'not_started',
-    }))
-    .filter((i) => i.title);
+  // indices of every non-empty cell in a raw row (across ALL columns)
+  const filledCols = (r) => {
+    const cols = [];
+    for (let c = 0; c < r.length; c++) if (String(r[c] ?? '').trim()) cols.push(c);
+    return cols;
+  };
+  // Every column that represents a status (Backend Status / Frontend Status / …).
+  // A banner row has these all empty; a task row has at least one filled. Fall
+  // back to the single mapped status column if no header says "status".
+  const statusCols = (() => {
+    const byHeader = headers.map((h, c) => c).filter((c) => (headers[c] || '').toLowerCase().includes('status'));
+    if (byHeader.length) return byHeader;
+    return map.status >= 0 ? [map.status] : [];
+  })();
+  const rowHasStatus = (r) => statusCols.some((c) => String(r[c] ?? '').trim());
+
+  // Resolve each task's parent module while walking rows top-to-bottom. Modules
+  // are declared TWO ways and both update the active module:
+  //   1. Section banner in the TITLE column (Column A) with NO status values
+  //      (blue merged banner "My Profile" / "Battle Ground") → new module header,
+  //      not a task.
+  //   2. Merged Module cell (Column C): value on any row → update the module,
+  //      forward-filling down its block.
+  // A row is a TASK when its title has text AND a status value exists.
+  const buildItems = () => {
+    const titleCol = map.title;
+    let curModule = '';
+    let curPlatform = '';
+    const out = [];
+    for (const r of rows) {
+      const rowModule = val(r, 'module');
+      const rowPlatform = val(r, 'platform_type');
+      const title = val(r, 'title');
+      // (1) Column-A banner: title present but every status column empty.
+      // When we can't identify any status column, fall back to "only the title
+      // cell is filled" so a status-less sheet doesn't flag every row a banner.
+      const isBanner = title && (statusCols.length ? !rowHasStatus(r) : (rowModule === '' && filledCols(r).join() === String(titleCol)));
+      if (isBanner) {
+        curModule = title;                          // section transition
+        continue;                                   // banner is not a task
+      }
+      if (rowModule) curModule = rowModule;          // (2) Column-C (merged) module
+      if (rowPlatform) curPlatform = rowPlatform;
+      if (!title) continue;                          // blank / separator row
+      out.push({
+        title,
+        module: rowModule || curModule,              // inherit the active section
+        platform_type: rowPlatform || curPlatform,
+        description: val(r, 'description'),
+        est: val(r, 'est'),
+        priority: val(r, 'priority'),
+        status: normalizeWbsStatus(val(r, 'status')), // 'Completed' → 'completed', etc.
+      });
+    }
+    return out;
+  };
+  const items = buildItems();
 
   const footer = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>

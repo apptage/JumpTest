@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient.js';
+import { normalizeWbsStatus } from './constants.js';
 
 /* ------------------------------------------------------------------ */
 /* Mappers (snake_case -> camelCase)                                  */
@@ -500,7 +501,7 @@ export async function importWbs(projectId, rows) {
       type: r.type || 'task',
       title: r.title.trim(),
       description: r.description || '',
-      status: r.status || 'not_started',
+      status: normalizeWbsStatus(r.status), // 'Completed'/'In Progress'/… → enum key
       dev_comments: '',
       estimated_completion_date: r.est || r.estimated_completion_date || '',
       priority: r.priority || null,
