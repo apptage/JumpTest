@@ -181,7 +181,16 @@ export function isClosedBug(bug) {
 }
 
 /* Which part of a Web project a release targets. */
-export const RELEASE_COMPONENTS = ['Web Application', 'Admin Dashboard', 'Landing Page', 'Other'];
+export const RELEASE_COMPONENTS = ['Web Application', 'Admin Panel', 'Landing Page', 'Other'];
+
+/* The WBS platform bucket a release's work belongs to, derived from its
+   Platform + Component (spec: Mobile → Mobile App; Web → the component name —
+   Web Application / Admin Panel / Landing Page / the custom 'Other' name). This
+   is what the Submit modal matches against the project's WBS platform tags. */
+export function wbsPlatformForRelease(platform, component) {
+  if (platform === 'Web') return String(component || '').trim();
+  return 'Mobile App';
+}
 
 /* Component / architecture tags a bug can carry (one or more). */
 export const BUG_TAGS = [

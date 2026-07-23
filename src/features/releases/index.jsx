@@ -33,6 +33,7 @@ import {
   RELEASE_TYPES,
   RELEASE_TYPE_ORDER,
   RELEASE_COMPONENTS,
+  wbsPlatformForRelease,
   ENVIRONMENTS,
   RELEASE_TYPES_BY_PLATFORM,
   platformsForProjectType,
@@ -47,6 +48,59 @@ import {
   formatVersion,
 } from '@/constants.js';
 import { IconDownload, IconExternal } from '@/icons.jsx';
+
+/* Inline "add new WBS task" list used inside the Submit modal — each row is a
+   title + module (existing modules offered via datalist). New items are created
+   under the release's WBS platform, linked, and set to In QA on submit. */
+function NewTaskList({ title, items, modules = [], onAdd, onSet, onRemove, requireModule }) {
+  const hasModules = modules.length > 0;
+  return (
+    <Field label={title}>
+      {items.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+          {items.map((it, i) => {
+            const moduleBad = requireModule && it.title.trim() && !it.module.trim();
+            return (
+              <div key={i} style={{ display: 'flex', gap: 6 }}>
+                <input
+                  style={{ ...inputStyle, flex: 2 }}
+                  value={it.title}
+                  placeholder="Task title *"
+                  onChange={(e) => onSet(i, 'title', e.target.value)}
+                />
+                {hasModules ? (
+                  <select
+                    style={{ ...inputStyle, flex: 1, borderColor: moduleBad ? '#dc2626' : 'var(--color-border-tertiary)' }}
+                    value={it.module}
+                    onChange={(e) => onSet(i, 'module', e.target.value)}
+                  >
+                    <option value="">Module…</option>
+                    {modules.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  // no existing modules (creating a fresh WBS) → free-text module
+                  <input
+                    style={{ ...inputStyle, flex: 1, borderColor: moduleBad ? '#dc2626' : 'var(--color-border-tertiary)' }}
+                    value={it.module}
+                    placeholder={requireModule ? 'Module *' : 'Module'}
+                    onChange={(e) => onSet(i, 'module', e.target.value)}
+                  />
+                )}
+                <button type="button" onClick={() => onRemove(i)} title="Remove" style={{ ...ghostButton, padding: '0 11px', color: '#dc2626', borderColor: '#dc262644' }}>✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <button type="button" onClick={onAdd} style={{ ...ghostButton, padding: '6px 12px', fontSize: 12 }}>+ Add task</button>
+      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
+        Created under this platform, linked to the release, and set to <strong>In QA</strong>.
+      </div>
+    </Field>
+  );
+}
 
 export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubmitting, onClose, onSubmit }) {
   const projectById = (id) => projects.find((x) => x.id === id);
@@ -72,43 +126,27 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
   const [wbsItems, setWbsItems] = useState([]);
   const [selectedTasks, setSelectedTasks] = useState([]); // item ids
+  const [newItems, setNewItems] = useState([]); // inline new tasks: [{title, module}]
+  const [creatingWbs, setCreatingWbs] = useState(false); // no-WBS branch: user chose "Create WBS"
 
   const project = projectById(form.projectId);
-  const isWbs = !!project?.wbsEnabled;
 
-  // load the project's WBS items once; platform types + picker derive from them
+  // load the project's WBS items once; matching derives from Platform/Component
   useEffect(() => {
     let cancelled = false;
     setSelectedTasks([]);
     if (!project?.wbsEnabled) {
       setWbsItems([]);
-      setForm((f) => ({ ...f, wbsPlatformType: '' }));
       return;
     }
     api
       .fetchWbsItems(project.id)
-      .then((list) => {
-        if (cancelled) return;
-        setWbsItems(list);
-        const first = [...new Set(list.map((i) => i.platformType).filter(Boolean))][0] || '';
-        setForm((f) => ({ ...f, wbsPlatformType: first }));
-      })
+      .then((list) => !cancelled && setWbsItems(list))
       .catch(() => !cancelled && setWbsItems([]));
     return () => {
       cancelled = true;
     };
   }, [project?.id, project?.wbsEnabled]);
-
-  useEffect(() => { setSelectedTasks([]); }, [form.wbsPlatformType]);
-
-  const wbsPlatformTypes = [...new Set(wbsItems.map((i) => i.platformType).filter(Boolean))];
-  // selectable: non-milestone items on the chosen platform, not already in QA/completed
-  const wbsTasks = wbsItems.filter(
-    (t) =>
-      t.type !== 'milestone' &&
-      (!form.wbsPlatformType || t.platformType === form.wbsPlatformType) &&
-      !['in_qa', 'completed'].includes(t.status)
-  );
 
   const toggleTask = (id) =>
     setSelectedTasks((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -150,6 +188,33 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         : form.component
       : '';
 
+  // WBS matching — the platform bucket this release's work belongs to, derived
+  // from Platform/Component, matched (case-insensitive) against the project's
+  // WBS platform tags.
+  const derivedWbsPlatform = wbsPlatformForRelease(form.platform, resolvedComponent);
+  const wbsEnabled = !!project?.wbsEnabled;
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const matchingItems = wbsItems.filter((i) => norm(i.platformType) === norm(derivedWbsPlatform) && derivedWbsPlatform);
+  const hasMatchingWbs = matchingItems.length > 0;
+  // existing modules under this platform (for the new-task module picker)
+  const platformModules = [...new Set(matchingItems.map((i) => i.module).filter(Boolean))];
+  // selectable existing tasks: non-milestone, not already in QA/completed
+  const wbsTasks = matchingItems.filter(
+    (t) => t.type !== 'milestone' && !['in_qa', 'completed'].includes(t.status)
+  );
+  const validNewItems = newItems.filter((n) => n.title.trim());
+
+  // reset the picker + new-task drafts whenever the target WBS bucket changes
+  useEffect(() => {
+    setSelectedTasks([]);
+    setNewItems([]);
+    setCreatingWbs(false);
+  }, [derivedWbsPlatform, project?.id]);
+
+  const addNewItem = () => setNewItems((n) => [...n, { title: '', module: '' }]);
+  const setNewItem = (i, k, v) => setNewItems((n) => n.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
+  const removeNewItem = (i) => setNewItems((n) => n.filter((_, idx) => idx !== i));
+
   // follow-up detection: open sent-back cycles for this project on the same
   // stream. Mobile = one stream (APK + TestFlight). Web = one stream PER
   // component (Web App / Admin Dashboard / Landing Page / Other), so a web
@@ -167,27 +232,42 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
   );
   const priorVersions = priorSentBackList.map((r) => formatVersion(r.version)).join(', ');
 
-  // A WBS project with prior sent-back cycle(s) may be submitted as a
+  // A matching WBS with prior sent-back cycle(s) may be submitted as a
   // bug-fix-only release (no WBS task selection required).
-  const bugFixEligible = isWbs && priorSentBackList.length > 0;
+  const bugFixEligible = hasMatchingWbs && priorSentBackList.length > 0;
   const isWeb = form.platform === 'Web';
   const componentBad =
     isWeb && form.component === 'Other' && !form.componentOther.trim();
+
+  // WBS section state: 'link' (matching WBS → pick/add), 'create' (no match, user
+  // is adding items → creates the WBS), or 'skip' (no match, plain release notes)
+  const wbsMode = hasMatchingWbs ? 'link' : creatingWbs ? 'create' : 'skip';
+  const wbsInvalid =
+    wbsMode === 'link'
+      ? !bugFixEligible && selectedTasks.length === 0 && validNewItems.length === 0
+      : wbsMode === 'create'
+      ? validNewItems.length === 0 || validNewItems.some((n) => !n.module.trim())
+      : !form.releaseNotes.trim(); // 'skip' → plain release needs notes
   const invalid =
-    !form.projectId ||
-    !form.version.trim() ||
-    componentBad ||
-    !!linkErr ||
-    (isWbs
-      ? !bugFixEligible && selectedTasks.length === 0 // feature release needs ≥1 item
-      : !form.releaseNotes.trim());
+    !form.projectId || !form.version.trim() || componentBad || !!linkErr || wbsInvalid;
 
   function submit() {
     if (invalid) return;
-    const picked = isWbs
-      ? wbsTasks.filter((t) => selectedTasks.includes(t.id)).map((t) => ({ id: t.id, name: t.title }))
-      : [];
-    onSubmit({ ...form, component: resolvedComponent, wbsTasks: picked });
+    const picked =
+      wbsMode === 'link'
+        ? wbsTasks.filter((t) => selectedTasks.includes(t.id)).map((t) => ({ id: t.id, name: t.title }))
+        : [];
+    const newWbsItems =
+      wbsMode === 'link' || wbsMode === 'create'
+        ? validNewItems.map((n) => ({ title: n.title.trim(), module: n.module.trim() }))
+        : [];
+    onSubmit({
+      ...form,
+      component: resolvedComponent,
+      wbsPlatformType: derivedWbsPlatform,
+      wbsTasks: picked,
+      newWbsItems,
+    });
   }
 
   if (projects.length === 0) {
@@ -359,34 +439,22 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         </div>
       </Field>
 
-      {isWbs ? (
-        <>
-          {wbsPlatformTypes.length > 0 && (
-            <Field label="WBS platform">
-              <select style={inputStyle} value={form.wbsPlatformType} onChange={(e) => set('wbsPlatformType', e.target.value)}>
-                <option value="">All platforms</option>
-                {wbsPlatformTypes.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 5 }}>
-                Filters the item picker below; linked items are moved through QA/completion by this release.
-              </div>
-            </Field>
-          )}
+      {/* WBS platform this release maps to (derived from Platform/Component) */}
+      <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', margin: '-4px 0 12px' }}>
+        WBS platform:{' '}
+        <strong style={{ color: 'var(--color-text-primary)' }}>{derivedWbsPlatform || '—'}</strong>
+        {hasMatchingWbs ? (
+          <span style={{ color: 'var(--success)' }}> · matched</span>
+        ) : (
+          <span style={{ color: 'var(--color-text-tertiary)' }}> · no matching WBS</span>
+        )}
+      </div>
 
-          <Field
-            label={`WBS items (${selectedTasks.length} selected)${bugFixEligible ? ' — optional' : ''}`}
-          >
+      {wbsMode === 'link' ? (
+        <>
+          <Field label={`WBS items (${selectedTasks.length} selected)${bugFixEligible ? ' — optional' : ''}`}>
             {bugFixEligible && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'var(--color-text-tertiary)',
-                  marginBottom: 8,
-                  lineHeight: 1.5,
-                }}
-              >
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.5 }}>
                 Leave empty for a <strong>bug-fix release</strong> (only fixes carried from v
                 {priorSentBack.version}). Select tasks only if this build also completes new WBS work.
               </div>
@@ -394,34 +462,30 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
             {wbsTasks.length === 0 ? (
               <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                 {bugFixEligible
-                  ? 'No feature tasks available — submit as a bug-fix release.'
-                  : 'No available tasks — all are already in QA or complete.'}
+                  ? 'No feature tasks available — submit as a bug-fix release, or add new items below.'
+                  : 'No available tasks on this platform — all are already in QA or complete. Add new items below.'}
               </div>
             ) : (
-              <div
-                style={{
-                  maxHeight: 200,
-                  overflowY: 'auto',
-                  border: '1px solid var(--color-border-tertiary)',
-                  borderRadius: 'var(--r-input)',
-                  padding: 4,
-                }}
-              >
+              <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--color-border-tertiary)', borderRadius: 'var(--r-input)', padding: 4 }}>
                 {wbsTasks.map((t) => (
-                  <label
-                    key={t.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12.5 }}
-                  >
+                  <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12.5 }}>
                     <input type="checkbox" checked={selectedTasks.includes(t.id)} onChange={() => toggleTask(t.id)} />
                     <span style={{ flex: 1 }}>{t.title}</span>
-                    {t.module && (
-                      <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.module}</span>
-                    )}
+                    {t.module && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.module}</span>}
                   </label>
                 ))}
               </div>
             )}
           </Field>
+
+          <NewTaskList
+            title="Completed work not yet in the WBS (optional)"
+            items={newItems}
+            modules={platformModules}
+            onAdd={addNewItem}
+            onSet={setNewItem}
+            onRemove={removeNewItem}
+          />
 
           <Field label="Additional note (optional)">
             <textarea
@@ -434,15 +498,52 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
           </Field>
         </>
       ) : (
-        <Field label="Release notes">
-          <textarea
-            style={{ ...inputStyle, resize: 'vertical' }}
-            rows={4}
-            value={form.releaseNotes}
-            placeholder="What changed in this release?"
-            onChange={(e) => set('releaseNotes', e.target.value)}
-          />
-        </Field>
+        <>
+          {/* No matching WBS — offer to create one inline, or continue without */}
+          <div style={{ padding: '10px 12px', marginBottom: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+            <strong>No WBS found for {form.platform}{resolvedComponent ? ` · ${resolvedComponent}` : ''}.</strong>{' '}
+            Create a new WBS for it (recommended), or continue without linking WBS items.
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                onClick={() => { setCreatingWbs(true); if (newItems.length === 0) addNewItem(); }}
+                style={{ ...primaryButton(!derivedWbsPlatform), padding: '6px 12px', fontSize: 12 }}
+                disabled={!derivedWbsPlatform}
+              >
+                Create WBS
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCreatingWbs(false); setNewItems([]); }}
+                style={{ ...ghostButton, padding: '6px 12px', fontSize: 12, ...(wbsMode === 'skip' ? { borderColor: 'var(--brand)', color: 'var(--brand)' } : {}) }}
+              >
+                Continue without
+              </button>
+            </div>
+          </div>
+
+          {wbsMode === 'create' ? (
+            <NewTaskList
+              title={`New WBS items for ${derivedWbsPlatform}`}
+              items={newItems}
+              modules={platformModules}
+              onAdd={addNewItem}
+              onSet={setNewItem}
+              onRemove={removeNewItem}
+              requireModule
+            />
+          ) : (
+            <Field label="Release notes">
+              <textarea
+                style={{ ...inputStyle, resize: 'vertical' }}
+                rows={4}
+                value={form.releaseNotes}
+                placeholder="What changed in this release?"
+                onChange={(e) => set('releaseNotes', e.target.value)}
+              />
+            </Field>
+          )}
+        </>
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>

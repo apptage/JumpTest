@@ -17,6 +17,7 @@ import {
   platformsForProjectType,
   RELEASE_TYPES_BY_PLATFORM,
   platformForReleaseType,
+  wbsPlatformForRelease,
   ENVIRONMENTS,
   EDIT_WINDOW_HOURS,
   withinEditWindow,
@@ -468,7 +469,8 @@ export default function ReleaseTracker() {
       showToast(issue, 'error');
       return;
     }
-    const wbsItems = form.wbsTasks || [];
+    const pickedItems = form.wbsTasks || [];       // existing WBS items chosen
+    const newWbsItems = form.newWbsItems || [];    // new items to create ({title, module})
     const wbsEnabled = !!projectsById[form.projectId]?.wbsEnabled;
     const extraNote = form.additionalNote?.trim() ? `\n\n${form.additionalNote.trim()}` : '';
 
@@ -491,9 +493,10 @@ export default function ReleaseTracker() {
       //  - tasks selected → generated from the tasks (feature release)
       //  - WBS project, no tasks, but prior sent-back cycle(s) → bug-fix release
       //  - otherwise → the manually-entered notes
+      const linkedNames = [...pickedItems.map((t) => t.name), ...newWbsItems.map((n) => n.title)];
       let notes;
-      if (wbsItems.length) {
-        notes = wbsItems.map((t) => `- ${t.name}`).join('\n') + extraNote;
+      if (linkedNames.length) {
+        notes = linkedNames.map((n) => `- ${n}`).join('\n') + extraNote;
       } else if (wbsEnabled && priors.length) {
         notes = `Bug fixes for ${priors.map((p) => `v${p.version}`).join(', ')}` + extraNote;
       } else {
@@ -555,13 +558,31 @@ export default function ReleaseTracker() {
         wbs_platform_type: form.wbsPlatformType || null,
       });
 
-      if (wbsItems.length) {
+      // create any brand-new WBS items declared during submit (under the
+      // release's derived WBS platform), then join them to the linked set
+      if (newWbsItems.length) {
+        const platformType = form.wbsPlatformType || wbsPlatformForRelease(form.platform, form.component);
+        for (let i = 0; i < newWbsItems.length; i++) {
+          const n = newWbsItems[i];
+          const id = await api.createWbsItem(form.projectId, {
+            title: n.title,
+            module: n.module || '',
+            platformType,
+            position: 1000 + i,
+          });
+          pickedItems.push({ id, name: n.title });
+        }
+        // creating items turns on WBS for a project that had none
+        if (!wbsEnabled) await api.updateProject(form.projectId, { wbs_enabled: true });
+      }
+
+      if (pickedItems.length) {
         await api.createReleaseTasks(
           releaseId,
-          wbsItems.map((t) => ({ taskId: t.id, taskName: t.name }))
+          pickedItems.map((t) => ({ taskId: t.id, taskName: t.name }))
         );
         // linked items move to In QA (locked for developers)
-        await api.setWbsItemStatus(wbsItems.map((t) => t.id), 'in_qa');
+        await api.setWbsItemStatus(pickedItems.map((t) => t.id), 'in_qa');
       }
 
       // the auto-assigned QA gets a personal "assigned to you"; notify the rest
