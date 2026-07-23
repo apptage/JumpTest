@@ -722,7 +722,7 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
     setText(''); // keep the adder focused so you can type the next one
   };
 
-  const chip = { fontSize: 10.5, fontWeight: 600, color: 'var(--brand)', background: '#2563eb14', border: '1px solid #2563eb33', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' };
+  const chip = { fontSize: 10.5, fontWeight: 600, color: 'var(--tone-info-fg)', background: 'var(--tone-info-bg)', border: '1px solid var(--brand-ring)', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' };
   const metaItem = { fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
 
   return (

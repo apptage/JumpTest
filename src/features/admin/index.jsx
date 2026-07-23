@@ -1182,7 +1182,7 @@ function ProjectMembersSection({
     </span>
   );
 
-  const roleColor = { qa: '#2563eb', lead: '#d97706', developer: '#16a34a', viewer: '#64748b' };
+  const roleColor = { qa: '#6c63ff', lead: '#d97706', developer: '#16a34a', viewer: '#64748b' };
 
   const memberRow = (m) => {
     const p = profileById[m.userId];

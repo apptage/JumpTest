@@ -23,7 +23,7 @@ function relTime(iso) {
 
 const CLIENT_STATUS = {
   qa_pending: { label: 'In development', color: '#d97706' },
-  qa_in_progress: { label: 'In testing', color: '#2563eb' },
+  qa_in_progress: { label: 'In testing', color: '#6c63ff' },
   qa_done: { label: 'In review', color: '#7c3aed' },
   approved: { label: 'Completed', color: '#16a34a' },
   sent_back: { label: 'Resolving issues', color: '#dc2626' },

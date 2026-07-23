@@ -1,7 +1,7 @@
 /* Custom inline SVG vectors — dev / programming / QA themed.
    Black & orange. No external assets. */
 
-const O = '#2563eb'; // primary
+const O = '#6c63ff'; // primary
 const O2 = '#3b82f6'; // lighter primary
 const OK = '#16a34a'; // success (QA passed)
 

@@ -4,13 +4,13 @@
 import { useState } from 'react';
 import { card, inputStyle } from '@/ui.jsx';
 
-/* ---- soft-pill tones ---- */
+/* ---- soft-pill tones (design-system tokens) ---- */
 export const TONES = {
-  danger: { bg: '#FEE2E2', fg: '#991B1B' },
-  warning: { bg: '#FEF3C7', fg: '#92400E' },
-  success: { bg: '#DCFCE7', fg: '#166534' },
-  info: { bg: '#DBEAFE', fg: '#1E40AF' },
-  neutral: { bg: '#F1F5F9', fg: '#475569' },
+  danger: { bg: 'var(--tone-danger-bg)', fg: 'var(--tone-danger-fg)' },
+  warning: { bg: 'var(--tone-warning-bg)', fg: 'var(--tone-warning-fg)' },
+  success: { bg: 'var(--tone-success-bg)', fg: 'var(--tone-success-fg)' },
+  info: { bg: 'var(--tone-info-bg)', fg: 'var(--tone-info-fg)' },
+  neutral: { bg: 'var(--tone-neutral-bg)', fg: 'var(--tone-neutral-fg)' },
 };
 export const passTone = (r) => (r >= 75 ? 'success' : r >= 55 ? 'warning' : 'danger');
 export const passColor = (r) => (r >= 75 ? 'var(--success)' : r >= 55 ? 'var(--warning)' : 'var(--danger)');
@@ -342,5 +342,134 @@ export function SegmentedTimeline({ segments, unit = 'd' }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/* ================================================================== */
+/* Design-system dashboard widgets (JumpTest DS handoff bundle)       */
+/* ================================================================== */
+
+/* Trend arrows for the KPI delta pill — DS icon spec: 24px viewBox,
+   1.6px stroke, currentColor, round caps/joins. */
+function TrendArrow({ dir = 'up', size = 13 }) {
+  const d = dir === 'up' ? 'M3 17 L9 11 L13 15 L21 7' : 'M3 7 L9 13 L13 9 L21 17';
+  const cap = dir === 'up' ? 'M21 7 L21 13 M21 7 L15 7' : 'M21 17 L21 11 M21 17 L15 17';
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+      <path d={cap} />
+    </svg>
+  );
+}
+
+/* KPI tile — uppercase eyebrow, big tabular metric, optional trend-delta pill,
+   uppercase footer. A row of these leads every dashboard. */
+export function StatCard({ label, value, delta, deltaDir = 'up', foot, size = 'big', style }) {
+  const pos = deltaDir === 'up';
+  const dc = pos
+    ? { bg: 'var(--tone-success-bg)', fg: 'var(--tone-success-fg)' }
+    : { bg: 'var(--tone-danger-bg)', fg: 'var(--tone-danger-fg)' };
+  const eyebrow = {
+    fontSize: 11, fontWeight: 600, letterSpacing: 'var(--tracking-label)',
+    textTransform: 'uppercase', color: 'var(--color-text-secondary)',
+  };
+  return (
+    <div className="mgr-card" style={{ ...card, padding: '18px 20px', flex: '1 1 180px', minWidth: 168, ...style }}>
+      <div style={eyebrow}>{label}</div>
+      <div className="tnum" style={{
+        fontFamily: 'var(--font-display)', fontSize: size === 'small' ? 22 : 28, fontWeight: 700,
+        letterSpacing: 'var(--tracking-tight)', color: 'var(--color-text-primary)', margin: '10px 0',
+      }}>
+        {value}
+      </div>
+      {delta != null && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999,
+          background: dc.bg, color: dc.fg, fontSize: 11.5, fontWeight: 600,
+        }}>
+          <TrendArrow dir={pos ? 'up' : 'down'} />{delta}
+        </div>
+      )}
+      {foot && (
+        <div style={{ ...eyebrow, fontSize: 10.5, color: 'var(--color-text-tertiary)', marginTop: delta != null ? 12 : 0 }}>
+          {foot}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Pipeline "count by stage" bars with a total footer (the QA funnel).
+   stages = [{ label, count, color? }, …] */
+export function StageBars({ stages = [], total, totalLabel = 'Total', unit = '', style }) {
+  const max = Math.max(1, ...stages.map((s) => s.count));
+  const sum = total != null ? total : stages.reduce((a, s) => a + s.count, 0);
+  return (
+    <div style={style}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {stages.map((s) => (
+          <div key={s.label}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 7 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)' }}>{s.label}</span>
+              <span className="tnum" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+                {s.count.toLocaleString()}{unit ? ` ${unit}` : ''}
+              </span>
+            </div>
+            <div style={{ height: 6, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.max(2, (s.count / max) * 100)}%`, borderRadius: 999, background: s.color || 'var(--brand)' }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--color-border-primary)',
+      }}>
+        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{totalLabel}</span>
+        <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>
+          {sum.toLocaleString()}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* Line chart — actual vs optional target, y-grid + x labels. Pure SVG. */
+export function TrendChart({ data = [], target = null, xLabels = [], yTicks = 5, height = 300, format = (v) => v }) {
+  const W = 720, H = height;
+  const padL = 34, padR = 16, padT = 12, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const max = Math.max(1, ...[...data, ...(target || [])]);
+  const n = Math.max(1, data.length - 1);
+  const x = (i) => padL + (i / n) * iw;
+  const y = (v) => padT + ih - (v / max) * ih;
+  const path = (arr) => arr.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const ticks = Array.from({ length: yTicks }, (_, i) => (max * i) / (yTicks - 1));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', overflow: 'visible' }} role="img" aria-label="Trend chart">
+      {ticks.map((t, i) => {
+        const yy = y(t);
+        return (
+          <g key={i}>
+            <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="var(--color-border-primary)" strokeWidth="1" />
+            <text x={padL - 8} y={yy + 3.5} textAnchor="end" fontSize="10" fill="var(--color-text-tertiary)" fontFamily="var(--font-mono)">
+              {format(Math.round(t))}
+            </text>
+          </g>
+        );
+      })}
+      {xLabels.map((lb, i) => (
+        <text key={lb + i} x={x((i / Math.max(1, xLabels.length - 1)) * n)} y={H - 6} textAnchor="middle"
+          fontSize="10.5" fill="var(--color-text-tertiary)" fontFamily="var(--font-body)">{lb}</text>
+      ))}
+      {target && <path d={path(target)} fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.6" strokeDasharray="4 5" opacity="0.7" />}
+      {data.length > 0 && (
+        <>
+          <path d={`${path(data)} L ${x(n)} ${padT + ih} L ${x(0)} ${padT + ih} Z`} fill="var(--brand)" opacity="0.07" />
+          <path d={path(data)} fill="none" stroke="var(--brand)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
   );
 }

@@ -31,31 +31,17 @@ export function NavRail({ page, onNavigate, teamName, canManage, isAdmin }) {
           Jump<span style={{ color: 'var(--brand)' }}>Test</span>
         </span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {items.map((it) => {
           const active = page === it.key;
           return (
             <button
               key={it.key}
               onClick={() => onNavigate(it.key)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '9px 11px',
-                borderRadius: 8,
-                border: 'none',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                fontSize: 13,
-                fontWeight: active ? 600 : 500,
-                textAlign: 'left',
-                background: active ? 'var(--brand-soft)' : 'transparent',
-                color: active ? 'var(--brand)' : 'var(--color-text-secondary)',
-              }}
+              className={active ? 'nav-item on' : 'nav-item'}
             >
               <it.Icon size={17} />
-              {it.label}
+              <span style={{ flex: 1, textAlign: 'left' }}>{it.label}</span>
             </button>
           );
         })}
@@ -63,10 +49,11 @@ export function NavRail({ page, onNavigate, teamName, canManage, isAdmin }) {
       {teamName && (
         <div
           style={{
-            marginTop: 14,
+            marginTop: 'auto',
+            paddingTop: 14,
             fontSize: 11,
             color: 'var(--color-text-tertiary)',
-            padding: '0 11px',
+            padding: '14px 11px 0',
           }}
         >
           Team · <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>{teamName}</span>

@@ -8,69 +8,111 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
     <style>
-      /* ===== Dashboard design system (typeui.sh) ===== */
+      /* ===== JumpTest Design System — periwinkle #6C63FF on a soft blue-gray
+         canvas, Geist type, 16px cards, periwinkle-tinted shadows.
+         (claude.ai/design handoff bundle: jumptest-design-system) ===== */
       :root {
         color-scheme: light;
 
-        /* brand — Blue 600 accent */
-        --brand: #2563eb;
-        --brand-2: #3b82f6;
-        --brand-strong: #1d4ed8;
-        --brand-grad: #2563eb;
-        --brand-soft: #eff6ff;
-        --brand-ring: rgba(37, 99, 235, 0.32);
+        /* brand — periwinkle */
+        --brand: #6c63ff;
+        --brand-2: #8b84ff;
+        --brand-strong: #574fd6;
+        --brand-grad: #6c63ff;
+        --brand-gradient: linear-gradient(135deg, #8078ff 0%, #6c63ff 100%);
+        --brand-soft: #f0efff;
+        --brand-ring: rgba(108, 99, 255, 0.32);
 
-        /* semantic tokens — used sparingly, as dots/text only */
-        --success: #16a34a;
-        --warning: #d97706;
-        --danger: #dc2626;
+        /* semantic tokens — used as dots, pills and thin bars, never large blocks */
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --danger: #ff6b6b;
+        --info: #6c63ff;
+        --purple: #6c63ff;
+        --cyan: #06b6d4;
 
-        /* surfaces — light, high contrast */
-        --color-app-bg: #f8fafc;
+        /* surfaces — soft blue-gray canvas, white cards */
+        --color-app-bg: #f0f1f7;
         --color-background-primary: #ffffff;
-        --color-background-secondary: #f1f5f9;
-        --color-background-tertiary: #e2e8f0;
+        --color-background-secondary: #f0f1f7;
+        --color-background-tertiary: #e4e6ef;
 
         /* (kept for compatibility) */
         --panel-bg: #ffffff;
-        --panel-border: #e2e8f0;
+        --panel-border: #e4e6ef;
 
-        /* borders — crisp 1px lines */
-        --color-border-primary: #eef2f6;
-        --color-border-tertiary: #e2e8f0;
+        /* borders */
+        --color-border-primary: #edeef4;
+        --color-border-tertiary: #e4e6ef;
 
         /* text */
-        --color-text-primary: #0f172a;
-        --color-text-secondary: #475569;
-        --color-text-tertiary: #64748b;
+        --color-text-primary: #1a1d2e;
+        --color-text-secondary: #6b7280;
+        --color-text-tertiary: #9ca3af;
 
-        /* ink = the top nav / brand panels (now light) */
+        /* ink = the top header / brand panels */
         --ink: #ffffff;
-        --ink-2: #f8fafc;
-        --on-ink: #0f172a;
-        --on-ink-dim: #64748b;
-        --ink-border: #e2e8f0;
+        --ink-2: #f0f1f7;
+        --on-ink: #1a1d2e;
+        --on-ink-dim: #6b7280;
+        --ink-border: #e4e6ef;
 
-        /* elevation — soft, subtle shadows */
-        --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
-        --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.08);
-        --shadow-lg: 0 18px 44px rgba(15, 23, 42, 0.16);
-        --shadow-brand: 0 1px 2px rgba(15, 23, 42, 0.06);
+        /* sidebar — translucent frosted panel with a dark active pill */
+        --sidebar-surface: rgba(255, 255, 255, 0.5);
+        --sidebar-border: rgba(0, 0, 0, 0.06);
+        --sidebar-foreground: #101828;
+        --sidebar-active: #2a2d3e;
+        --sidebar-active-fg: #ffffff;
 
-        /* radii — sm 4 / md 8 */
-        --r-sm: 4px;
-        --r-input: 8px;
-        --r-card: 8px;
-        --r-modal: 12px;
+        /* soft-pill tones */
+        --tone-danger-bg: #fef2f2;   --tone-danger-fg: #b91c1c;
+        --tone-warning-bg: #fffbeb;  --tone-warning-fg: #b45309;
+        --tone-success-bg: #ecfdf5;  --tone-success-fg: #047857;
+        --tone-info-bg: #f0efff;     --tone-info-fg: #6c63ff;
+        --tone-neutral-bg: #f0f1f7;  --tone-neutral-fg: #6b7280;
 
-        /* type — IBM Plex Sans throughout */
-        --font-display: 'IBM Plex Sans', system-ui, sans-serif;
-        --font-body: 'IBM Plex Sans', system-ui, sans-serif;
-        --font-mono: 'IBM Plex Sans', ui-monospace, monospace;
+        /* elevation — soft with a faint periwinkle tint */
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.07), 0 4px 14px rgba(108, 99, 255, 0.07);
+        --shadow-md: 0 4px 18px rgba(108, 99, 255, 0.10);
+        --shadow-lg: 0 8px 32px rgba(108, 99, 255, 0.18);
+        --shadow-brand: 0 1px 2px rgba(108, 99, 255, 0.22);
+        --shadow-hover: 0 8px 24px -6px rgba(108, 99, 255, 0.22);
+
+        /* radii — controls 10, cards & modals 16, pills full */
+        --r-sm: 8px;
+        --r-input: 10px;
+        --r-card: 16px;
+        --r-modal: 16px;
+        --r-pill: 999px;
+
+        /* type — Geist */
+        --font-display: 'Geist', system-ui, -apple-system, sans-serif;
+        --font-body: 'Geist', system-ui, -apple-system, sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+
+        --text-page-title: 28px;
+        --text-stat-xl: 28px;
+        --text-stat-lg: 20px;
+        --text-heading: 16px;
+        --text-base: 14px;
+        --text-body: 13px;
+        --text-sm: 12px;
+        --text-xs: 11px;
+        --text-2xs: 10.5px;
+
+        --tracking-tight: -0.02em;
+        --tracking-snug: -0.01em;
+        --tracking-label: 0.06em;
+        --leading-body: 1.55;
+        --leading-tight: 1.2;
+
+        /* layout */
+        --header-h: 58px;
+        --rail-width: 244px;
       }
 
       * { box-sizing: border-box; }
@@ -78,13 +120,16 @@
       body {
         margin: 0;
         font-family: var(--font-body);
-        background: var(--color-app-bg);
+        background:
+          radial-gradient(1100px 560px at 18% -12%, #dde6f2 0%, rgba(221, 230, 242, 0) 60%),
+          linear-gradient(162deg, #eaedf5 0%, #f0f1f7 52%, #ece9f6 100%);
+        background-attachment: fixed;
         color: var(--color-text-primary);
         -webkit-font-smoothing: antialiased;
-        font-size: 14px;
+        font-size: var(--text-base);
       }
 
-      h1, h2, h3 { font-family: var(--font-display); letter-spacing: -0.01em; }
+      h1, h2, h3 { font-family: var(--font-display); letter-spacing: var(--tracking-snug); }
 
       /* numeric displays read as tabular */
       .tnum { font-variant-numeric: tabular-nums; }
@@ -110,7 +155,8 @@
       button:not(:disabled):hover { filter: brightness(1.08); }
       button:not(:disabled):active { transform: translateY(1px) scale(0.99); }
 
-      a { color: var(--brand-2); }
+      a { color: var(--brand); text-decoration: none; }
+      a:hover { color: var(--brand-strong); text-decoration: underline; }
 
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-thumb {
@@ -142,41 +188,69 @@
       .mgr-row { transition: background 0.12s ease; }
       .mgr-row:hover { background: var(--color-background-secondary); }
       .mgr-card { transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease; }
-      .mgr-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 6px 16px -6px rgba(15,23,42,0.18); border-color: var(--color-border-tertiary); }
+      .mgr-card.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); border-color: var(--color-border-tertiary); }
 
       @media (prefers-reduced-motion: reduce) {
         * { animation: none !important; transition: none !important; }
       }
       @media (max-width: 680px) { .auth-brand { display: none !important; } }
 
-      /* multi-page nav layout */
-      .nav-layout { display: flex; min-height: 100vh; }
+      /* multi-page nav layout — translucent frosted rail, dark active pill */
+      .nav-layout { display: flex; min-height: 100vh; gap: 0; padding: 14px 14px 0; }
       .nav-rail {
-        width: 220px;
+        width: var(--rail-width);
         flex-shrink: 0;
-        background: var(--color-background-primary);
-        border-right: 1px solid var(--color-border-tertiary);
-        padding: 14px 12px;
+        background: var(--sidebar-surface);
+        border: 1px solid var(--sidebar-border);
+        border-radius: 18px;
+        padding: 16px 14px;
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        box-shadow: var(--shadow-sm);
+        display: flex;
+        flex-direction: column;
         position: sticky;
-        top: 0;
-        height: 100vh;
+        top: calc(var(--header-h) + 14px);
+        height: calc(100vh - var(--header-h) - 28px);
         overflow-y: auto;
       }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        background: transparent;
+        color: var(--color-text-secondary);
+        width: 100%;
+        text-align: left;
+        transition: background 0.12s ease, color 0.12s ease;
+      }
+      .nav-item:hover { background: rgba(108, 99, 255, 0.08); color: var(--color-text-primary); }
+      .nav-item.on { background: var(--sidebar-active); color: var(--sidebar-active-fg); font-weight: 600; }
+      .nav-item.on:hover { background: var(--sidebar-active); color: var(--sidebar-active-fg); }
+      .nav-item.on:not(:disabled):hover { filter: none; }
       .nav-main { flex: 1; min-width: 0; }
-      .page-area { max-width: 1180px; margin: 0 auto; padding: 24px 22px 72px; }
+      .page-area { max-width: 1500px; margin: 0 auto; padding: 20px 22px 72px; }
       @media (max-width: 860px) {
-        .nav-layout { flex-direction: column; }
+        .nav-layout { flex-direction: column; padding: 10px 10px 0; }
         .nav-rail {
-          width: 100%;
+          width: auto;
           height: auto;
           position: static;
-          border-right: none;
-          border-bottom: 1px solid var(--color-border-tertiary);
-          display: flex;
-          gap: 4px;
+          flex-direction: row;
+          align-items: center;
+          gap: 6px;
           overflow-x: auto;
           padding: 8px;
+          border-radius: 14px;
         }
+        .nav-item { width: auto; white-space: nowrap; }
         .page-area { padding: 16px; }
       }
 

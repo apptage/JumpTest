@@ -2,7 +2,7 @@
    qa_pending → qa_in_progress → qa_done → approved | sent_back; closed is terminal. */
 export const STATUSES = {
   qa_pending: { label: 'QA Pending', color: '#d97706', icon: '⏳' },
-  qa_in_progress: { label: 'QA In Progress', color: '#2563eb', icon: '🔍' },
+  qa_in_progress: { label: 'QA In Progress', color: '#6c63ff', icon: '🔍' },
   qa_done: { label: 'QA Done', color: '#7c3aed', icon: '📋' },
   approved: { label: 'Approved', color: '#16a34a', icon: '✅' },
   sent_back: { label: 'Sent Back', color: '#dc2626', icon: '↩️' },
@@ -159,7 +159,7 @@ export const SEVERITY_ORDER = ['critical', 'major', 'minor'];
 /* Bug status workflow */
 export const BUG_STATUSES = {
   open: { label: 'Open', color: '#dc2626' },
-  in_progress: { label: 'In Progress', color: '#2563eb' },
+  in_progress: { label: 'In Progress', color: '#6c63ff' },
   fixed: { label: 'Fixed', color: '#d97706' },
   disputed: { label: 'Needs Clarification', color: '#7c3aed' },
   // a developer proposed closing the bug (Not a Bug / Out of Scope / Duplicate);
@@ -224,7 +224,7 @@ export const DEV_DISPUTE_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Duplicate'
 export const WBS_STATUSES = {
   not_started: { label: 'Not Started', color: '#64748b' },
   in_progress: { label: 'In Progress', color: '#d97706' },
-  in_qa: { label: 'In QA', color: '#2563eb' },
+  in_qa: { label: 'In QA', color: '#6c63ff' },
   completed: { label: 'Completed', color: '#16a34a' },
   blocked: { label: 'Blocked', color: '#dc2626' },
 };
@@ -305,10 +305,10 @@ export const WBS_PRESETS = [
 /* Roles */
 export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
 export const ROLE_COLORS = {
-  QA: '#2563eb',
+  QA: '#6c63ff',
   Developer: '#16a34a',
   'Team Lead': '#d97706',
-  Admin: '#2563eb',
+  Admin: '#6c63ff',
 };
 /* Roles a Team Lead is allowed to assign within their own team. */
 export const TEAM_ASSIGNABLE_ROLES = ['Developer', 'QA'];

@@ -106,11 +106,11 @@ export function Logo({ size = 30 }) {
     >
       <defs>
         <linearGradient id="rt-grad" x1="0" y1="0" x2="32" y2="32">
-          <stop stopColor="#2563eb" />
-          <stop offset="1" stopColor="#1d4ed8" />
+          <stop stopColor="#8078ff" />
+          <stop offset="1" stopColor="#6c63ff" />
         </linearGradient>
       </defs>
-      <rect width="32" height="32" rx="8" fill="url(#rt-grad)" />
+      <rect width="32" height="32" rx="11" fill="url(#rt-grad)" />
       {/* </> code mark in ink */}
       <path
         d="M12.5 11L8.5 16l4 5M19.5 11l4 5-4 5"

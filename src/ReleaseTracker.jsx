@@ -1143,18 +1143,9 @@ export default function ReleaseTracker() {
   const visibleProfiles = isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId);
 
   return (
-    <div className="nav-layout">
-      <NavRail
-        page={page}
-        onNavigate={setPage}
-        user={user}
-        teamName={isAdmin ? null : myTeam?.name}
-        canManage={canManage}
-        isAdmin={isAdmin}
-      />
-
-      <div className="nav-main">
-        <Header
+    <>
+      {/* full-width header sits above the rail so the top-left corner is never bare */}
+      <Header
           user={user}
           page={page}
           canSubmit={canSubmit}
@@ -1185,6 +1176,17 @@ export default function ReleaseTracker() {
           onSignOut={handleSignOut}
         />
 
+        <div className="nav-layout">
+          <NavRail
+            page={page}
+            onNavigate={setPage}
+            user={user}
+            teamName={isAdmin ? null : myTeam?.name}
+            canManage={canManage}
+            isAdmin={isAdmin}
+          />
+
+          <div className="nav-main">
         {page === 'dashboard' && (
           <div className="app-shell">
             <aside className="shell-aside shell-left">
@@ -1456,8 +1458,9 @@ export default function ReleaseTracker() {
       )}
 
         <Toast toast={toast} />
-      </div>
-    </div>
+          </div>
+        </div>
+    </>
   );
 }
 
