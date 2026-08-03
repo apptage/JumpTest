@@ -156,6 +156,18 @@ export const SEVERITIES = {
 };
 export const SEVERITY_ORDER = ['critical', 'major', 'minor'];
 
+/* Blocking severities — the QA release gate. A release can only be Approved with
+   NO open blocking bug; WBS task reconciliation uses the SAME rule (a task with
+   an open blocking bug stays In Progress; minor bugs don't block completion). */
+export const BLOCKING_SEVERITIES = ['critical', 'major'];
+export function isBlockingSeverity(sev) {
+  return BLOCKING_SEVERITIES.includes(sev);
+}
+// an OPEN blocking bug = active (not verified) AND blocking severity
+export function isOpenBlockingBug(bug) {
+  return bug && bug.status !== 'verified' && isBlockingSeverity(bug.severity);
+}
+
 /* Bug status workflow */
 export const BUG_STATUSES = {
   open: { label: 'Open', color: '#dc2626' },
@@ -311,14 +323,24 @@ export const WBS_PRESETS = [
   },
 ];
 
-/* Roles */
-export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
+/* Roles. Manager is an executive/read-only role: it lands on the Command Center
+   and never touches release ops (dashboard, bugs, WBS builder, release detail). */
+export const ROLES = ['Developer', 'QA', 'Team Lead', 'Manager', 'Admin'];
 export const ROLE_COLORS = {
   QA: '#6c63ff',
   Developer: '#16a34a',
   'Team Lead': '#d97706',
+  Manager: '#0891b2',
   Admin: '#6c63ff',
 };
+/* Role predicates used for navigation + access gates. */
+export function isManagerRole(role) {
+  return role === 'Manager';
+}
+// operational users work releases/bugs/WBS directly (everyone except Manager)
+export function isOperationalRole(role) {
+  return role !== 'Manager';
+}
 /* Roles a Team Lead is allowed to assign within their own team. */
 export const TEAM_ASSIGNABLE_ROLES = ['Developer', 'QA'];
 

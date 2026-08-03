@@ -1,6 +1,6 @@
 // Edge Function: admin-create-user
 // Lets an Admin create a fully-provisioned account for ANY role
-// (Developer / QA / Team Lead / Admin) without sending a confirmation
+// (Developer / QA / Team Lead / Manager / Admin) without sending a confirmation
 // email — which also avoids the "email rate limit exceeded" error.
 //
 // Deploy:  supabase functions deploy admin-create-user
@@ -10,7 +10,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const ALLOWED_DOMAIN = 'jumppace.com';
-const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
+const ROLES = ['Developer', 'QA', 'Team Lead', 'Manager', 'Admin'];
 
 const cors = {
   'Access-Control-Allow-Origin': '*',

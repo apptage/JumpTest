@@ -61,7 +61,9 @@ export function BugsPage({
   const [sort, setSort] = useState('newest');
   const [visible, setVisible] = useState(20);
 
-  const devs = (profiles || []).filter((p) => p.role !== 'QA');
+  // Developer filter = actual Developers only (not Team Leads / Admins / the
+  // read-only Manager, which the old `role !== 'QA'` test wrongly included).
+  const devs = (profiles || []).filter((p) => p.role === 'Developer');
   const qas = (profiles || []).filter((p) => p.role === 'QA');
 
   // single shared filter pipeline (same functions Analytics uses)

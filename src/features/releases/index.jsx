@@ -707,13 +707,16 @@ export function DetailModal({
     isManager ||
     (user.role === 'QA' &&
       (!release.assignedQa || release.assignedQa === user.id));
-  // developers may edit/delete their own release only within the 8h window
-  const isOwner =
-    release.submittedById === user.id || release.submittedBy === user.name;
+  // developers may edit/delete their own release only within the 8h window.
+  // Ownership is by user ID only — never display name (two people can share a name).
+  const isOwner = release.submittedById === user.id;
   const ownerWindow = isOwner && withinEditWindow(release);
   const readOnly = isReadOnly(release);
-  const canEdit = !readOnly && (isManager || ownerWindow);
-  const canDelete = !readOnly && (isManager || ownerWindow);
+  // A terminal QA outcome (approved / sent back / closed) is locked from BOTH edit
+  // and delete: a decided release must not be altered, and its history is preserved.
+  const terminal = release.status === 'approved' || release.status === 'sent_back' || readOnly;
+  const canEdit = !terminal && (isManager || ownerWindow);
+  const canDelete = !terminal && (isManager || ownerWindow);
   const ownerLocked = isOwner && !isManager && !withinEditWindow(release);
 
   const loadChecks = useCallback(async () => {
@@ -1322,6 +1325,8 @@ function BugsTab({
   // only a Team Lead / Admin verifies a developer's proposed close
   const isManager = user.role === 'Team Lead' || user.role === 'Admin';
   const readOnly = isReadOnly(release);
+  // no new bugs once the release has left the QA gate (approved or closed)
+  const noNewBugs = release.status === 'approved' || readOnly;
   const wbsBug = wbsEnabled && releaseTasks.length > 0;
   const invalid = !form.title.trim() || (wbsBug && !form.wbsTaskId);
 
@@ -1358,12 +1363,14 @@ function BugsTab({
 
   return (
     <>
-      {readOnly && (
+      {noNewBugs && (
         <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
-          This release is closed (superseded). Bugs are shown as they were at close.
+          {readOnly
+            ? 'This release is closed (superseded). Bugs are shown as they were at close.'
+            : 'This release is approved — no new bugs can be filed. Report against a new build.'}
         </div>
       )}
-      {isQA && !readOnly && (
+      {isQA && !noNewBugs && (
         <div style={{ marginBottom: 14 }}>
           {!show ? (
             <button style={ghostButton} onClick={() => setShow(true)}>

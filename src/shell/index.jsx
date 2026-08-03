@@ -8,14 +8,16 @@ import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
 import { EDIT_WINDOW_HOURS, SLA_HOURS, BUG_SLA_DAYS } from '@/constants.js';
 import {
   IconBell, IconBug, IconChart, IconCog, IconFolder, IconGrid,
-  IconLayers, IconPlus, IconPower, IconSearch, IconTree, IconUsers, IconUpload,
+  IconLayers, IconPlus, IconPower, IconSearch, IconSliders, IconTree, IconUsers, IconUpload,
 } from '@/icons.jsx';
 
-export function NavRail({ page, onNavigate, teamName, canManage, isAdmin }) {
+export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, isExec }) {
   const items = [
-    { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: true },
-    { key: 'bugs', label: 'Bugs', Icon: IconBug, show: true },
-    { key: 'wbs', label: 'WBS', Icon: IconTree, show: true },
+    // Manager's executive home; also a first-class item for Admin (bridge)
+    { key: 'command-center', label: 'Command Center', Icon: IconSliders, show: isExec || isAdmin },
+    { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: !isExec },
+    { key: 'bugs', label: 'Bugs', Icon: IconBug, show: !isExec },
+    { key: 'wbs', label: 'WBS', Icon: IconTree, show: !isExec },
     { key: 'projects', label: 'Projects', Icon: IconFolder, show: canManage },
     { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
     { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
@@ -144,8 +146,10 @@ export function SettingsPage({ user, team, onSignOut }) {
 /* ================================================================== */
 
 const PAGE_TITLES = {
+  'command-center': 'Command Center',
   dashboard: 'Dashboard',
   bugs: 'Bugs',
+  wbs: 'WBS',
   projects: 'Projects',
   analytics: 'Analytics',
   users: 'Users',
@@ -159,6 +163,7 @@ export function Header({
   canSubmit,
   canManage,
   isAdmin,
+  isExec,
   unread,
   notifOpen,
   notifications,
@@ -232,17 +237,21 @@ export function Header({
           <span style={{ fontWeight: 700 }}>{PAGE_TITLES[page] || 'Dashboard'}</span>
         </div>
 
-        {/* global search */}
-        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 180 }}>
-          <GlobalSearch
-            projects={projects}
-            releases={releases}
-            bugs={bugs}
-            projectsById={projectsById}
-            onNavigate={onNavigate}
-            onOpenRelease={onOpenRelease}
-          />
-        </div>
+        {/* global search — hidden for Manager (would leak release/bug detail) */}
+        {isExec ? (
+          <div style={{ flex: 1 }} />
+        ) : (
+          <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 180 }}>
+            <GlobalSearch
+              projects={projects}
+              releases={releases}
+              bugs={bugs}
+              projectsById={projectsById}
+              onNavigate={onNavigate}
+              onOpenRelease={onOpenRelease}
+            />
+          </div>
+        )}
 
         {/* bell */}
         <div style={{ position: 'relative' }}>
@@ -267,7 +276,8 @@ export function Header({
           )}
         </div>
 
-        {/* quick actions */}
+        {/* quick actions — Manager has no create actions */}
+        {!isExec && (
         <div style={{ position: 'relative' }}>
           <button
             style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }}
@@ -328,6 +338,7 @@ export function Header({
             </>
           )}
         </div>
+        )}
 
         {/* user chip */}
         <div

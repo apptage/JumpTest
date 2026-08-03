@@ -21,11 +21,13 @@ function relTime(iso) {
   return `${Math.round(h / 24)}d ago`;
 }
 
+// Client-facing labels — accurate about the QA stage. Notably "Approved" means
+// it PASSED QA (not that it's been delivered), so it isn't labelled "Completed".
 const CLIENT_STATUS = {
-  qa_pending: { label: 'In development', color: '#d97706' },
+  qa_pending: { label: 'Awaiting QA', color: '#d97706' },
   qa_in_progress: { label: 'In testing', color: '#6c63ff' },
   qa_done: { label: 'In review', color: '#7c3aed' },
-  approved: { label: 'Completed', color: '#16a34a' },
+  approved: { label: 'QA approved', color: '#16a34a' },
   sent_back: { label: 'Resolving issues', color: '#dc2626' },
   closed: { label: 'Superseded', color: '#64748b' },
 };
@@ -357,57 +359,53 @@ export function ClientDashboard({ token }) {
 
         {showWbs && <ClientWbsView wbs={wbs} platformTargets={data.platformTargets} />}
 
+        {/* release-based progress + summary only when there is no WBS (the WBS view
+            already shows completion, so we avoid a duplicate progress bar) */}
         {!showWbs && (
-        <>
-        {/* progress */}
-        <div style={{ ...card, padding: 18, marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
-          </div>
-          <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
-            <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
-          </div>
-          {current && (
-            <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 12 }}>
-              Current: <strong>v{current.version}</strong> — {cs(current.status).label}
+          <>
+            <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
+              </div>
+              <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
+              </div>
+              {current && (
+                <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 12 }}>
+                  Current: <strong>v{current.version}</strong> — {cs(current.status).label}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
+              {statCard('Completed', completed.length, 'var(--success)')}
+              {statCard('In progress', inProgress.length, 'var(--warning)')}
+              {statCard('Resolved bugs', data.bugs?.resolved ?? 0, 'var(--success)')}
+              {data.showOpenBugs && statCard('Open bugs', data.bugs?.open ?? 0, (data.bugs?.open ?? 0) ? 'var(--danger)' : undefined)}
+            </div>
+          </>
+        )}
 
-        {/* summary */}
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-          {statCard('Completed', completed.length, 'var(--success)')}
-          {statCard('In progress', inProgress.length, 'var(--warning)')}
-          {statCard('Resolved bugs', data.bugs?.resolved ?? 0, 'var(--success)')}
-          {data.showOpenBugs && statCard('Open bugs', data.bugs?.open ?? 0, (data.bugs?.open ?? 0) ? 'var(--danger)' : undefined)}
-        </div>
-
+        {/* Releases are ALWAYS shown — a WBS-enabled project must NOT hide its
+            release status / approvals / send-backs / history from the client. */}
+        {showWbs && releases.length > 0 && <div style={{ ...sideHead, margin: '10px 0 12px' }}>Releases</div>}
         {inProgress.length > 0 && (
           <section style={{ marginBottom: 24 }}>
             <div style={{ ...sideHead, marginBottom: 10 }}>In progress</div>
             <div style={{ ...card, padding: '4px 16px' }}>{inProgress.map(relRow)}</div>
           </section>
         )}
-
         {completed.length > 0 && (
           <section style={{ marginBottom: 24 }}>
             <div style={{ ...sideHead, marginBottom: 10 }}>Completed</div>
             <div style={{ ...card, padding: '4px 16px' }}>{completed.map(relRow)}</div>
           </section>
         )}
-
-        <section>
-          <div style={{ ...sideHead, marginBottom: 10 }}>Release history</div>
-          {releases.length === 0 ? (
-            <div style={{ ...card, padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>
-              No releases yet.
-            </div>
-          ) : (
+        {releases.length > 0 && (
+          <section>
+            <div style={{ ...sideHead, marginBottom: 10 }}>Release history</div>
             <div style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
-          )}
-        </section>
-        </>
+          </section>
         )}
 
         <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>

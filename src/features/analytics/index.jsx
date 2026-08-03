@@ -6,7 +6,7 @@ import { card, inputStyle, ghostButton, ModalShell, StatusBadge, Avatar } from '
 import { PageHeader, Kpi, AnSection, avgDaysBetween } from '@shared/ui-kit.jsx';
 import { SubTabs, Donut, StackedBar, SegmentedTimeline, Pill } from '@shared/dashboard-kit.jsx';
 import { IconSliders } from '@/icons.jsx';
-import { historicalBugs, filterReleases } from '@shared/filters.js';
+import { historicalBugs, filterBugs, filterReleases } from '@shared/filters.js';
 import { computeReleaseMetrics, computeWorkload } from '@shared/releaseMetrics.js';
 import { assertBugReconcile, aggregateBugMetrics, bugWorkflow } from '@shared/bugMetrics.js';
 import { ScopeSummary } from '@shared/scope-summary.jsx';
@@ -18,6 +18,7 @@ import {
   BUG_STATUSES,
   BUG_STATUS_ORDER,
   isActiveStatus,
+  isClosedStatus,
   formatVersion,
   BUG_RESOLUTIONS,
   ENVIRONMENTS,
@@ -50,17 +51,20 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   });
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const [matrixTab, setMatrixTab] = useState('dev');
+  const [mode, setMode] = useState('historical'); // 'historical' (all) | 'current' (live board)
   const reset = () =>
     setF({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
 
-  // ---- HISTORICAL dataset: Analytics reports the COMPLETE project history, so
-  //      it counts bugs across ALL releases (active + closed), unlike the Bugs
-  //      page which shows the live board only. Same shared services either way.
+  // ---- dataset mode: Historical (default) = COMPLETE project history (all
+  //      releases incl. closed; historicalBugs). Current = live board only
+  //      (active releases; filterBugs) for a day-to-day ops picture. Historical
+  //      never drops completed/verified/approved work.
   const releaseById = {};
   releases.forEach((r) => (releaseById[r.id] = r));
-  const relF = filterReleases(releases, f, { projectById: projectsById });
-  const bugsF = historicalBugs(bugs, f, { releaseById, projectById: projectsById });
-  assertBugReconcile(bugsF, 'analytics'); // dev-only reconcile guard
+  const relRaw = filterReleases(releases, f, { projectById: projectsById });
+  const relF = mode === 'current' ? relRaw.filter((r) => !isClosedStatus(r.status)) : relRaw;
+  const bugsF = (mode === 'current' ? filterBugs : historicalBugs)(bugs, f, { releaseById, projectById: projectsById });
+  if (mode === 'historical') assertBugReconcile(bugsF, 'analytics'); // dev-only reconcile guard
 
   // One bug = one row, so metrics come straight off the filtered set — no dedup.
   const bugMetricsF = aggregateBugMetrics(bugsF);
@@ -140,7 +144,10 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
   const relSubmitter = {};
   relF.forEach((r) => (relSubmitter[r.id] = r.submittedById));
   const devPerf = profiles
-    .filter((p) => p.role !== 'QA' && (f.team === 'all' || p.teamId === f.team))
+    // "Developer performance" = actual Developers only. The old `role !== 'QA'`
+    // test swept in Team Leads, Admins and the read-only Manager role, inflating
+    // the roster with people who never submit as developers.
+    .filter((p) => p.role === 'Developer' && (f.team === 'all' || p.teamId === f.team))
     .map((d) => {
       const myRel = relF.filter((r) => r.submittedById === d.id);
       const myRelIds = new Set(myRel.map((r) => r.id));
@@ -201,7 +208,7 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
     .filter((r) => r.n > 0);
 
   const fSel = { ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 };
-  const devs = profiles.filter((p) => p.role !== 'QA');
+  const devs = profiles.filter((p) => p.role === 'Developer');
   const qas = profiles.filter((p) => p.role === 'QA');
   const th = {
     textAlign: 'left',
@@ -400,12 +407,28 @@ export function AnalyticsModal({ projects, releases, bugs, profiles, teams, isAd
         </button>
       </div>
 
-      {/* dataset scope — Analytics reports the whole project history */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 12 }}>
-        <span style={{ fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
-          Scope: Entire Project History
+      {/* dataset mode — Current (live board) vs Historical (whole archive) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, fontSize: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', border: '1px solid var(--color-border-tertiary)', borderRadius: 999, overflow: 'hidden' }}>
+          {[['current', 'Current'], ['historical', 'Historical']].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setMode(k)}
+              style={{
+                padding: '5px 14px', fontSize: 12, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', border: 'none',
+                background: mode === k ? 'var(--brand)' : 'transparent',
+                color: mode === k ? '#fff' : 'var(--color-text-secondary)',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span style={{ color: 'var(--color-text-tertiary)' }}>
+          {mode === 'current'
+            ? 'Live ops picture — active (non-closed) releases only.'
+            : 'Entire project history — all releases (active and closed); completed work is never excluded.'}
         </span>
-        <span style={{ color: 'var(--color-text-tertiary)' }}>Metrics include all releases (active and closed).</span>
       </div>
 
       {/* what scope do these numbers represent? */}

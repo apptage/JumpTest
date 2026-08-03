@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
     const projectId = sa.project_id || Deno.env.get('FCM_PROJECT_ID');
     if (!projectId) return json({ error: 'no FCM project id' }, 500);
 
-    // caller must be authenticated (any signed-in user may emit notifications)
+    // caller must be authenticated…
     const caller = createClient(url, anon, {
       global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
     });
@@ -125,11 +125,32 @@ Deno.serve(async (req) => {
     } = await caller.auth.getUser();
     if (!callerUser) return json({ error: 'Not authenticated' }, 401);
 
+    const admin = createClient(url, service);
+
+    // …and be an active staff profile. Without this, any signed-in account (or a
+    // removed user whose JWT is still valid) could emit an arbitrary volume of
+    // push to any recipient. A missing profile row = access revoked → 403.
+    const { data: callerProfile, error: profErr } = await admin
+      .from('profiles')
+      .select('id, role')
+      .eq('id', callerUser.id)
+      .maybeSingle();
+    if (profErr) return json({ error: 'profile lookup failed: ' + profErr.message }, 500);
+    const STAFF_ROLES = ['Developer', 'QA', 'Team Lead', 'Admin', 'Manager'];
+    if (!callerProfile || !STAFF_ROLES.includes(callerProfile.role)) {
+      return json({ error: 'Not authorized to send notifications' }, 403);
+    }
+
     const body = await req.json().catch(() => ({}));
-    const messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
+    let messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
     if (!messages.length) return json({ ok: true, sent: 0, note: 'no messages' });
 
-    const admin = createClient(url, service);
+    // Cap fan-out per call so a single request can't be used to blast the whole
+    // org. Legitimate flows notify a handful of reviewers at a time.
+    const MAX_MESSAGES = 200;
+    if (messages.length > MAX_MESSAGES) {
+      messages = messages.slice(0, MAX_MESSAGES);
+    }
 
     // load all enabled devices for the recipients in one query
     const userIds = [...new Set(messages.map((m) => m.user_id).filter(Boolean))];

@@ -426,6 +426,39 @@ export async function fetchWbsPlatformTargets(projectId) {
   if (error) throw error;
   return data.map(mapWbsPlatformTarget);
 }
+
+/* Fetch EVERY matching row, paging past Supabase's 1000-row response cap.
+   Without this, a single .select() silently truncates — and ordering by a
+   non-unique column (position) drops the high-position (usually incomplete)
+   items, which over-reports completion % in the Command Center. Paging by the
+   unique `id` keeps page boundaries stable. */
+async function selectAllByProjects(table, projectIds) {
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .in('project_id', projectIds)
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < PAGE) break;
+  }
+  return out;
+}
+
+/* Batch reads for the Manager Command Center — all WBS items / platform targets
+   across a set of projects (items carry projectId). Paginated: never truncates. */
+export async function fetchWbsItemsForProjects(projectIds) {
+  if (!projectIds || !projectIds.length) return [];
+  return (await selectAllByProjects('wbs_items', projectIds)).map(mapWbsItem);
+}
+export async function fetchWbsPlatformTargetsForProjects(projectIds) {
+  if (!projectIds || !projectIds.length) return [];
+  return (await selectAllByProjects('wbs_platform_targets', projectIds)).map(mapWbsPlatformTarget);
+}
 // upsert one platform's milestones (keyed on project_id + platform_type)
 export async function upsertWbsPlatformTarget(projectId, platformType, { completionDate = '', deploymentDate = '' }) {
   const { data, error } = await supabase
@@ -523,6 +556,23 @@ export async function deleteWbs(projectId) {
   const { error } = await supabase.from('wbs_items').delete().eq('project_id', projectId);
   if (error) throw error;
   await supabase.from('projects').update({ wbs_enabled: false }).eq('id', projectId);
+}
+
+// Delete one platform group's WBS (all items with that platform_type) + its
+// milestone target. Release/bug snapshots survive via ON DELETE SET NULL.
+export async function deleteWbsPlatform(projectId, platformType) {
+  const pt = platformType || '';
+  const { error } = await supabase
+    .from('wbs_items')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('platform_type', pt);
+  if (error) throw error;
+  await supabase
+    .from('wbs_platform_targets')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('platform_type', pt);
 }
 
 /* ------------------------------------------------------------------ */
@@ -645,6 +695,20 @@ export async function createProject(p) {
 export async function updateProject(id, patch) {
   const { error } = await supabase.from('projects').update(patch).eq('id', id);
   if (error) throw error;
+}
+// Turn WBS on for a project via a SECURITY DEFINER RPC (fixes20) — lets a
+// non-manager team member enable WBS during release submit without holding
+// broad project-write. Falls back to a direct update if the RPC isn't deployed.
+export async function setWbsEnabled(projectId) {
+  const { error } = await supabase.rpc('set_wbs_enabled', { p_project: projectId });
+  if (error) {
+    // pre-fixes20 DBs have no RPC — fall back to the plain update (permissive RLS)
+    if (/function .*set_wbs_enabled/i.test(error.message || '')) {
+      await supabase.from('projects').update({ wbs_enabled: true }).eq('id', projectId);
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function deleteProject(id) {

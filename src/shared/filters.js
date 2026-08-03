@@ -74,6 +74,8 @@ export function filterReleases(releases, f = {}, ctx = {}) {
     if (!any(f.environment) && (r.environment || 'Production') !== f.environment) return false;
     if (!any(f.developer) && r.submittedById !== f.developer) return false;
     if (!any(f.qa) && r.assignedQa !== f.qa) return false;
+    if (!any(f.releaseStatus) && r.status !== f.releaseStatus) return false;
+    if (!any(f.releaseType) && r.releaseType !== f.releaseType) return false;
     if (f.version && f.version.trim() && !r.version.toLowerCase().includes(f.version.trim().toLowerCase()))
       return false;
     if (f.from && r.date < f.from) return false;

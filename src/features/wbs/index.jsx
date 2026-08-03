@@ -637,7 +637,7 @@ function fmtDate(d) {
 
 /* Platform section header — shows the platform's milestone dates (Completion /
    Deployment). These are platform-level, independent of modules and tasks. */
-function PlatformHeader({ platform, items, target, canManage, open, onToggle, onSaveTarget }) {
+function PlatformHeader({ platform, items, target, canManage, open, onToggle, onSaveTarget, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [comp, setComp] = useState(target?.completionDate || '');
   const [dep, setDep] = useState(target?.deploymentDate || '');
@@ -685,6 +685,11 @@ function PlatformHeader({ platform, items, target, canManage, open, onToggle, on
             {canManage && (
               <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
                 Edit dates
+              </button>
+            )}
+            {canManage && onDelete && (
+              <button onClick={onDelete} title={`Delete the ${label} WBS`} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+                Delete {label}
               </button>
             )}
           </div>
@@ -993,6 +998,12 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     if (window.confirm('Delete the ENTIRE WBS for this project? Release history is preserved. This cannot be undone.'))
       run(() => api.deleteWbs(projectId), 'WBS deleted');
   };
+  // delete just ONE platform group (e.g. only "Admin Panel"), not the whole WBS
+  const deletePlatform = (platform, count) => {
+    const label = platform || 'Ungrouped';
+    if (window.confirm(`Delete the entire "${label}" WBS (${count} item${count === 1 ? '' : 's'})? Release history is preserved. This cannot be undone.`))
+      run(() => api.deleteWbsPlatform(projectId, platform), `${label} WBS deleted`);
+  };
 
   async function onFile(e) {
     const file = e.target.files[0];
@@ -1148,6 +1159,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
                   open={pOpen}
                   onToggle={() => toggleCol(pKey)}
                   onSaveTarget={saveTarget}
+                  onDelete={() => deletePlatform(platform, platItems.length)}
                 />
                 {pOpen && (
                   <div style={{ columnWidth: 400, columnGap: 16, marginTop: 12 }}>

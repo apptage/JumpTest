@@ -30,6 +30,7 @@ import {
   linkIssue,
   SEVERITIES,
   SEVERITY_ORDER,
+  isBlockingSeverity,
   BUG_STATUSES,
   BUG_STATUS_ORDER,
   RELEASE_COMPONENTS,
@@ -108,6 +109,7 @@ import {
 } from '@shared/ui-kit.jsx';
 import { WbsPage } from '@features/wbs';
 import { AnalyticsModal, HistoryModal, ManagerDashboard } from '@features/analytics';
+import { CommandCenter } from '@features/command-center';
 import { ProjectsTab, UsersTab, TeamsTab } from '@features/admin';
 import { SubmitModal, EditReleaseModal, DetailModal } from '@features/releases';
 import { AuthScreen, SetPasswordScreen } from '@features/auth';
@@ -140,7 +142,7 @@ export default function ReleaseTracker() {
   const [statusFilter, setStatusFilter] = useState('all');
 
   // persist the active page across refreshes (no router yet)
-  const KNOWN_PAGES = ['dashboard', 'bugs', 'projects', 'analytics', 'users', 'teams', 'settings', 'wbs'];
+  const KNOWN_PAGES = ['command-center', 'dashboard', 'bugs', 'projects', 'analytics', 'users', 'teams', 'settings', 'wbs'];
   const [page, setPage] = useState(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('jt_page') : null;
     return saved && KNOWN_PAGES.includes(saved) ? saved : 'dashboard';
@@ -152,6 +154,12 @@ export default function ReleaseTracker() {
       /* storage unavailable — non-critical */
     }
   }, [page]);
+  // Manager is confined to the Command Center + Settings — never release ops.
+  useEffect(() => {
+    if (user?.role === 'Manager' && page !== 'command-center' && page !== 'settings') {
+      setPage('command-center');
+    }
+  }, [user?.role, page]);
   const [showSubmit, setShowSubmit] = useState(false);
   const [editingRelease, setEditingRelease] = useState(null);
   const [historyProject, setHistoryProject] = useState(null);
@@ -292,8 +300,9 @@ export default function ReleaseTracker() {
   /* ---- project-membership scoping (app-level) ----
      Non-admins see only projects they're an active member of (home members of
      their team's projects + temporary support grants on other teams' projects).
-     Admins see everything. Expired support grants drop out automatically. */
-  const adminScope = user?.role === 'Admin';
+     Admins see everything. Expired support grants drop out automatically.
+     Manager is org-wide read-only (Command Center), so it gets full scope too. */
+  const adminScope = user?.role === 'Admin' || user?.role === 'Manager';
   const myTeamId = user?.teamId ?? null;
 
   const myProjectIds = useMemo(() => {
@@ -572,8 +581,11 @@ export default function ReleaseTracker() {
           });
           pickedItems.push({ id, name: n.title });
         }
-        // creating items turns on WBS for a project that had none
-        if (!wbsEnabled) await api.updateProject(form.projectId, { wbs_enabled: true });
+        // creating items turns on WBS for a project that had none. Uses the
+        // set_wbs_enabled RPC (SECURITY DEFINER) so a Developer submitter can flip
+        // the flag on their team's project even though projects UPDATE is now
+        // manager-only under the fixes20 RLS lockdown.
+        if (!wbsEnabled) await api.setWbsEnabled(form.projectId);
       }
 
       if (pickedItems.length) {
@@ -646,25 +658,20 @@ export default function ReleaseTracker() {
   }
 
   async function handleReleaseStatus(release, newStatus, qaNote) {
+    if (notAuthorized(release, 'qa')) return; // #8 — only assigned QA / team manager
     const now = new Date().toISOString();
     const patch = { status: newStatus, status_changed_at: now };
     if (qaNote != null) patch.qa_note = qaNote;
     if (newStatus === 'approved') patch.qa_completed_at = now;
     const ok = await run(async () => {
       await api.updateRelease(release.id, patch);
-      // WBS reconciliation on the terminal QA outcomes:
-      //  approved  → linked tasks Complete (unless they still carry open bugs)
-      //  sent_back → linked tasks back to In Progress
+      // WBS reconciliation on the terminal QA outcomes. BOTH outcomes use the
+      // SAME per-task rule: each linked task is Completed unless it still carries
+      // an open blocking bug. A Sent Back release does NOT blanket-fail every task
+      // — only the tasks with actual blocking bugs go back to In Progress.
       if (newStatus === 'approved' || newStatus === 'sent_back') {
         const links = (await api.fetchReleaseTasks(release.id)).filter((l) => l.taskId);
-        const itemIds = [...new Set(links.map((l) => l.taskId))];
-        const openByItem =
-          newStatus === 'approved' ? await api.fetchOpenBugCountsByTask(itemIds) : {};
-        for (const id of itemIds) {
-          const target =
-            newStatus === 'sent_back' || (openByItem[id] || 0) > 0 ? 'in_progress' : 'completed';
-          await api.setWbsItemStatus([id], target);
-        }
+        await reconcileWbsItems(links.map((l) => l.taskId));
       }
       // notify the developer who submitted the release of the QA milestone
       const verb = {
@@ -728,6 +735,23 @@ export default function ReleaseTracker() {
 
   /* ---- bugs ---- */
   async function handleAddBug(release, form, file) {
+    // A terminal release (approved / closed) has passed or left the QA gate — no
+    // new bugs may be filed against it, so its Approved status can't silently
+    // contradict the WBS. Report against the follow-up build instead.
+    if (release.status === 'approved' || release.status === 'closed') {
+      showToast('This release is already ' + (release.status === 'approved' ? 'approved' : 'closed') + ' — file bugs on a new build.', 'error');
+      return;
+    }
+    // Requirement #2 — on a WBS release, every bug MUST link to a task, otherwise
+    // reconciliation can't tell which task should stay In Progress. Only enforce
+    // when the release actually has linked tasks (bug-fix releases have none).
+    if (!form.wbsTaskId && projectsById[release.projectId]?.wbsEnabled) {
+      const links = (await api.fetchReleaseTasks(release.id)).filter((l) => l.taskId);
+      if (links.length) {
+        showToast('Link this bug to a WBS task — every bug on a WBS release must map to a task.', 'error');
+        return;
+      }
+    }
     const ok = await run(async () => {
       let screenshotUrl = '';
       if (file) screenshotUrl = await api.uploadFile('screenshots', file);
@@ -752,8 +776,9 @@ export default function ReleaseTracker() {
         new_status: 'open',
         moved_by: user.id,
       });
-      // WBS: a bug against an item means it isn't done — pull it back to In Progress.
-      if (form.wbsTaskId) {
+      // Only a BLOCKING bug (Major/Critical) fails the task back to In Progress;
+      // a minor bug is recorded but doesn't block the task from completing at QA.
+      if (form.wbsTaskId && isBlockingSeverity(form.severity)) {
         await api.setWbsItemStatus([form.wbsTaskId], 'in_progress');
       }
       // notify the developer who submitted this release
@@ -767,16 +792,55 @@ export default function ReleaseTracker() {
     if (ok) refetchBugs();
   }
 
-  // When a WBS-linked bug is verified/closed, complete the item if it no longer
-  // has any open bugs across active releases.
+  // ---- authorization (app-layer; the DB guard is fixes20.sql) ----
+  // #8 — QA actions on a release (its bugs + status transitions) are limited to the
+  //      release's ASSIGNED QA, plus the team's manager. QA B can't touch QA A's release.
+  // #9 — a Team Lead only manages their OWN team's work; Admin manages any team.
+  function isTeamManagerOf(release) {
+    const project = projectsById[release.projectId];
+    if (user.role === 'Admin') return true;
+    return user.role === 'Team Lead' && !!project?.teamId && project.teamId === (user.teamId ?? null);
+  }
+  function canQaActOn(release) {
+    if (isTeamManagerOf(release)) return true;
+    return user.role === 'QA' && (!release.assignedQa || release.assignedQa === user.id);
+  }
+  const notAuthorized = (release, kind) => {
+    if (kind === 'manage' ? isTeamManagerOf(release) : canQaActOn(release)) return false;
+    showToast(
+      kind === 'manage'
+        ? "Only this team's Team Lead or an Admin can do that."
+        : 'Only the QA assigned to this release (or the team lead) can update it.',
+      'error'
+    );
+    return true;
+  };
+
+  // Shared, per-task WBS reconciliation — the SINGLE rule used everywhere a task's
+  // QA outcome is decided (release Approved/Sent Back, and after a bug is verified).
+  // A task is evaluated on its OWN bugs, independent of the overall release status:
+  //   • has ≥1 open BLOCKING bug (Major/Critical) → In Progress
+  //   • no open blocking bug                       → Completed  (minor bugs don't block)
+  async function reconcileWbsItems(itemIds) {
+    const ids = [...new Set((itemIds || []).filter(Boolean))];
+    if (!ids.length) return;
+    // fetchBugsByTaskIds returns ACTIVE (non-verified) bugs on non-closed releases
+    const active = await api.fetchBugsByTaskIds(ids);
+    const blocked = new Set(active.filter((b) => isBlockingSeverity(b.severity)).map((b) => b.wbsTaskId));
+    const toProgress = ids.filter((id) => blocked.has(id));
+    const toComplete = ids.filter((id) => !blocked.has(id));
+    if (toProgress.length) await api.setWbsItemStatus(toProgress, 'in_progress');
+    if (toComplete.length) await api.setWbsItemStatus(toComplete, 'completed');
+  }
+
+  // When a WBS-linked bug is verified, re-evaluate just that task with the shared rule.
   async function reconcileWbsTaskForBug(release, bug) {
     if (!bug.wbsTaskId) return;
-    const open = await api.fetchOpenBugCountsByTask([bug.wbsTaskId]);
-    if ((open[bug.wbsTaskId] || 0) > 0) return;
-    await api.setWbsItemStatus([bug.wbsTaskId], 'completed');
+    await reconcileWbsItems([bug.wbsTaskId]);
   }
 
   async function handleBugStatus(release, bug, newStatus) {
+    if (notAuthorized(release, 'qa')) return; // #8 — only assigned QA / team manager
     const ok = await run(async () => {
       const patch = { status: newStatus };
       if (newStatus === 'verified') {
@@ -796,7 +860,11 @@ export default function ReleaseTracker() {
         new_status: newStatus,
         moved_by: user.id,
       });
-      if (newStatus === 'verified') await reconcileWbsTaskForBug(release, bug);
+      // Re-sync the WBS task when the bug is verified (may complete the task) OR
+      // reopened (was verified → now active again, so the task must leave Completed).
+      if (newStatus === 'verified' || (bug.status === 'verified' && ['open', 'in_progress'].includes(newStatus))) {
+        await reconcileWbsTaskForBug(release, bug);
+      }
       if (newStatus === 'fixed') {
         await api.createNotification({
           user_id: bug.createdById,
@@ -824,6 +892,9 @@ export default function ReleaseTracker() {
     // and ask the project's Team Lead to verify. QA / Team Lead / Admin close
     // immediately (they are the verifier).
     const isDevProposal = user.role === 'Developer';
+    // a developer may PROPOSE a close on any bug; everyone else (the verifier)
+    // must be the assigned QA or the team's manager (#8/#9)
+    if (!isDevProposal && notAuthorized(release, 'qa')) return;
     // capture the developer's optional reason up front (outside run(), so the
     // submit spinner doesn't spin behind a blocking prompt)
     const note = isDevProposal
@@ -884,6 +955,7 @@ export default function ReleaseTracker() {
 
   // Team Lead approves or rejects a developer's proposed close (`pending_tl`).
   async function handleBugCloseReview(release, bug, decision) {
+    if (notAuthorized(release, 'manage')) return; // #9 — only this team's lead / admin
     const ok = await run(async () => {
       if (decision === 'approve') {
         await api.updateBug(bug.id, {
@@ -924,6 +996,8 @@ export default function ReleaseTracker() {
           new_status: 'in_progress',
           moved_by: user.id,
         });
+        // it's a real (re-activated) bug — re-sync the WBS task
+        await reconcileWbsTaskForBug(release, bug);
         if (bug.resolutionById) {
           await api.createNotification({
             user_id: bug.resolutionById,
@@ -939,7 +1013,11 @@ export default function ReleaseTracker() {
 
   async function handleDeleteBug(bug) {
     if (!window.confirm('Delete this bug?')) return;
-    const ok = await run(() => api.deleteBug(bug.id));
+    const ok = await run(async () => {
+      await api.deleteBug(bug.id);
+      // deleting a bug may unblock its WBS task — re-sync it with the shared rule
+      if (bug.wbsTaskId) await reconcileWbsItems([bug.wbsTaskId]);
+    });
     if (ok) refetchBugs();
   }
 
@@ -1150,6 +1228,9 @@ export default function ReleaseTracker() {
 
   const isAdmin = user.role === 'Admin';
   const isLead = user.role === 'Team Lead';
+  // executive read-only Command Center role — named distinctly from the release
+  // "manager" (Team Lead / Admin) used in DetailModal etc. to avoid confusion.
+  const isExecutiveManager = user.role === 'Manager';
   const canManage = isAdmin || isLead; // can open the Manage panel
   const canSubmit = user.role === 'Developer' || isLead || isAdmin;
   const myTeam = teams.find((t) => t.id === myTeamId) || null;
@@ -1172,6 +1253,7 @@ export default function ReleaseTracker() {
           canSubmit={canSubmit}
           canManage={canManage}
           isAdmin={isAdmin}
+          isExec={isExecutiveManager}
           unread={unread}
           notifOpen={showNotif}
           notifications={notifications}
@@ -1182,13 +1264,15 @@ export default function ReleaseTracker() {
           onToggleNotif={handleOpenNotif}
           onNotifClick={(n) => {
             handleNotifClick(n);
-            if (n.releaseId) setPage('dashboard');
+            // Manager never opens a release — route notifications to the Command Center
+            if (n.releaseId) setPage(isExecutiveManager ? 'command-center' : 'dashboard');
           }}
           onMarkAllRead={handleMarkAllRead}
           onSubmitClick={() => setShowSubmit(true)}
           onNewProject={() => setPage('projects')}
           onInviteUser={() => setPage('users')}
           onOpenRelease={(id) => {
+            if (isExecutiveManager) return; // no release drill-through for Manager
             setSelectedId(id);
             setPage('dashboard');
           }}
@@ -1205,10 +1289,11 @@ export default function ReleaseTracker() {
             teamName={isAdmin ? null : myTeam?.name}
             canManage={canManage}
             isAdmin={isAdmin}
+            isExec={isExecutiveManager}
           />
 
           <div className="nav-main">
-        {page === 'dashboard' && (
+        {page === 'dashboard' && !isExecutiveManager && (
           <div className="app-shell">
             <aside className="shell-aside shell-left">
               <Sidebar
@@ -1294,6 +1379,18 @@ export default function ReleaseTracker() {
 
         {page !== 'dashboard' && (
           <div className="page-area anim-in">
+            {page === 'command-center' && (isExecutiveManager || isAdmin) && (
+              <CommandCenter
+                projects={scopedProjects}
+                releases={scopedReleases}
+                bugs={scopedBugs}
+                profiles={profiles}
+                teams={teams}
+                projectsById={projectsById}
+                profilesById={profilesById}
+              />
+            )}
+
             {page === 'projects' && canManage && (
               <>
                 <PageHeader title="Projects" subtitle="Create and manage projects and QA checklists" />
@@ -1445,7 +1542,7 @@ export default function ReleaseTracker() {
         />
       )}
 
-      {selected && (
+      {selected && !isExecutiveManager && (
         <DetailModal
           release={selected}
           project={projectsById[selected.projectId]}
