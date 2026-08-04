@@ -4,7 +4,7 @@
    open read-only detail panels — never the operational DetailModal. */
 import { useState, useMemo, useEffect } from 'react';
 import * as api from '@/api.js';
-import { card, ModalShell, Avatar, inputStyle } from '@/ui.jsx';
+import { card, ModalShell, Avatar, inputStyle, ghostButton } from '@/ui.jsx';
 import { PageHeader, sideHead } from '@shared/ui-kit.jsx';
 import { DataTable, Pill } from '@shared/dashboard-kit.jsx';
 import { BugTimeline } from '@shared/bug-actions.jsx';
@@ -38,7 +38,7 @@ function HealthDot({ tone }) {
   return <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: c }} />;
 }
 
-export function CommandCenter({ projects, releases, bugs, profiles, teams, projectsById, profilesById }) {
+export function CommandCenter({ projects, releases, bugs, profiles, teams, projectsById, profilesById, onOpenProject }) {
   const [nav, setNav] = useState({ level: 'team' }); // { level, devId?, projectId?, from? }
   const [teamF, setTeamF] = useState('all');
   const [panel, setPanel] = useState(null);
@@ -148,6 +148,7 @@ export function CommandCenter({ projects, releases, bugs, profiles, teams, proje
           profilesById={profilesById} wbsLoading={wbs.loading}
           onRelease={(r) => setPanel({ kind: 'release', data: r })}
           onBug={(b) => setPanel({ kind: 'bug', data: b })}
+          onOpenProject={onOpenProject}
         />
       )}
 
@@ -364,7 +365,7 @@ function DeveloperView({ dev, row, teamsById, onProject }) {
 }
 
 /* ---------- Level 3: Project View ---------- */
-function ProjectView({ row, dev, profilesById, wbsLoading, onRelease, onBug }) {
+function ProjectView({ row, dev, profilesById, wbsLoading, onRelease, onBug, onOpenProject }) {
   if (!row) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No data for this project.</div>;
   const { p } = row;
   const name = (id) => profilesById[id]?.name || '—';
@@ -403,6 +404,17 @@ function ProjectView({ row, dev, profilesById, wbsLoading, onRelease, onBug }) {
             <HealthDot tone={health.tone} />{health.label}
           </span>
           {milestoneRisk !== 'none' && <Pill label={`Milestone: ${ml.label}`} tone={ml.tone} />}
+          {onOpenProject && (
+            <>
+              <span style={{ flex: 1 }} />
+              <button
+                onClick={() => onOpenProject(p.id)}
+                style={{ ...ghostButton, padding: '6px 12px', fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                Open in Projects hub →
+              </button>
+            </>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 26, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 200 }}>

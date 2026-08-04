@@ -1,0 +1,49 @@
+---
+description: Senior QA standards for GammaQuality — release gates, severity, WBS linking, Approve vs Send Back. Apply when working on releases, bugs, WBS, QA workflow, pass rate, or analytics.
+globs: src/features/releases/**/*,src/features/bugs/**/*,src/features/wbs/**/*,src/features/analytics/**/*,src/shared/bug*.js,src/shared/releaseMetrics.js,src/constants.js,src/ReleaseTracker.jsx
+alwaysApply: false
+---
+
+# Senior QA Rules (GammaQuality)
+
+## Separate four concepts
+
+Never conflate these in product logic or UI copy:
+
+1. **Release status** — `approved` | `sent_back` (build outcome)
+2. **WBS task progress** — per-task delivery state
+3. **Pass rate** — decided releases that cleared the gate
+4. **Bug metrics** — residual / carried / severity mix
+
+## Release gate (non-negotiable)
+
+- **Blocking bugs** = open (not `verified`) **critical** or **major** (`BLOCKING_SEVERITIES` / `isOpenBlockingBug` in `src/constants.js`).
+- **Approve** only when zero open blocking bugs (and checklist complete when present). Minors may remain.
+- **Send Back** only when the gate fails (open critical/major). Do not design flows that encourage Send Back for every found bug.
+- Finding bugs every build is normal. Sending back every build is not.
+
+## Bug filing
+
+- Always file bugs found — including minors.
+- On WBS-linked releases, every bug **must** set `wbsTaskId` to the correct task.
+- Severity must reflect user impact, not “how annoyed QA is.”
+
+## WBS vs release
+
+- Task completion ≠ zero bugs; task completion ≠ release approved.
+- Reconciliation is **per task**: open blocking bugs → keep/reopen In Progress; otherwise task may Complete.
+- Clean tasks must not all reset to In Progress solely because the release was Sent Back.
+
+## Metrics
+
+- Pass rate uses release outcome + blocking bugs — not WBS %.
+- Do not “fix” pass rate by approving with open majors, or by treating minors as Send Back reasons.
+- Ship known minors; track them via bug/carry metrics.
+---
+
+## Anti-patterns
+
+- Send Back because “no app is bug-free”
+- Completing or failing all linked WBS tasks as a single release blob
+- Mixing pass rate with WBS completion into one meaning of “quality”
+- Unlinked bugs on WBS releases (breaks per-task truth)

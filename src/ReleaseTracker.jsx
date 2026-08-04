@@ -114,8 +114,9 @@ import { ProjectsTab, UsersTab, TeamsTab } from '@features/admin';
 import { SubmitModal, EditReleaseModal, DetailModal } from '@features/releases';
 import { AuthScreen, SetPasswordScreen } from '@features/auth';
 import { BugsPage } from '@features/bugs';
-import { StatCards, FilterBar, ReleaseCard, Sidebar, RightPanel } from '@features/dashboard';
-import { NavRail, Header, SettingsPage } from '@/shell';
+import { DashboardHome, ReleasesPage } from '@features/dashboard';
+import { ProjectHub } from '@features/project-hub';
+import { NavRail, SettingsPage } from '@/shell';
 import { useAppData } from '@shared/useAppData.js';
 import { filterBugs } from '@shared/filters.js';
 import { usePush } from '@/push/usePush.js';
@@ -164,6 +165,7 @@ export default function ReleaseTracker() {
   const [editingRelease, setEditingRelease] = useState(null);
   const [historyProject, setHistoryProject] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [hubProjectId, setHubProjectId] = useState(null); // Project Hub selection (deep-linkable)
   const [showNotif, setShowNotif] = useState(false);
 
   const showToast = useCallback((message, kind = 'success') => {
@@ -1157,7 +1159,10 @@ export default function ReleaseTracker() {
     if (ok) refetchProfiles();
     return ok;
   }
-  async function handleUpdateMember(id, patch) {
+  // NOTE: renamed from a second `handleUpdateMember` — it collided with the
+  // project-member updater above (1123), shadowing it so ProjectsTab's member-role
+  // edits silently called updateProfile. This handles PROFILE (user) updates.
+  async function handleUpdateProfile(id, patch) {
     const ok = await run(() => api.updateProfile(id, patch), 'Member updated');
     if (ok) refetchProfiles();
     return ok;
@@ -1246,87 +1251,92 @@ export default function ReleaseTracker() {
 
   return (
     <>
-      {/* full-width header sits above the rail so the top-left corner is never bare */}
-      <Header
-          user={user}
-          page={page}
-          canSubmit={canSubmit}
-          canManage={canManage}
-          isAdmin={isAdmin}
-          isExec={isExecutiveManager}
-          unread={unread}
-          notifOpen={showNotif}
-          notifications={notifications}
-          projects={scopedProjects}
-          releases={scopedReleases}
-          bugs={scopedBugs}
-          projectsById={projectsById}
-          onToggleNotif={handleOpenNotif}
-          onNotifClick={(n) => {
-            handleNotifClick(n);
-            // Manager never opens a release — route notifications to the Command Center
-            if (n.releaseId) setPage(isExecutiveManager ? 'command-center' : 'dashboard');
-          }}
-          onMarkAllRead={handleMarkAllRead}
-          onSubmitClick={() => setShowSubmit(true)}
-          onNewProject={() => setPage('projects')}
-          onInviteUser={() => setPage('users')}
-          onOpenRelease={(id) => {
-            if (isExecutiveManager) return; // no release drill-through for Manager
-            setSelectedId(id);
-            setPage('dashboard');
-          }}
-          onNavigate={setPage}
-          onSettings={() => setPage('settings')}
-          onSignOut={handleSignOut}
-        />
-
+        {/* The dark rail is the only chrome — brand, New menu, nav, notifications
+            and the profile menu all live in NavRail; there is no top header bar. */}
         <div className="nav-layout">
           <NavRail
             page={page}
             onNavigate={setPage}
             user={user}
             teamName={isAdmin ? null : myTeam?.name}
+            canSubmit={canSubmit}
             canManage={canManage}
             isAdmin={isAdmin}
             isExec={isExecutiveManager}
+            unread={unread}
+            notifOpen={showNotif}
+            notifications={notifications}
+            onToggleNotif={handleOpenNotif}
+            onNotifClick={(n) => {
+              handleNotifClick(n);
+              // Manager never opens a release — route notifications to the Command Center
+              if (n.releaseId) setPage(isExecutiveManager ? 'command-center' : 'dashboard');
+            }}
+            onMarkAllRead={handleMarkAllRead}
+            onSubmitClick={() => setShowSubmit(true)}
+            onNewProject={() => setPage('projects')}
+            onInviteUser={() => setPage('users')}
+            onSettings={() => setPage('settings')}
+            onSignOut={handleSignOut}
           />
 
           <div className="nav-main">
         {page === 'dashboard' && !isExecutiveManager && (
-          <div className="app-shell">
-            <aside className="shell-aside shell-left">
-              <Sidebar
+          <div className="page-area">
+            <DashboardHome
+              releases={scopedReleases}
+              bugs={scopedBugs}
+              projects={scopedProjects}
+              profiles={profiles}
+              projectsById={projectsById}
+              counts={counts}
+              openBugTotal={openBugTotal}
+              user={user}
+              teamName={isAdmin ? null : myTeam?.name}
+              canSubmit={canSubmit}
+              onSubmit={() => setShowSubmit(true)}
+              onOpenRelease={(id) => setSelectedId(id)}
+              onNavigate={setPage}
+            />
+          </div>
+        )}
+
+        {page !== 'dashboard' && (
+          <div className="page-area anim-in">
+            {page === 'projecthub' && !isExecutiveManager && (
+              <ProjectHub
+                user={user}
                 projects={scopedProjects}
                 releases={scopedReleases}
-                teamName={isAdmin ? null : myTeam?.name}
-                openBugTotal={openBugTotal}
-                disputedTotal={disputedTotal}
-                projectFilter={projectFilter}
-                platformFilter={platformFilter}
-                onSelect={(pid, plat) => {
-                  setProjectFilter(pid);
-                  setPlatformFilter(plat);
-                }}
+                bugs={scopedBugs}
+                profiles={profiles}
+                projectMembers={projectMembers}
+                projectsById={projectsById}
+                profilesById={profilesById}
+                releaseById={releaseById}
+                canManage={canManage}
+                isSubmitting={isSubmitting}
+                showToast={showToast}
+                projectId={hubProjectId}
+                onSelectProject={setHubProjectId}
+                onOpenRelease={(id) => setSelectedId(id)}
+                onSubmit={() => setShowSubmit(true)}
+                onAddMember={handleAddMember}
+                onUpdateMember={handleUpdateMember}
+                onRemoveMember={handleRemoveMember}
               />
-            </aside>
+            )}
 
-            <main style={{ minWidth: 0 }}>
-              <div style={{ marginBottom: 18 }}>
-                <h1 style={{ fontSize: 23, fontWeight: 700, margin: 0 }}>
-                  {greeting()}, {user.name.split(/[\s_]+/)[0]}
-                </h1>
-                <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
-                  {scopedReleases.length} release{scopedReleases.length === 1 ? '' : 's'} ·{' '}
-                  {scopedProjects.length} project{scopedProjects.length === 1 ? '' : 's'} ·{' '}
-                  {openBugTotal} open bug{openBugTotal === 1 ? '' : 's'}
-                </p>
-              </div>
-
-              <StatCards counts={counts} />
-
-              <FilterBar
+            {page === 'releases' && !isExecutiveManager && (
+              <ReleasesPage
+                releases={filtered}
+                scopedCount={scopedReleases.length}
+                counts={counts}
+                openBugTotal={openBugTotal}
                 projects={scopedProjects}
+                projectsById={projectsById}
+                profilesById={profilesById}
+                openBugCountByRelease={openBugCountByRelease}
                 projectFilter={projectFilter}
                 platformFilter={platformFilter}
                 typeFilter={typeFilter}
@@ -1335,50 +1345,13 @@ export default function ReleaseTracker() {
                 onPlatform={setPlatformFilter}
                 onType={setTypeFilter}
                 onStatus={setStatusFilter}
-                count={filtered.length}
-              />
-
-              {loading ? (
-                <Empty>Loading releases…</Empty>
-              ) : filtered.length === 0 ? (
-                <Empty>
-                  {scopedReleases.length === 0
-                    ? 'No releases yet — submit your first build.'
-                    : 'No releases match your filters.'}
-                </Empty>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {filtered.map((r) => (
-                    <ReleaseCard
-                      key={r.id}
-                      release={r}
-                      project={projectsById[r.projectId]}
-                      openBugs={openBugCountByRelease[r.id] || 0}
-                      assignedName={r.assignedQa ? profilesById[r.assignedQa]?.name : null}
-                      onClick={() => setSelectedId(r.id)}
-                    />
-                  ))}
-                </div>
-              )}
-            </main>
-
-            <aside className="shell-aside shell-right">
-              <RightPanel
-                releases={scopedReleases}
-                bugs={scopedBugs}
+                loading={loading}
                 canSubmit={canSubmit}
-                canManage={canManage}
                 onSubmit={() => setShowSubmit(true)}
-                onAdmin={() => setPage('projects')}
-                onAnalytics={() => setPage('analytics')}
-                onOpenRelease={(id) => setSelectedId(id)}
+                onOpen={(id) => setSelectedId(id)}
               />
-            </aside>
-          </div>
-        )}
+            )}
 
-        {page !== 'dashboard' && (
-          <div className="page-area anim-in">
             {page === 'command-center' && (isExecutiveManager || isAdmin) && (
               <CommandCenter
                 projects={scopedProjects}
@@ -1388,6 +1361,11 @@ export default function ReleaseTracker() {
                 teams={teams}
                 projectsById={projectsById}
                 profilesById={profilesById}
+                onOpenProject={
+                  isExecutiveManager
+                    ? undefined // Manager is read-only — no hub drill-through
+                    : (pid) => { setHubProjectId(pid); setPage('projecthub'); }
+                }
               />
             )}
 
@@ -1483,7 +1461,7 @@ export default function ReleaseTracker() {
                   teamsById={teamsById}
                   isSubmitting={isSubmitting}
                   showToast={showToast}
-                  onUpdateMember={handleUpdateMember}
+                  onUpdateMember={handleUpdateProfile}
                   onCreateUser={handleCreateUser}
                   refetchProfiles={refetchProfiles}
                 />

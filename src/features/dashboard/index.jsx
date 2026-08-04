@@ -2,8 +2,10 @@
    nav + at-a-glance), and the right panel. Moved verbatim from ReleaseTracker.jsx (Phase 0). */
 import { useState } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, StatusBadge, TypeBadge, Avatar, CountBadge } from '@/ui.jsx';
-import { Chevron, StatBig } from '@shared/dashboard-kit.jsx';
-import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime } from '@shared/ui-kit.jsx';
+import { Chevron, StatBig, StatCard, StageBars, TrendChart, Segmented, Pill } from '@shared/dashboard-kit.jsx';
+import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, greeting } from '@shared/ui-kit.jsx';
+import { computeReleaseMetrics, computeWorkload } from '@shared/releaseMetrics.js';
+import { aggregateBugMetrics } from '@shared/bugMetrics.js';
 import {
   STATUSES,
   STATUS_ORDER,
@@ -37,6 +39,398 @@ const STATUS_TONE = {
   sent_back: 'danger',
   closed: 'neutral',
 };
+
+/* Bug pipeline stages (ordered, with a colour each) for the Pipeline panel. */
+const BUG_STAGES = [
+  ['open', 'Open', 'var(--danger)'],
+  ['in_progress', 'In Progress', 'var(--warning)'],
+  ['disputed', 'Needs clarification', '#a855f7'],
+  ['fixed', 'Fixed — awaiting QA', 'var(--brand)'],
+  ['pending_tl', 'Pending Team Lead', 'var(--info)'],
+  ['verified', 'Verified', 'var(--success)'],
+];
+
+/* Bucket releases into the last N calendar months (count submitted per month). */
+function monthlyReleaseCounts(releases, n = 6) {
+  const now = new Date();
+  const months = [];
+  for (let i = n - 1; i >= 0; i--) months.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+  const labels = months.map((d) => d.toLocaleString('en-US', { month: 'short' }));
+  const data = months.map((d) =>
+    releases.filter((r) => {
+      const c = new Date(r.createdAt);
+      return c.getFullYear() === d.getFullYear() && c.getMonth() === d.getMonth();
+    }).length
+  );
+  return { labels, data };
+}
+
+/* ================================================================== */
+/* DashboardHome — the reports dashboard (matches the target layout):  */
+/* title, two rows of 5 KPI cards, a trend chart + pipeline panel,     */
+/* and a bottom row of leaderboard / activity / forecast.             */
+/* ================================================================== */
+export function DashboardHome({
+  releases, bugs, projects, profiles, projectsById, profilesById,
+  counts, openBugTotal, user, teamName, canSubmit, onSubmit, onOpenRelease, onNavigate,
+}) {
+  const [pipeMode, setPipeMode] = useState('releases');
+  const firstName = (user?.name || '').split(/[\s_]+/)[0] || 'there';
+
+  // ---- headline metrics (all from the shared metric layer) ----
+  const m = computeReleaseMetrics(releases, bugs);
+  const bm = aggregateBugMetrics(bugs);
+  const totalReleases = releases.length;
+  const approved = counts.approved || 0;
+  const passRate = Math.round(m.passRate || 0);
+  const cycle = m.cycleDays || 0;
+  const awaiting = counts.qa_pending || 0;
+  const inQa = (counts.qa_in_progress || 0) + (counts.qa_done || 0);
+  const sentBack = counts.sent_back || 0;
+  const blocking = bugs.filter(
+    (b) => b.status !== 'verified' && (b.severity === 'critical' || b.severity === 'major')
+  ).length;
+  const verified = bm.byStatus.verified || 0;
+  const passGap = passRate - 75; // vs the 75% target
+
+  // ---- trend chart (releases submitted per month, vs a modest target line) ----
+  const { labels, data } = monthlyReleaseCounts(releases, 6);
+  const goal = Math.max(1, Math.round(totalReleases / 6) + 1);
+  const target = data.map(() => goal);
+
+  // ---- pipeline panel data ----
+  const releaseStages = STATUS_ORDER.map((k) => ({
+    label: STATUSES[k].label, count: counts[k] || 0, color: STATUSES[k].color,
+  }));
+  const bugStages = BUG_STAGES.map(([k, label, color]) => ({ label, count: bm.byStatus[k] || 0, color }));
+
+  // ---- leaderboard (top workload) ----
+  const workload = computeWorkload(profiles, releases, bugs, 'all').slice(0, 5);
+  const maxLoad = Math.max(1, ...workload.map((w) => w.activeReleases + w.pendingReviews + w.openBugs));
+
+  // ---- activity feed (recent releases + bugs merged) ----
+  const activity = [
+    ...releases.map((r) => ({
+      t: new Date(r.createdAt).getTime(), kind: 'release', id: r.id,
+      text: `${r.submittedBy || 'Someone'} submitted ${formatVersion(r.version)}`,
+      sub: projectsById[r.projectId]?.name || r.platform,
+    })),
+    ...bugs.map((b) => ({
+      t: new Date(b.createdAt).getTime(), kind: 'bug', id: b.releaseId,
+      text: `${b.createdBy || 'Someone'} reported "${b.title}"`,
+      sub: b.severity,
+    })),
+  ].sort((a, b) => b.t - a.t).slice(0, 8);
+
+  const kpiFoot = { fontSize: 10.5 };
+  const panelHead = { fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' };
+  const panelSub = { fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 };
+
+  return (
+    <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
+      {/* title row */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
+        <div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>QA Reports</h1>
+          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '5px 0 0' }}>
+            {greeting()}, {firstName} · all-time performance overview{teamName ? ' — ' : ''}
+            {teamName && <strong style={{ color: 'var(--color-text-primary)' }}>{teamName}</strong>}
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...ghostButton, display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => onNavigate && onNavigate('releases')}>
+            <IconPackage size={15} /> All releases
+          </button>
+          {canSubmit && (
+            <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={onSubmit}>
+              <IconUpload size={15} /> Submit release
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* KPI row 1 */}
+      <div className="dash-kpis" style={{ marginBottom: 14 }}>
+        <StatCard label="Total Releases" value={totalReleases.toLocaleString()} foot="ALL TIME" />
+        <StatCard label="QA Approved" value={approved.toLocaleString()} foot="SHIPPED CLEAN" />
+        <StatCard label="Pass Rate" value={`${passRate}%`} delta={`${passGap >= 0 ? '+' : ''}${passGap}pp`} deltaDir={passGap >= 0 ? 'up' : 'down'} foot="VS 75% TARGET" />
+        <StatCard label="Open Bugs" value={openBugTotal.toLocaleString()} foot="ACTIVE · UNVERIFIED" />
+        <StatCard label="Avg Cycle Time" value={`${cycle}d`} foot="SUBMIT → APPROVE" />
+      </div>
+
+      {/* KPI row 2 */}
+      <div className="dash-kpis" style={{ marginBottom: 22 }}>
+        <StatCard label="Awaiting QA" value={awaiting.toLocaleString()} foot="IN THE QUEUE" />
+        <StatCard label="In QA" value={inQa.toLocaleString()} foot="BEING REVIEWED" />
+        <StatCard label="Returned for Rework" value={sentBack.toLocaleString()} foot={sentBack ? 'SENT BACK TO DEV' : 'NONE PENDING'} />
+        <StatCard label="Blocking Bugs" value={blocking.toLocaleString()} foot="MAJOR · CRITICAL OPEN" />
+        <StatCard label="Verified Bugs" value={verified.toLocaleString()} foot="RESOLVED · CLOSED" />
+      </div>
+
+      {/* chart + pipeline */}
+      <div className="dash-mid" style={{ marginBottom: 16 }}>
+        <div style={{ ...card, padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+            <div>
+              <div style={panelHead}>Releases Over Time</div>
+              <div style={panelSub}>Submitted per month · last 6 months</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 14, height: 3, borderRadius: 2, background: 'var(--brand)' }} /> Actual
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 14, height: 0, borderTop: '2px dashed var(--color-text-tertiary)' }} /> Target
+              </span>
+            </div>
+          </div>
+          <TrendChart data={data} target={target} xLabels={labels} height={300} />
+        </div>
+
+        <div style={{ ...card, padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 16 }}>
+            <div>
+              <div style={panelHead}>Pipeline</div>
+              <div style={panelSub}>Count by stage · all time</div>
+            </div>
+            <Segmented
+              options={[['releases', 'Releases'], ['bugs', 'Bugs']]}
+              value={pipeMode}
+              onChange={setPipeMode}
+            />
+          </div>
+          {pipeMode === 'releases' ? (
+            <StageBars stages={releaseStages} total={totalReleases} totalLabel="Total Releases" />
+          ) : (
+            <StageBars stages={bugStages} total={bm.total} totalLabel="Total Bugs" />
+          )}
+        </div>
+      </div>
+
+      {/* bottom row */}
+      <div className="dash-bottom">
+        {/* leaderboard */}
+        <div style={{ ...card, padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={panelHead}>Team Leaderboard</div>
+            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{workload.length} members</span>
+          </div>
+          <div style={{ ...panelSub, marginBottom: 14 }}>Active workload — releases, reviews & open bugs</div>
+          {workload.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', padding: '10px 0' }}>No active workload.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+              {workload.map((w) => {
+                const load = w.activeReleases + w.pendingReviews + w.openBugs;
+                return (
+                  <div key={w.m.id} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    <Avatar name={w.m.name} size={30} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.m.name}</span>
+                        <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{load}</span>
+                      </div>
+                      <div style={{ height: 5, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden', marginTop: 5 }}>
+                        <div style={{ height: '100%', width: `${Math.max(6, (load / maxLoad) * 100)}%`, borderRadius: 999, background: 'var(--brand)' }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* activity feed */}
+        <div style={{ ...card, padding: 20 }}>
+          <div style={panelHead}>Activity Feed</div>
+          <div style={{ ...panelSub, marginBottom: 14 }}>Latest releases & bug reports</div>
+          {activity.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', padding: '10px 0' }}>No recent activity.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {activity.map((a, i) => (
+                <button
+                  key={i}
+                  onClick={() => a.id && onOpenRelease(a.id)}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left',
+                    padding: '8px 8px', borderRadius: 8, border: 'none', background: 'transparent', cursor: a.id ? 'pointer' : 'default', fontFamily: 'inherit',
+                  }}
+                  className="mgr-row"
+                >
+                  <span style={{ marginTop: 2, color: a.kind === 'bug' ? 'var(--danger)' : 'var(--brand)', display: 'inline-flex' }}>
+                    {a.kind === 'bug' ? <IconBug size={15} /> : <IconUpload size={15} />}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 12.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.text}</span>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{a.sub} · {relativeTime(a.t)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* forecast (placeholder, matches the target's "Deal Forecast — Coming Soon") */}
+        <div style={{ ...card, padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={panelHead}>Release Forecast</div>
+            <Pill label="Coming soon" tone="info" />
+          </div>
+          <div style={{ ...panelSub, marginBottom: 16 }}>Projected ship dates from WBS milestones</div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '26px 0', textAlign: 'center' }}>
+            <IconChart size={30} />
+            <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', maxWidth: 220 }}>
+              Milestone-based forecasting lands here next — track projected vs. actual delivery per platform.
+            </div>
+            <button style={{ ...ghostButton, marginTop: 4 }} onClick={() => onNavigate && onNavigate('wbs')}>Open WBS</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Clickable summary chip — doubles as a status quick-filter. */
+function StatChip({ label, value, color, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 12,
+        cursor: 'pointer', fontFamily: 'inherit', boxShadow: 'var(--shadow-sm)',
+        background: active ? 'var(--brand)' : 'var(--color-background-primary)',
+        color: active ? '#fff' : 'var(--color-text-primary)',
+        border: `1px solid ${active ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: 999, background: active ? '#fff' : color, flexShrink: 0 }} />
+      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</span>
+      <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700, color: active ? '#fff' : 'var(--color-text-secondary)' }}>{value}</span>
+    </button>
+  );
+}
+
+/* ================================================================== */
+/* ReleasesPage — the dedicated "Releases" section (its own sidebar     */
+/* item). Header + clickable status summary + search & filters + list.  */
+/* ================================================================== */
+export function ReleasesPage({
+  releases, scopedCount, counts, openBugTotal, projects, projectsById, profilesById, openBugCountByRelease,
+  projectFilter, platformFilter, typeFilter, statusFilter, onProject, onPlatform, onType, onStatus,
+  loading, canSubmit, onSubmit, onOpen,
+}) {
+  const [q, setQ] = useState('');
+  const term = q.trim().toLowerCase();
+  const shown = term
+    ? releases.filter(
+        (r) =>
+          `v${r.version}`.toLowerCase().includes(term) ||
+          (projectsById[r.projectId]?.name || '').toLowerCase().includes(term) ||
+          (r.releaseNotes || '').toLowerCase().includes(term)
+      )
+    : releases;
+
+  const chips = [
+    ['all', 'All', 'var(--color-text-tertiary)'],
+    ['qa_pending', STATUSES.qa_pending.label, STATUSES.qa_pending.color],
+    ['qa_in_progress', STATUSES.qa_in_progress.label, STATUSES.qa_in_progress.color],
+    ['qa_done', STATUSES.qa_done.label, STATUSES.qa_done.color],
+    ['approved', STATUSES.approved.label, STATUSES.approved.color],
+    ['sent_back', STATUSES.sent_back.label, STATUSES.sent_back.color],
+  ];
+
+  return (
+    <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+        <div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>Releases</h1>
+          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '5px 0 0' }}>
+            Every build across your projects · <strong style={{ color: 'var(--color-text-primary)' }}>{scopedCount}</strong> total
+            {openBugTotal > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{openBugTotal}</strong> open bug{openBugTotal === 1 ? '' : 's'}</>}
+          </p>
+        </div>
+        {canSubmit && (
+          <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={onSubmit}>
+            <IconUpload size={15} /> Submit release
+          </button>
+        )}
+      </div>
+
+      {/* status summary chips (click to filter by status) */}
+      <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+        {chips.map(([key, label, color]) => (
+          <StatChip
+            key={key}
+            label={label}
+            color={color}
+            value={key === 'all' ? scopedCount : counts[key] || 0}
+            active={statusFilter === key}
+            onClick={() => onStatus(key)}
+          />
+        ))}
+      </div>
+
+      {/* toolbar: dropdown filters + text search */}
+      <div style={{ ...card, padding: 12, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <FilterBar
+          projects={projects}
+          projectFilter={projectFilter}
+          platformFilter={platformFilter}
+          typeFilter={typeFilter}
+          statusFilter={statusFilter}
+          onProject={onProject}
+          onPlatform={onPlatform}
+          onType={onType}
+          onStatus={onStatus}
+          count={shown.length}
+        />
+        <span style={{ flex: 1 }} />
+        <div style={{ position: 'relative', flex: '0 1 260px' }}>
+          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>
+            <IconSearch size={15} />
+          </span>
+          <input
+            value={q}
+            placeholder="Search version, project, notes…"
+            onChange={(e) => setQ(e.target.value)}
+            style={{ ...inputStyle, paddingLeft: 34, height: 38, width: '100%' }}
+          />
+        </div>
+      </div>
+
+      {/* list */}
+      {loading ? (
+        <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading releases…</div>
+      ) : shown.length === 0 ? (
+        <div style={{ ...card, padding: 48, textAlign: 'center' }}>
+          <div style={{ display: 'inline-flex', marginBottom: 10, color: 'var(--color-text-tertiary)' }}><IconPackage size={30} /></div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            {scopedCount === 0 ? 'No releases yet' : 'No releases match your filters'}
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>
+            {scopedCount === 0 ? 'Submit your first build to get started.' : 'Try clearing a filter or the search box.'}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {shown.map((r) => (
+            <ReleaseCard
+              key={r.id}
+              release={r}
+              project={projectsById[r.projectId]}
+              openBugs={openBugCountByRelease[r.id] || 0}
+              assignedName={r.assignedQa ? profilesById[r.assignedQa]?.name : null}
+              onClick={() => onOpen(r.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function StatCards({ counts }) {
   const n = (k) => counts[k] || 0;

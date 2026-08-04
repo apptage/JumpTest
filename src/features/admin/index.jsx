@@ -1109,7 +1109,7 @@ function ProjectRow({
   );
 }
 
-function ProjectMembersSection({
+export function ProjectMembersSection({
   project,
   profiles,
   members,

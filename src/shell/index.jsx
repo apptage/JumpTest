@@ -8,59 +8,175 @@ import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
 import { EDIT_WINDOW_HOURS, SLA_HOURS, BUG_SLA_DAYS } from '@/constants.js';
 import {
   IconBell, IconBug, IconChart, IconCog, IconFolder, IconGrid,
-  IconLayers, IconPlus, IconPower, IconSearch, IconSliders, IconTree, IconUsers, IconUpload,
+  IconLayers, IconPackage, IconPlus, IconPower, IconSearch, IconSliders, IconTree, IconUsers, IconUpload,
 } from '@/icons.jsx';
 
-export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, isExec }) {
+function Chevron({ size = 14, dir = 'down' }) {
+  const d = { down: 'm6 9 6 6 6-6', up: 'm6 15 6-6 6 6', right: 'm9 6 6 6-6 6', left: 'm15 6-6 6 6 6' }[dir];
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+/* The dark navigation rail is the app's ONLY chrome now — it carries the brand,
+   the New-actions menu, the primary nav, notifications (with unread badge) and
+   the user/profile menu pinned to the bottom. No top header bar. */
+export function NavRail({
+  page, onNavigate, teamName, canManage, isAdmin, isExec,
+  user, canSubmit, unread, notifications, notifOpen,
+  onToggleNotif, onNotifClick, onMarkAllRead,
+  onSubmitClick, onNewProject, onInviteUser, onSettings, onSignOut,
+}) {
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const items = [
     // Manager's executive home; also a first-class item for Admin (bridge)
     { key: 'command-center', label: 'Command Center', Icon: IconSliders, show: isExec || isAdmin },
     { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: !isExec },
+    { key: 'projecthub', label: 'Projects', Icon: IconFolder, show: !isExec },
+    { key: 'releases', label: 'Releases', Icon: IconPackage, show: !isExec },
     { key: 'bugs', label: 'Bugs', Icon: IconBug, show: !isExec },
     { key: 'wbs', label: 'WBS', Icon: IconTree, show: !isExec },
-    { key: 'projects', label: 'Projects', Icon: IconFolder, show: canManage },
+    { key: 'projects', label: 'Manage Projects', Icon: IconSliders, show: canManage },
     { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
     { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
     { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
     { key: 'settings', label: 'Settings', Icon: IconCog, show: true },
   ].filter((i) => i.show);
 
+  const menuItem = {
+    display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '9px 11px',
+    fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', background: 'transparent',
+    border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', borderRadius: 6,
+  };
+
   return (
     <nav className="nav-rail">
-      <div style={{ padding: '2px 8px 14px', display: 'flex', alignItems: 'center', gap: 9 }}>
-        <Logo size={26} />
-        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15.5 }}>
-          Jump<span style={{ color: 'var(--brand)' }}>Test</span>
+      {/* brand */}
+      <div style={{ padding: '2px 6px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 10, background: 'var(--brand-gradient)',
+          display: 'grid', placeItems: 'center', color: '#fff', fontFamily: 'var(--font-display)',
+          fontWeight: 800, fontSize: 17, boxShadow: '0 2px 8px rgba(108,99,255,0.45)', flexShrink: 0,
+        }}>J</div>
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--rail-fg-strong)', flex: 1 }}>
+          JumpTest
         </span>
       </div>
+
+      {/* New — quick-create menu (hidden for the read-only Manager) */}
+      {!isExec && (canSubmit || canManage) && (
+        <div style={{ position: 'relative', padding: '0 4px 12px' }}>
+          <button
+            onClick={() => setActionsOpen((v) => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, width: '100%',
+              padding: '10px 12px', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+              color: '#fff', background: 'var(--brand)', border: 'none', borderRadius: 10,
+              boxShadow: '0 2px 10px rgba(108,99,255,0.4)',
+            }}
+          >
+            <IconPlus size={15} /> New
+          </button>
+          {actionsOpen && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setActionsOpen(false)} />
+              <div style={{ ...card, position: 'absolute', top: 46, left: 4, right: 4, zIndex: 50, padding: 4, boxShadow: 'var(--shadow-md)' }}>
+                {canSubmit && (
+                  <button style={menuItem} onClick={() => { setActionsOpen(false); onSubmitClick(); }}>
+                    <IconUpload size={15} /> Submit release
+                  </button>
+                )}
+                {canManage && (
+                  <button style={menuItem} onClick={() => { setActionsOpen(false); onNewProject(); }}>
+                    <IconFolder size={15} /> New project
+                  </button>
+                )}
+                {canManage && (
+                  <button style={menuItem} onClick={() => { setActionsOpen(false); onInviteUser(); }}>
+                    <IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* primary nav */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {items.map((it) => {
           const active = page === it.key;
           return (
-            <button
-              key={it.key}
-              onClick={() => onNavigate(it.key)}
-              className={active ? 'nav-item on' : 'nav-item'}
-            >
+            <button key={it.key} onClick={() => onNavigate(it.key)} className={active ? 'nav-item on' : 'nav-item'}>
               <it.Icon size={17} />
               <span style={{ flex: 1, textAlign: 'left' }}>{it.label}</span>
             </button>
           );
         })}
+
+        {/* notifications — nav-item styled, with the unread badge on the right */}
+        <div style={{ position: 'relative' }}>
+          <button onClick={onToggleNotif} className={notifOpen ? 'nav-item on' : 'nav-item'}>
+            <IconBell size={17} />
+            <span style={{ flex: 1, textAlign: 'left' }}>Notifications</span>
+            {unread > 0 && <CountBadge count={unread} />}
+          </button>
+          {notifOpen && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={onToggleNotif} />
+              <div style={{ position: 'fixed', left: 14, bottom: 84, width: 300, zIndex: 50 }}>
+                <NotificationsDropdown
+                  notifications={notifications}
+                  onNotifClick={onNotifClick}
+                  onMarkAllRead={onMarkAllRead}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      {teamName && (
-        <div
+
+      {/* profile — pinned to the bottom, opens Settings / Sign out */}
+      <div style={{ marginTop: 'auto', position: 'relative', paddingTop: 12 }}>
+        {teamName && (
+          <div style={{ fontSize: 11, color: 'var(--rail-muted)', padding: '0 10px 10px' }}>
+            Team · <span style={{ color: 'var(--rail-fg)', fontWeight: 600 }}>{teamName}</span>
+          </div>
+        )}
+        <button
+          onClick={() => setProfileOpen((v) => !v)}
           style={{
-            marginTop: 'auto',
-            paddingTop: 14,
-            fontSize: 11,
-            color: 'var(--color-text-tertiary)',
-            padding: '14px 11px 0',
+            display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 8px',
+            background: 'var(--rail-hover)', border: '1px solid var(--rail-border)', borderRadius: 12,
+            cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
-          Team · <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>{teamName}</span>
-        </div>
-      )}
+          <Avatar name={user.name} size={30} />
+          <div style={{ flex: 1, textAlign: 'left', lineHeight: 1.2, overflow: 'hidden' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--rail-fg-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user.name}
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--rail-muted)' }}>{user.role}</div>
+          </div>
+          <span style={{ color: 'var(--rail-muted)' }}><Chevron dir={profileOpen ? 'down' : 'up'} /></span>
+        </button>
+        {profileOpen && (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setProfileOpen(false)} />
+            <div style={{ ...card, position: 'absolute', bottom: 56, left: 0, right: 0, zIndex: 50, padding: 4, boxShadow: 'var(--shadow-md)' }}>
+              <button style={menuItem} onClick={() => { setProfileOpen(false); onSettings(); }}>
+                <IconCog size={15} /> Settings
+              </button>
+              <button style={{ ...menuItem, color: '#dc2626' }} onClick={() => { setProfileOpen(false); onSignOut(); }}>
+                <IconPower size={15} /> Sign out
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </nav>
   );
 }
@@ -148,9 +264,11 @@ export function SettingsPage({ user, team, onSignOut }) {
 const PAGE_TITLES = {
   'command-center': 'Command Center',
   dashboard: 'Dashboard',
+  projecthub: 'Projects',
+  releases: 'Releases',
   bugs: 'Bugs',
   wbs: 'WBS',
-  projects: 'Projects',
+  projects: 'Manage Projects',
   analytics: 'Analytics',
   users: 'Users',
   teams: 'Teams',

@@ -459,6 +459,74 @@ export async function fetchWbsPlatformTargetsForProjects(projectIds) {
   if (!projectIds || !projectIds.length) return [];
   return (await selectAllByProjects('wbs_platform_targets', projectIds)).map(mapWbsPlatformTarget);
 }
+
+/* ------------------------------------------------------------------ */
+/* Time logs (Project Hub Phase 2 — requires fixes21.sql)             */
+/* Degrades gracefully: until the migration is run, reads return [] and */
+/* a write surfaces a clear "run the migration" message instead of a    */
+/* raw Postgres error, so the app works before the table exists.        */
+/* ------------------------------------------------------------------ */
+function mapTimeLog(t) {
+  return {
+    id: t.id,
+    userId: t.user_id,
+    projectId: t.project_id,
+    wbsItemId: t.wbs_item_id,
+    hours: Number(t.hours),
+    logDate: t.log_date,
+    note: t.note || '',
+    createdAt: t.created_at,
+  };
+}
+// true when the failure is "the time_logs table isn't deployed yet"
+function isMissingTimeLogs(e) {
+  return (
+    e?.code === '42P01' || // undefined_table
+    e?.code === 'PGRST205' || // PostgREST: table not in schema cache
+    /time_logs/i.test(e?.message || '') && /(does not exist|schema cache)/i.test(e?.message || '')
+  );
+}
+
+export async function fetchTimeLogsForProject(projectId) {
+  const { data, error } = await supabase
+    .from('time_logs')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('log_date', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) {
+    if (isMissingTimeLogs(error)) return [];
+    throw error;
+  }
+  return (data || []).map(mapTimeLog);
+}
+
+export async function createTimeLog({ projectId, wbsItemId, hours, logDate, note, userId }) {
+  const { data, error } = await supabase
+    .from('time_logs')
+    .insert({
+      user_id: userId,
+      project_id: projectId,
+      wbs_item_id: wbsItemId || null,
+      hours,
+      log_date: logDate,
+      note: note || null,
+    })
+    .select()
+    .single();
+  if (error) {
+    if (isMissingTimeLogs(error)) {
+      throw new Error('Time logs aren’t enabled yet — run the fixes21 migration on the database.');
+    }
+    throw error;
+  }
+  return mapTimeLog(data);
+}
+
+export async function deleteTimeLog(id) {
+  const { error } = await supabase.from('time_logs').delete().eq('id', id);
+  if (error) throw error;
+}
 // upsert one platform's milestones (keyed on project_id + platform_type)
 export async function upsertWbsPlatformTarget(projectId, platformType, { completionDate = '', deploymentDate = '' }) {
   const { data, error } = await supabase

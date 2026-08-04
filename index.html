@@ -61,11 +61,15 @@
         --on-ink-dim: #6b7280;
         --ink-border: #e4e6ef;
 
-        /* sidebar — translucent frosted panel with a dark active pill */
-        --sidebar-surface: rgba(255, 255, 255, 0.5);
-        --sidebar-border: rgba(0, 0, 0, 0.06);
-        --sidebar-foreground: #101828;
-        --sidebar-active: #2a2d3e;
+        /* sidebar — solid dark gradient rail, full height, flush left */
+        --rail-bg: linear-gradient(180deg, #2b2e42 0%, #212338 55%, #1b1d2b 100%);
+        --rail-fg: #b6b9c9;
+        --rail-fg-strong: #ffffff;
+        --rail-muted: #7e8296;
+        --rail-hover: rgba(255, 255, 255, 0.06);
+        --rail-active: rgba(255, 255, 255, 0.11);
+        --rail-border: rgba(255, 255, 255, 0.08);
+        --sidebar-active: rgba(255, 255, 255, 0.11);
         --sidebar-active-fg: #ffffff;
 
         /* soft-pill tones */
@@ -195,24 +199,24 @@
       }
       @media (max-width: 680px) { .auth-brand { display: none !important; } }
 
-      /* multi-page nav layout — translucent frosted rail, dark active pill */
-      .nav-layout { display: flex; min-height: 100vh; gap: 0; padding: 14px 14px 0; }
+      /* multi-page nav layout — solid dark rail, flush left, full height */
+      .nav-layout { display: flex; min-height: 100vh; gap: 0; padding: 0; }
       .nav-rail {
         width: var(--rail-width);
         flex-shrink: 0;
-        background: var(--sidebar-surface);
-        border: 1px solid var(--sidebar-border);
-        border-radius: 18px;
-        padding: 16px 14px;
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        box-shadow: var(--shadow-sm);
+        background: var(--rail-bg);
+        border: none;
+        border-right: 1px solid var(--rail-border);
+        border-radius: 0;
+        padding: 16px 12px;
+        box-shadow: none;
         display: flex;
         flex-direction: column;
         position: sticky;
-        top: calc(var(--header-h) + 14px);
-        height: calc(100vh - var(--header-h) - 28px);
+        top: 0;
+        height: 100vh;
         overflow-y: auto;
+        color: var(--rail-fg);
       }
       .nav-item {
         display: flex;
@@ -226,32 +230,45 @@
         font-size: 13px;
         font-weight: 500;
         background: transparent;
-        color: var(--color-text-secondary);
+        color: var(--rail-fg);
         width: 100%;
         text-align: left;
         transition: background 0.12s ease, color 0.12s ease;
       }
-      .nav-item:hover { background: rgba(108, 99, 255, 0.08); color: var(--color-text-primary); }
-      .nav-item.on { background: var(--sidebar-active); color: var(--sidebar-active-fg); font-weight: 600; }
-      .nav-item.on:hover { background: var(--sidebar-active); color: var(--sidebar-active-fg); }
+      .nav-item:hover { background: var(--rail-hover); color: var(--rail-fg-strong); }
+      .nav-item.on { background: var(--rail-active); color: var(--rail-fg-strong); font-weight: 600; }
+      .nav-item.on:hover { background: var(--rail-active); color: var(--rail-fg-strong); }
       .nav-item.on:not(:disabled):hover { filter: none; }
       .nav-main { flex: 1; min-width: 0; }
-      .page-area { max-width: 1500px; margin: 0 auto; padding: 20px 22px 72px; }
+      .page-area { max-width: 1500px; margin: 0 auto; padding: 26px 26px 72px; }
+
+      /* dashboard grids — 5 KPI columns, chart+pipeline row, 3-card bottom row */
+      .dash-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+      @media (max-width: 1280px) { .dash-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (max-width: 720px)  { .dash-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      .dash-mid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+      @media (max-width: 1000px) { .dash-mid { grid-template-columns: 1fr; } }
+      .dash-bottom { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+      @media (max-width: 900px)  { .dash-bottom { grid-template-columns: 1fr; } }
+
       @media (max-width: 860px) {
-        .nav-layout { flex-direction: column; padding: 10px 10px 0; }
+        .nav-layout { flex-direction: column; padding: 0; }
         .nav-rail {
           width: auto;
           height: auto;
-          position: static;
+          position: sticky;
+          top: 0;
+          z-index: 30;
           flex-direction: row;
           align-items: center;
           gap: 6px;
           overflow-x: auto;
-          padding: 8px;
-          border-radius: 14px;
+          padding: 8px 10px;
+          border-right: none;
+          border-bottom: 1px solid var(--rail-border);
         }
         .nav-item { width: auto; white-space: nowrap; }
-        .page-area { padding: 16px; }
+        .page-area { padding: 18px 16px 64px; }
       }
 
       /* team-lead analytics 2-column workspace (70/30) with sticky sidebar */
