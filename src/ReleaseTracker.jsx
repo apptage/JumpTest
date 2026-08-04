@@ -805,12 +805,28 @@ export default function ReleaseTracker() {
     if (isTeamManagerOf(release)) return true;
     return user.role === 'QA' && (!release.assignedQa || release.assignedQa === user.id);
   }
+  // Developer workflow (Start / Mark fixed) belongs to the people building the
+  // release — its submitter, or a Developer on the project's team — plus the
+  // team's manager (Admin / Team Lead), who can always act. This is deliberately
+  // NOT the QA gate: QA verifies/reopens, developers start/fix.
+  function canDevActOn(release) {
+    if (isTeamManagerOf(release)) return true;
+    const project = projectsById[release.projectId];
+    const onTeam = !!project?.teamId && project.teamId === (user.teamId ?? null);
+    return release.submittedById === user.id || (user.role === 'Developer' && onTeam);
+  }
   const notAuthorized = (release, kind) => {
-    if (kind === 'manage' ? isTeamManagerOf(release) : canQaActOn(release)) return false;
+    const ok =
+      kind === 'manage' ? isTeamManagerOf(release)
+      : kind === 'dev' ? canDevActOn(release)
+      : canQaActOn(release);
+    if (ok) return false;
     showToast(
       kind === 'manage'
         ? "Only this team's Team Lead or an Admin can do that."
-        : 'Only the QA assigned to this release (or the team lead) can update it.',
+        : kind === 'dev'
+          ? "Only a developer on this release's team (or the team lead) can update this."
+          : 'Only the QA assigned to this release (or the team lead) can update it.',
       'error'
     );
     return true;
@@ -840,7 +856,17 @@ export default function ReleaseTracker() {
   }
 
   async function handleBugStatus(release, bug, newStatus) {
-    if (notAuthorized(release, 'qa')) return; // #8 — only assigned QA / team manager
+    // Gate by WHO owns the transition (not the QA gate for everything):
+    //   • Developer — Start (→in_progress) and Mark fixed (→fixed)
+    //   • QA / TL   — Verify (→verified) and Reopen (→open)
+    //   • Either    — Needs clarification (→disputed)
+    const kind =
+      newStatus === 'disputed'
+        ? (canDevActOn(release) || canQaActOn(release) ? 'ok' : 'qa')
+        : ['in_progress', 'fixed'].includes(newStatus)
+          ? 'dev'
+          : 'qa';
+    if (kind !== 'ok' && notAuthorized(release, kind)) return;
     const ok = await run(async () => {
       const patch = { status: newStatus };
       if (newStatus === 'verified') {
