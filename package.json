@@ -4,9 +4,16 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "env:sync": "node scripts/setup-env.mjs",
+    "dev": "node scripts/with-env.mjs vite",
+    "dev:staging": "npm run env:sync && vite --mode staging",
+    "dev:production": "npm run env:sync && vite --mode production",
+    "build": "node scripts/with-env.mjs vite build",
+    "build:staging": "vite build --mode staging",
+    "build:production": "vite build --mode production",
+    "preview": "node scripts/with-env.mjs vite preview",
+    "db:push": "npm run env:sync && supabase db push",
+    "db:link": "npm run env:sync && node scripts/supabase-link.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

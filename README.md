@@ -20,11 +20,18 @@ A single-page React app for managing releases across **Developer**, **QA**, and
 3. **Backfill (only if you already had accounts before the tables existed)** —
    run [`backfill_existing_users.sql`](backfill_existing_users.sql).
 
-4. **Credentials** — copy `.env.example` to `.env` and fill in:
+4. **Credentials** — branch maps to Supabase project:
+   - `main` → **GammaQuality** (production)
+   - `staging` → **GammaQuality-Staging**
+
+   ```bash
+   npm run env:sync   # creates .env.<mode>.local for your current branch
    ```
-   VITE_SUPABASE_URL=...
-   VITE_SUPABASE_ANON_KEY=...
-   ```
+
+   Edit that file with keys from **Supabase Dashboard → Project Settings → API**.
+   Then `npm run dev` (auto-picks staging on `staging` branch, production on `main`).
+
+   Supabase CLI (migrations): `npm run db:link` then `npm run db:push`.
 
 5. **Email confirmation** — for quick testing, turn it off at
    **Authentication → Sign In / Providers → Email → Confirm email**. The app

@@ -4,12 +4,16 @@ node_modules/
 # Build / cache
 dist/
 .vite/
-*.local
 
-# Environment & secrets
+# Environment & secrets (never commit real keys)
 .env
-.env.*
+.env.local
+.env.*.local
+.env.production.local
+.env.staging.local
 !.env.example
+!.env.production.example
+!.env.staging.example
 service-account.json
 *-firebase-adminsdk-*.json
 *.pem
@@ -31,11 +35,16 @@ Thumbs.db
 *.swp
 *.swo
 
-# Supabase / deploy local state
+# Supabase CLI local state (linked project ref, temp files)
 .supabase/
 supabase/.temp/
+supabase/.branches/
+
+# Deploy
 .vercel/
 
-# Local SQL migrations
+# Local / one-off SQL (use supabase/migrations/ for versioned schema)
+schema.sql
+supabase/schema.sql
 fixes*.sql
 fixes_*.sql
