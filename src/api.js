@@ -315,6 +315,18 @@ export async function fetchPublicStatus(token) {
   return data; // null if token invalid
 }
 
+// Public QA bug report (fixes22.sql). Returns null when the token is invalid,
+// the report is not enabled for that link, OR the RPC isn't deployed yet — so the
+// portal simply omits the section until the migration is run.
+export async function fetchPublicBugReport(token) {
+  const { data, error } = await supabase.rpc('public_project_bug_report', { p_token: token });
+  if (error) {
+    if (/public_project_bug_report|function .* does not exist|schema cache/i.test(error.message || '')) return null;
+    throw error;
+  }
+  return data;
+}
+
 /* ------------------------------------------------------------------ */
 /* WBS (work breakdown structure)                                     */
 /* ------------------------------------------------------------------ */
