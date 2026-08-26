@@ -351,15 +351,17 @@ function ClientBugReport({ report }) {
 export function ClientDashboard({ token }) {
   const [data, setData] = useState(undefined); // undefined=loading, null=invalid
   const [bugReport, setBugReport] = useState(null); // null when not enabled / not deployed
+  const [allReleases, setAllReleases] = useState([]); // every build, all statuses
   const [error, setError] = useState('');
   const [fetchedAt, setFetchedAt] = useState(null); // when this view last synced
   const [, forceTick] = useState(0); // re-render so the "ago" label stays fresh
-  // Tab selection — a link may deep-link straight to the QA report via
-  // ?client=<token>&view=qa, so both a single tabbed link and a "separate" QA
-  // link work off the same token.
+  // Tab selection — a link may deep-link straight to a tab via
+  // ?client=<token>&view=qa (or &view=releases), so one tabbed link doubles as a
+  // "separate" QA / releases link off the same token.
   const [tab, setTab] = useState(() => {
     try {
-      return new URLSearchParams(window.location.search).get('view') === 'qa' ? 'qa' : 'status';
+      const v = new URLSearchParams(window.location.search).get('view');
+      return ['qa', 'releases'].includes(v) ? v : 'status';
     } catch {
       return 'status';
     }
@@ -371,11 +373,13 @@ export function ClientDashboard({ token }) {
       Promise.all([
         api.fetchPublicStatus(token),
         api.fetchPublicBugReport(token).catch(() => null), // never let the report break the portal
+        api.fetchPublicReleases(token).catch(() => []),
       ])
-        .then(([d, br]) => {
+        .then(([d, br, rels]) => {
           if (cancelled) return;
           setData(d);
           setBugReport(br);
+          setAllReleases(rels || []);
           setFetchedAt(Date.now());
         })
         .catch((e) => !cancelled && setError(e.message));
@@ -414,8 +418,17 @@ export function ClientDashboard({ token }) {
   const reportBuilds = (bugReport?.builds || []).filter((b) => (b.bugs || []).length > 0);
   const reportAvailable = reportBuilds.length > 0;
   const bugCount = reportBuilds.reduce((n, b) => n + (b.bugs || []).length, 0);
-  // fall back to the status tab if a &view=qa link points at a report that isn't enabled
-  const effectiveTab = tab === 'qa' && reportAvailable ? 'qa' : 'status';
+  // Tabs: Project status is always there; Releases whenever there are any builds;
+  // QA report only when the link opted in.
+  const tabList = [
+    ['status', 'Project status'],
+    ...(allReleases.length ? [['releases', `Releases (${allReleases.length})`]] : []),
+    ...(reportAvailable ? [['qa', `QA report (${bugCount})`]] : []),
+  ];
+  const showTabs = tabList.length > 1;
+  // fall back to status if a deep-link points at a tab that isn't available here
+  const tabKeys = tabList.map(([k]) => k);
+  const effectiveTab = tabKeys.includes(tab) ? tab : 'status';
 
   const statCard = (label, value, color) => (
     <div style={{ ...card, padding: 16, flex: '1 1 150px' }}>
@@ -509,11 +522,11 @@ export function ClientDashboard({ token }) {
         </div>
         <div style={{ height: 20 }} />
 
-        {/* Tabs — shown only when the link opted into the QA report. Otherwise the
-            portal renders the project status directly, unchanged. */}
-        {reportAvailable && (
+        {/* Tabs — shown when there's more than the status view (releases and/or the
+            QA report). Otherwise the portal renders the project status directly. */}
+        {showTabs && (
           <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border-primary)', marginBottom: 22, flexWrap: 'wrap' }}>
-            {[['status', 'Project status'], ['qa', `QA report (${bugCount})`]].map(([k, label]) => (
+            {tabList.map(([k, label]) => (
               <button
                 key={k}
                 onClick={() => setTab(k)}
@@ -582,6 +595,45 @@ export function ClientDashboard({ token }) {
               </section>
             )}
           </>
+        )}
+
+        {effectiveTab === 'releases' && (
+          <section>
+            <div style={{ ...sideHead, marginBottom: 4 }}>All releases</div>
+            <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 14px' }}>
+              Every build submitted for this project — including superseded iterations.
+            </p>
+            {allReleases.length === 0 ? (
+              <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No releases yet.</div>
+            ) : (
+              <div style={{ ...card, padding: '4px 16px' }}>
+                {allReleases.map((r, i, arr) => (
+                  <div key={i} style={{ padding: '12px 0', borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+                          {formatVersion(r.version)}{' '}
+                          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+                            {r.platform}{r.component ? ` · ${r.component}` : ''}{r.environment ? ` · ${r.environment}` : ''}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: cs(r.status).color, background: `${cs(r.status).color}1a`, padding: '3px 10px', borderRadius: 999 }}>
+                        {cs(r.status).label}
+                      </span>
+                    </div>
+                    {r.notes && r.notes.trim() && (
+                      <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginTop: 8, paddingLeft: 20 }}>
+                        {r.notes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {effectiveTab === 'qa' && <ClientBugReport report={bugReport} />}

@@ -327,6 +327,17 @@ export async function fetchPublicBugReport(token) {
   return data;
 }
 
+// Public full release list — every build across all statuses (fixes22.sql).
+// Returns [] when the token is invalid or the RPC isn't deployed yet.
+export async function fetchPublicReleases(token) {
+  const { data, error } = await supabase.rpc('public_project_releases', { p_token: token });
+  if (error) {
+    if (/public_project_releases|function .* does not exist|schema cache/i.test(error.message || '')) return [];
+    throw error;
+  }
+  return data || [];
+}
+
 /* ------------------------------------------------------------------ */
 /* WBS (work breakdown structure)                                     */
 /* ------------------------------------------------------------------ */
