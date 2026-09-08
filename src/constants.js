@@ -354,9 +354,11 @@ export function emailDomainOk(email) {
    WeTransfer is rejected because its links expire. */
 export const BLOCKED_LINK_HOSTS = ['wetransfer.com', 'we.tl'];
 
-export function linkIssue(url) {
+export function linkIssue(url, required = true) {
   const u = (url || '').trim();
-  if (!u) return 'A download link is required';
+  // When the link is optional (e.g. a TestFlight build, distributed via App Store
+  // Connect), an empty value is fine — but a provided value is still validated.
+  if (!u) return required ? 'A download link is required' : null;
   if (!/^https?:\/\/.+/i.test(u)) return 'Enter a valid URL starting with https://';
   let host;
   try {
