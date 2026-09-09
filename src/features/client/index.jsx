@@ -217,20 +217,169 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
   );
 }
 
+// Client-safe severity + status labels for the public bug report. No internal
+// wording, no reporter identities — just what a client/PM needs to read the QA log.
+const BUG_SEV = {
+  critical: { label: 'Critical', color: '#dc2626' },
+  major: { label: 'Major', color: '#d97706' },
+  minor: { label: 'Minor', color: '#64748b' },
+};
+const BUG_STATE = {
+  open: { label: 'Open', color: '#dc2626' },
+  in_progress: { label: 'In progress', color: '#d97706' },
+  fixed: { label: 'Fixed — awaiting QA', color: '#6c63ff' },
+  disputed: { label: 'Needs clarification', color: '#7c3aed' },
+  pending_tl: { label: 'Pending review', color: '#6c63ff' },
+  verified: { label: 'Resolved', color: '#16a34a' },
+};
+// format an ISO timestamp → short date (reported/resolved dates)
+function fmtTs(iso) {
+  if (!iso) return '';
+  const dt = new Date(iso);
+  return Number.isNaN(dt.getTime()) ? '' : dt.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// Split a bug list into the three states a client cares about:
+//   open       — still needs dev work (open / in progress / needs clarification)
+//   awaiting   — fixed by dev, waiting on QA verification (fixed / pending review)
+//   resolved   — QA verified
+function bugBucket(arr) {
+  const resolved = arr.filter((x) => x.status === 'verified').length;
+  const awaiting = arr.filter((x) => x.status === 'fixed' || x.status === 'pending_tl').length;
+  return { total: arr.length, open: arr.length - resolved - awaiting, awaiting, resolved };
+}
+
+// The public QA bug report — every bug across every build, grouped by build.
+function ClientBugReport({ report }) {
+  const builds = (report.builds || []).filter((b) => (b.bugs || []).length > 0);
+  const allBugs = builds.flatMap((b) => b.bugs || []);
+  const sum = bugBucket(allBugs);
+  const critical = allBugs.filter((b) => b.severity === 'critical').length;
+
+  const pill = (label, color) => (
+    <span style={{ fontSize: 10.5, fontWeight: 700, color, background: `${color}1a`, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>{label}</span>
+  );
+  const stat = (label, value, color) => (
+    <div style={{ ...card, padding: '12px 16px', flex: '1 1 120px', minWidth: 108 }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
+      <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <section style={{ marginTop: 8 }}>
+      <div style={{ ...sideHead, marginBottom: 4 }}>QA bug report</div>
+      <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 14px' }}>
+        Every issue found by QA across all builds of this project.
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
+        {stat('Total bugs', sum.total)}
+        {stat('Open', sum.open, sum.open ? 'var(--danger)' : undefined)}
+        {stat('Awaiting QA', sum.awaiting, sum.awaiting ? 'var(--warning)' : undefined)}
+        {stat('Resolved', sum.resolved, 'var(--success)')}
+        {stat('Critical', critical, critical ? 'var(--danger)' : undefined)}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {builds.map((b, bi) => {
+          const bugs = b.bugs || [];
+          const bb = bugBucket(bugs);
+          const parts = [
+            bb.open ? `${bb.open} open` : null,
+            bb.awaiting ? `${bb.awaiting} awaiting QA` : null,
+            bb.resolved ? `${bb.resolved} resolved` : null,
+          ].filter(Boolean);
+          return (
+            <div key={bi} style={{ ...card, padding: '4px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '11px 0 6px', borderBottom: '1px solid var(--color-border-primary)', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+                  {formatVersion(b.version)}{' '}
+                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+                    {b.platform}{b.component ? ` · ${b.component}` : ''}{b.environment ? ` · ${b.environment}` : ''}
+                  </span>
+                </span>
+                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+                  {bugs.length} bug{bugs.length === 1 ? '' : 's'}{parts.length ? ` · ${parts.join(' · ')}` : ''}
+                </span>
+              </div>
+              {bugs.map((bug, i) => {
+                const sev = BUG_SEV[bug.severity] || { label: bug.severity, color: '#64748b' };
+                const st = BUG_STATE[bug.status] || { label: bug.status, color: '#64748b' };
+                return (
+                  <div key={i} style={{ padding: '12px 0', borderBottom: i === bugs.length - 1 ? 'none' : '1px solid var(--color-border-primary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 160 }}>
+                        {bug.title}
+                        {bug.carriedForward && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>· carried forward</span>}
+                      </span>
+                      {pill(sev.label, sev.color)}
+                      {pill(st.label, st.color)}
+                      <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', minWidth: 92, textAlign: 'right' }}>
+                        {bug.status === 'verified' && bug.resolvedAt
+                          ? `Resolved ${fmtTs(bug.resolvedAt)}`
+                          : `Reported ${fmtTs(bug.reportedAt)}`}
+                      </span>
+                    </div>
+                    {bug.description && (
+                      <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                        {bug.description}
+                      </div>
+                    )}
+                    {(bug.feature || (bug.reportedAt && bug.status === 'verified' && bug.resolvedAt)) && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 7 }}>
+                        {bug.feature && (
+                          <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-tertiary)', background: 'var(--color-background-secondary)', padding: '2px 8px', borderRadius: 6 }}>
+                            {bug.feature}
+                          </span>
+                        )}
+                        {bug.status === 'verified' && bug.resolvedAt && (
+                          <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>Reported {fmtTs(bug.reportedAt)}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function ClientDashboard({ token }) {
   const [data, setData] = useState(undefined); // undefined=loading, null=invalid
+  const [bugReport, setBugReport] = useState(null); // null when not enabled / not deployed
+  const [allReleases, setAllReleases] = useState([]); // every build, all statuses
   const [error, setError] = useState('');
   const [fetchedAt, setFetchedAt] = useState(null); // when this view last synced
   const [, forceTick] = useState(0); // re-render so the "ago" label stays fresh
+  // Tab selection — a link may deep-link straight to a tab via
+  // ?client=<token>&view=qa (or &view=releases), so one tabbed link doubles as a
+  // "separate" QA / releases link off the same token.
+  const [tab, setTab] = useState(() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get('view');
+      return ['qa', 'releases'].includes(v) ? v : 'status';
+    } catch {
+      return 'status';
+    }
+  });
 
   useEffect(() => {
     let cancelled = false;
     const pull = () =>
-      api
-        .fetchPublicStatus(token)
-        .then((d) => {
+      Promise.all([
+        api.fetchPublicStatus(token),
+        api.fetchPublicBugReport(token).catch(() => null), // never let the report break the portal
+        api.fetchPublicReleases(token).catch(() => []),
+      ])
+        .then(([d, br, rels]) => {
           if (cancelled) return;
           setData(d);
+          setBugReport(br);
+          setAllReleases(rels || []);
           setFetchedAt(Date.now());
         })
         .catch((e) => !cancelled && setError(e.message));
@@ -264,6 +413,22 @@ export function ClientDashboard({ token }) {
   const pct = total ? Math.round((completed.length / total) * 100) : 0;
   const current = inProgress[0]; // most recent non-complete
   const cs = (s) => CLIENT_STATUS[s] || { label: s, color: '#64748b' };
+
+  // QA report tab is only offered when the link opted in (RPC returned builds).
+  const reportBuilds = (bugReport?.builds || []).filter((b) => (b.bugs || []).length > 0);
+  const reportAvailable = reportBuilds.length > 0;
+  const bugCount = reportBuilds.reduce((n, b) => n + (b.bugs || []).length, 0);
+  // Tabs: Project status is always there; Releases whenever there are any builds;
+  // QA report only when the link opted in.
+  const tabList = [
+    ['status', 'Project status'],
+    ...(allReleases.length ? [['releases', `Releases (${allReleases.length})`]] : []),
+    ...(reportAvailable ? [['qa', `QA report (${bugCount})`]] : []),
+  ];
+  const showTabs = tabList.length > 1;
+  // fall back to status if a deep-link points at a tab that isn't available here
+  const tabKeys = tabList.map(([k]) => k);
+  const effectiveTab = tabKeys.includes(tab) ? tab : 'status';
 
   const statCard = (label, value, color) => (
     <div style={{ ...card, padding: 16, flex: '1 1 150px' }}>
@@ -357,56 +522,121 @@ export function ClientDashboard({ token }) {
         </div>
         <div style={{ height: 20 }} />
 
-        {showWbs && <ClientWbsView wbs={wbs} platformTargets={data.platformTargets} />}
+        {/* Tabs — shown when there's more than the status view (releases and/or the
+            QA report). Otherwise the portal renders the project status directly. */}
+        {showTabs && (
+          <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border-primary)', marginBottom: 22, flexWrap: 'wrap' }}>
+            {tabList.map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setTab(k)}
+                style={{
+                  padding: '10px 16px', fontSize: 13.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  background: 'none', border: 'none', borderBottom: `2px solid ${effectiveTab === k ? 'var(--brand)' : 'transparent'}`,
+                  color: effectiveTab === k ? 'var(--brand)' : 'var(--color-text-secondary)', marginBottom: -1,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
-        {/* release-based progress + summary only when there is no WBS (the WBS view
-            already shows completion, so we avoid a duplicate progress bar) */}
-        {!showWbs && (
+        {effectiveTab === 'status' && (
           <>
-            <div style={{ ...card, padding: 18, marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
-                <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
-              </div>
-              <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
-                <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
-              </div>
-              {current && (
-                <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 12 }}>
-                  Current: <strong>v{current.version}</strong> — {cs(current.status).label}
+            {showWbs && <ClientWbsView wbs={wbs} platformTargets={data.platformTargets} />}
+
+            {/* release-based progress + summary only when there is no WBS (the WBS view
+                already shows completion, so we avoid a duplicate progress bar) */}
+            {!showWbs && (
+              <>
+                <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
+                  </div>
+                  <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
+                  </div>
+                  {current && (
+                    <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 12 }}>
+                      Current: <strong>v{current.version}</strong> — {cs(current.status).label}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-              {statCard('Completed', completed.length, 'var(--success)')}
-              {statCard('In progress', inProgress.length, 'var(--warning)')}
-              {statCard('Resolved bugs', data.bugs?.resolved ?? 0, 'var(--success)')}
-              {data.showOpenBugs && statCard('Open bugs', data.bugs?.open ?? 0, (data.bugs?.open ?? 0) ? 'var(--danger)' : undefined)}
-            </div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
+                  {statCard('Completed', completed.length, 'var(--success)')}
+                  {statCard('In progress', inProgress.length, 'var(--warning)')}
+                  {statCard('Resolved bugs', data.bugs?.resolved ?? 0, 'var(--success)')}
+                  {data.showOpenBugs && statCard('Open bugs', data.bugs?.open ?? 0, (data.bugs?.open ?? 0) ? 'var(--danger)' : undefined)}
+                </div>
+              </>
+            )}
+
+            {/* Releases are ALWAYS shown — a WBS-enabled project must NOT hide its
+                release status / approvals / send-backs / history from the client. */}
+            {showWbs && releases.length > 0 && <div style={{ ...sideHead, margin: '10px 0 12px' }}>Releases</div>}
+            {inProgress.length > 0 && (
+              <section style={{ marginBottom: 24 }}>
+                <div style={{ ...sideHead, marginBottom: 10 }}>In progress</div>
+                <div style={{ ...card, padding: '4px 16px' }}>{inProgress.map(relRow)}</div>
+              </section>
+            )}
+            {completed.length > 0 && (
+              <section style={{ marginBottom: 24 }}>
+                <div style={{ ...sideHead, marginBottom: 10 }}>Completed</div>
+                <div style={{ ...card, padding: '4px 16px' }}>{completed.map(relRow)}</div>
+              </section>
+            )}
+            {releases.length > 0 && (
+              <section>
+                <div style={{ ...sideHead, marginBottom: 10 }}>Release history</div>
+                <div style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
+              </section>
+            )}
           </>
         )}
 
-        {/* Releases are ALWAYS shown — a WBS-enabled project must NOT hide its
-            release status / approvals / send-backs / history from the client. */}
-        {showWbs && releases.length > 0 && <div style={{ ...sideHead, margin: '10px 0 12px' }}>Releases</div>}
-        {inProgress.length > 0 && (
-          <section style={{ marginBottom: 24 }}>
-            <div style={{ ...sideHead, marginBottom: 10 }}>In progress</div>
-            <div style={{ ...card, padding: '4px 16px' }}>{inProgress.map(relRow)}</div>
-          </section>
-        )}
-        {completed.length > 0 && (
-          <section style={{ marginBottom: 24 }}>
-            <div style={{ ...sideHead, marginBottom: 10 }}>Completed</div>
-            <div style={{ ...card, padding: '4px 16px' }}>{completed.map(relRow)}</div>
-          </section>
-        )}
-        {releases.length > 0 && (
+        {effectiveTab === 'releases' && (
           <section>
-            <div style={{ ...sideHead, marginBottom: 10 }}>Release history</div>
-            <div style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
+            <div style={{ ...sideHead, marginBottom: 4 }}>All releases</div>
+            <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 14px' }}>
+              Every build submitted for this project — including superseded iterations.
+            </p>
+            {allReleases.length === 0 ? (
+              <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No releases yet.</div>
+            ) : (
+              <div style={{ ...card, padding: '4px 16px' }}>
+                {allReleases.map((r, i, arr) => (
+                  <div key={i} style={{ padding: '12px 0', borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+                          {formatVersion(r.version)}{' '}
+                          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+                            {r.platform}{r.component ? ` · ${r.component}` : ''}{r.environment ? ` · ${r.environment}` : ''}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: cs(r.status).color, background: `${cs(r.status).color}1a`, padding: '3px 10px', borderRadius: 999 }}>
+                        {cs(r.status).label}
+                      </span>
+                    </div>
+                    {r.notes && r.notes.trim() && (
+                      <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginTop: 8, paddingLeft: 20 }}>
+                        {r.notes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
+
+        {effectiveTab === 'qa' && <ClientBugReport report={bugReport} />}
 
         <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
           Read-only project status · powered by JumpTest

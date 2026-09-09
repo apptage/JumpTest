@@ -152,13 +152,16 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     setSelectedTasks((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const platforms = project ? platformsForProjectType(project.type) : ['Mobile'];
   const allowedTypes = RELEASE_TYPES_BY_PLATFORM[form.platform] || RELEASE_TYPE_ORDER;
-  const linkErr = linkIssue(form.linkUrl);
+  // TestFlight builds are distributed through App Store Connect, so their link is
+  // optional — only APK / Web require a download link.
+  const linkOptional = form.releaseType === 'testflight';
+  const linkErr = linkIssue(form.linkUrl, !linkOptional);
   const linkLabel =
-    form.releaseType === 'apk'
+    (form.releaseType === 'apk'
       ? 'APK download link'
       : form.releaseType === 'testflight'
       ? 'TestFlight link'
-      : 'Web link';
+      : 'Web link') + (linkOptional ? ' (optional)' : '');
 
   function selectProject(id) {
     const p = projectById(id);
@@ -572,14 +575,15 @@ export function EditReleaseModal({ release, project, isSubmitting, onClose, onSa
     releaseNotes: release.releaseNotes || '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const linkErr = linkIssue(form.linkUrl);
+  const linkOptional = form.releaseType === 'testflight';
+  const linkErr = linkIssue(form.linkUrl, !linkOptional);
   const invalid = !form.version.trim() || !form.releaseNotes.trim() || !!linkErr;
   const linkLabel =
-    form.releaseType === 'apk'
+    (form.releaseType === 'apk'
       ? 'APK download link'
       : form.releaseType === 'testflight'
       ? 'TestFlight link'
-      : 'Web link';
+      : 'Web link') + (linkOptional ? ' (optional)' : '');
 
   function save() {
     if (invalid) return;
@@ -1321,7 +1325,10 @@ function BugsTab({
     };
   }, [wbsEnabled, release.id]);
 
-  const isDev = user.role === 'Developer' || user.role === 'Admin';
+  // Team Leads also develop and submit builds, so they get the developer actions
+  // (Start / Mark fixed) too — the app-layer guard (canDevActOn) already authorizes
+  // a TL on their own team's release.
+  const isDev = user.role === 'Developer' || user.role === 'Team Lead' || user.role === 'Admin';
   // only a Team Lead / Admin verifies a developer's proposed close
   const isManager = user.role === 'Team Lead' || user.role === 'Admin';
   const readOnly = isReadOnly(release);

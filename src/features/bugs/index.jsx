@@ -341,7 +341,8 @@ function BugCard({
   // same role gating as the release Bugs tab; actions need an editable release
   const canAct = !!rel && !isReadOnly(rel) && !!user;
   const isManagerRole = user?.role === 'Team Lead' || user?.role === 'Admin';
-  const isDev = canAct && (user?.role === 'Developer' || user?.role === 'Admin');
+  // Team Leads also develop and submit builds → they get Start / Mark fixed too.
+  const isDev = canAct && (user?.role === 'Developer' || user?.role === 'Team Lead' || user?.role === 'Admin');
   const isQA = canAct && (user?.role === 'QA' || isManagerRole);
   const isManager = canAct && isManagerRole;
   const canDelete = canAct && (user?.role === 'Admin' || bug.createdById === user?.id);

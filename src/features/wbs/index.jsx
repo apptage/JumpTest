@@ -387,6 +387,7 @@ function WbsShareModal({ project, onClose, showToast }) {
   const [link, setLink] = useState(undefined); // undefined=loading, null=none, obj=exists
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedReport, setCopiedReport] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -433,10 +434,28 @@ function WbsShareModal({ project, onClose, showToast }) {
       showToast(e.message, 'error');
     }
   };
+  const toggleReport = async () => {
+    if (!link) return;
+    const v = !link.show_bug_report;
+    setLink({ ...link, show_bug_report: v });
+    try {
+      await api.updateClientLink(link.id, { show_bug_report: v });
+    } catch (e) {
+      setLink({ ...link, show_bug_report: !v });
+      showToast(e.message, 'error');
+    }
+  };
   const copy = () => {
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
+  };
+  // a direct link that opens the portal straight on the QA report tab
+  const reportUrl = url ? `${url}&view=qa` : '';
+  const copyReport = () => {
+    navigator.clipboard.writeText(reportUrl);
+    setCopiedReport(true);
+    setTimeout(() => setCopiedReport(false), 1600);
   };
 
   const on = !!link;
@@ -493,6 +512,36 @@ function WbsShareModal({ project, onClose, showToast }) {
                 <Toggle on={link.show_open_bugs} onClick={toggleBugs} />
                 <span style={{ fontSize: 13 }}>Show open bug count to viewers</span>
               </label>
+
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 12, cursor: 'pointer' }}>
+                <Toggle on={!!link.show_bug_report} onClick={toggleReport} />
+                <span style={{ fontSize: 13 }}>
+                  Include full QA bug report
+                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+                    Every bug across all builds — title, severity, status & dates. No internal notes, screenshots or names.
+                  </span>
+                </span>
+              </label>
+
+              {link.show_bug_report && (
+                <div style={{ marginTop: 14 }}>
+                  <label style={lbl}>Direct QA report link (opens on the QA tab)</label>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                    <input
+                      readOnly
+                      value={reportUrl}
+                      onFocus={(e) => e.target.select()}
+                      style={{ ...inputStyle, flex: 1, fontSize: 11.5, fontFamily: 'var(--font-mono, monospace)' }}
+                    />
+                    <button style={{ ...primaryButton(false), padding: '0 14px' }} onClick={copyReport}>
+                      {copiedReport ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
+                    Same portal — this link just lands the client on the QA report. The main link shows both tabs.
+                  </div>
+                </div>
+              )}
 
               {!project.wbsEnabled && (
                 <div style={{ marginTop: 14, fontSize: 12, color: 'var(--warning)', background: '#f59e0b1a', border: '1px solid #f59e0b44', borderRadius: 8, padding: '8px 10px' }}>
