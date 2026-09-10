@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { card, inputStyle, primaryButton, Logo, Wordmark } from '@/ui.jsx';
 import { Field, authLink } from '@shared/ui-kit.jsx';
 import { ALLOWED_EMAIL_DOMAIN, emailDomainOk } from '@/constants.js';
-import { HeroIllustration, IconCode, IconShieldCheck } from '@/illustrations.jsx';
+import { IconCode, IconShieldCheck } from '@/illustrations.jsx';
 import { IconBug } from '@/icons.jsx';
 
 export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest }) {
@@ -40,66 +40,55 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
   });
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 16,
-      }}
-    >
-      <div
-        className="anim-in"
-        style={{
-          ...card,
-          display: 'flex',
-          flexWrap: 'wrap',
-          width: '100%',
-          maxWidth: 840,
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-lg)',
-        }}
-      >
-        {/* brand panel — black + orange */}
+    /* Full-viewport split: brand/illustration panel (left, ~55%) + form panel (right).
+       Wraps to a single column under ~900px. */
+    <div className="auth-split" style={{ background: 'var(--card)' }}>
+        {/* brand panel */}
         <div
           className="auth-brand grid-dots"
           style={{
-            flex: '1 1 330px',
+            flex: '1 1 480px',
             minWidth: 0,
-            padding: 36,
+            padding: 'clamp(28px, 4vw, 56px)',
             background: 'var(--ink-2)',
             color: 'var(--on-ink)',
             display: 'flex',
             flexDirection: 'column',
           }}
         >
-          <Wordmark size={30} tone="ink" />
+          <Wordmark size={40} tone="ink" />
 
-          <div style={{ margin: '20px 0 4px' }}>
-            <HeroIllustration />
+          {/* Miaro Verify hero illustration (transparent PNG, public/brand/auth-hero.png) */}
+          {/* flex:1 + minHeight:0 lets the picture shrink to whatever height is left,
+              so the panel never grows past the viewport */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '24px 0' }}>
+            <img
+              src="/brand/auth-hero.png"
+              alt="Developers and QA reviewing code, tracking builds and fixing bugs across a release pipeline"
+              style={{ display: 'block', width: '100%', maxWidth: 860, height: '100%', maxHeight: 480, objectFit: 'contain' }}
+            />
           </div>
 
-          <div style={{ marginTop: 'auto', paddingTop: 16 }}>
-            <h2 style={{ fontSize: 25, fontWeight: 700, lineHeight: 1.15, margin: 0 }}>
+          <div style={{ paddingTop: 8 }}>
+            <h2 style={{ fontSize: 'clamp(28px, 3vw, 40px)', fontWeight: 700, lineHeight: 1.12, margin: 0, letterSpacing: '-0.02em' }}>
               Ship it. Test it.<br />
               <span style={{ color: 'var(--brand)' }}>Track every build.</span>
             </h2>
-            <p style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--on-ink-dim)', margin: '12px 0 18px' }}>
+            <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--on-ink-dim)', margin: '14px 0 22px', maxWidth: 560 }}>
               From APK to TestFlight to web — one pipeline for dev and QA.
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 28px' }}>
               {[
                 [<IconCode size={16} />, 'Project-based release pipeline'],
                 [<IconBug size={16} />, 'QA bug tracking & screenshots'],
                 [<IconShieldCheck size={16} />, 'Checklists & role-based sign-off'],
               ].map(([icon, t]) => (
-                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 11, fontSize: 12.5 }}>
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 11, fontSize: 14 }}>
                   <span
                     style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 8,
+                      width: 32,
+                      height: 32,
+                      borderRadius: 9,
                       background: 'var(--brand-soft)',
                       color: 'var(--brand)',
                       display: 'inline-flex',
@@ -117,22 +106,25 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
           </div>
         </div>
 
-        {/* form panel */}
-        <div style={{ flex: '1 1 360px', minWidth: 0, padding: 36 }}>
-          <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 4, letterSpacing: '-0.02em' }}>
+        {/* form panel — the form column is centred and capped at 440px */}
+        <div className="auth-form" style={{ flex: '1 1 400px', minWidth: 0, padding: 'clamp(28px, 4vw, 56px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {/* entrance animation lives on the form column only — a translateY on the
+            100vh wrapper would add a scrollbar */}
+        <div className="anim-in" style={{ width: '100%', maxWidth: 440 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 700, marginBottom: 6, letterSpacing: '-0.02em' }}>
             {isReset ? 'Reset password' : isSignup ? 'Create your account' : 'Welcome back'}
           </div>
           <div
             style={{
-              fontSize: 13,
+              fontSize: 15,
               color: 'var(--color-text-secondary)',
-              marginBottom: 20,
+              marginBottom: 26,
             }}
           >
             {isReset
               ? 'We’ll email you a link to set a new password.'
               : isSignup
-              ? 'Join your team on JumpTest'
+              ? 'Join your team on Miaro Verify'
               : 'Sign in to continue'}
           </div>
 
@@ -265,10 +257,7 @@ export function SetPasswordScreen({ isSubmitting, onSetPassword }) {
     >
       <div className="anim-in" style={{ ...card, width: '100%', maxWidth: 380, padding: 32, boxShadow: 'var(--shadow-lg)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-          <Logo size={28} />
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16 }}>
-            Jump<span style={{ color: 'var(--brand)' }}>Test</span>
-          </span>
+          <Wordmark size={26} />
         </div>
         <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 4 }}>Set a new password</div>
         <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 20 }}>

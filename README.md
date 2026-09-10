@@ -1,4 +1,4 @@
-# JumpTest
+# Miaro Verify
 
 A single-page React app for managing releases across **Developer**, **QA**, and
 **Admin** roles, backed entirely by **Supabase** (Auth, Postgres, Storage).
@@ -88,4 +88,4 @@ First account to sign up becomes **Admin**.
 - `src/supabaseClient.js` — client init
 - `supabase_setup.sql` — full schema, RLS, triggers, Storage
 - `backfill_existing_users.sql` — one-time profile backfill
-# JumpTest
+# Miaro Verify

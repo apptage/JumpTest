@@ -5,7 +5,7 @@ import { queryClient } from './config/queryClient.js';
 import ReleaseTracker from './ReleaseTracker.jsx';
 import { ClientDashboard } from './features/client/index.jsx';
 
-// Public, read-only client portal: jumptest.app/?client=<token>
+// Public, read-only client portal: <app-url>/?client=<token>
 const clientToken = new URLSearchParams(window.location.search).get('client');
 
 createRoot(document.getElementById('root')).render(

@@ -1082,7 +1082,7 @@ export async function fetchUserDevices(userId) {
 function toPushMessage(row) {
   return {
     user_id: row.user_id,
-    title: row.title || 'JumpTest',
+    title: row.title || 'Miaro Verify',
     body: row.message,
     data: {
       type: row.type || '',

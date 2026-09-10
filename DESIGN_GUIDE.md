@@ -1,4 +1,4 @@
-# JumpTest — Dashboard Design Guide
+# Miaro Verify — Dashboard Design Guide
 
 The look & feel established on the **Manager/Admin Analytics** dashboard is the house style.
 Every page (main Dashboard, Bugs, Projects, Users, Teams, WBS, Settings) should follow it.

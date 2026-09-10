@@ -346,7 +346,7 @@ export function SegmentedTimeline({ segments, unit = 'd' }) {
 }
 
 /* ================================================================== */
-/* Design-system dashboard widgets (JumpTest DS handoff bundle)       */
+/* Design-system dashboard widgets (Miaro Verify DS handoff bundle)   */
 /* ================================================================== */
 
 /* Trend arrows for the KPI delta pill — DS icon spec: 24px viewBox,

@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
       for (const token of tokens) {
         try {
           const res = await sendToToken(accessToken, projectId, token, {
-            title: msg.title || 'JumpTest',
+            title: msg.title || 'Miaro Verify',
             body: msg.body || '',
             data: msg.data || {},
           });

@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>JumpTest</title>
+    <title>Miaro Verify</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
       /* apply the saved theme before first paint (no flash) — see HeaderThemeToggle */
       (function () {
@@ -22,7 +23,7 @@
       rel="stylesheet"
     />
     <style>
-      /* ===== JumpTest — SalesHub / Miaro design system (design-system/tokens.css +
+      /* ===== Miaro Verify — SalesHub / Miaro design system (design-system/tokens.css +
          DESIGN.md). Charcoal accent on a mist canvas, white cards with the
          "premium" dual-layer shadow, Lexend titles + Lexend Deca chrome, 14px
          cards / 12px controls, ease 0.16,1,0.3,1. `.dark` on <html> flips the set. ===== */
@@ -258,6 +259,16 @@
         * { animation: none !important; transition: none !important; }
       }
       @media (max-width: 680px) { .auth-brand { display: none !important; } }
+
+      /* ===== Auth — full-viewport split (brand panel | form). On wide screens both
+         panels are locked to the viewport height so the page never scrolls; the
+         illustration shrinks to fit. Stacked (scrollable) under 900px. ===== */
+      .auth-split { min-height: 100vh; display: flex; flex-wrap: wrap; }
+      @media (min-width: 900px) {
+        .auth-split { height: 100vh; overflow: hidden; flex-wrap: nowrap; }
+        .auth-split > .auth-brand { height: 100vh; overflow: hidden; }
+        .auth-split > .auth-form { height: 100vh; overflow: auto; }
+      }
 
       /* ===== App shell — white collapsible sidebar (16rem / 3rem icon rail) + 48px header ===== */
       .nav-layout { display: flex; min-height: 100vh; }

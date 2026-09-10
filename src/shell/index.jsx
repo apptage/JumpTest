@@ -8,7 +8,7 @@
                       theme toggle · account menu.
    Page titles/filters stay on the page (PageHeaderBar in ui-kit), never here. */
 import { useState, useEffect } from 'react';
-import { card, inputStyle, ghostButton, primaryButton, Logo, Avatar, CountBadge } from '@/ui.jsx';
+import { card, inputStyle, ghostButton, primaryButton, Logo, Wordmark, Avatar, CountBadge } from '@/ui.jsx';
 import { PageHeader, sideHead } from '@shared/ui-kit.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
 import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
@@ -74,10 +74,8 @@ export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, collap
     <nav className={`nav-rail${collapsed ? ' collapsed' : ''}`} aria-label="Primary">
       {/* SidebarHeader: logo (mark when collapsed) + trigger (expanded only) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: collapsed ? '2px 0 10px' : '2px 6px 10px', justifyContent: collapsed ? 'center' : 'flex-start' }}>
-        <Logo size={28} />
-        <span className="nav-wordmark" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15.5, color: 'var(--sidebar-foreground)', flex: 1, letterSpacing: '-0.01em' }}>
-          JumpTest
-        </span>
+        {/* mark only when collapsed, full "miaro VERIFY" lock-up when expanded */}
+        {collapsed ? <Logo size={22} /> : <span className="nav-wordmark" style={{ flex: 1, color: 'var(--sidebar-foreground)', lineHeight: 0 }}><Wordmark size={24} /></span>}
         {!collapsed && (
           <button className="hdr-icon-btn nav-trailing" onClick={onToggleCollapsed} title="Collapse sidebar (⌘B)" aria-label="Collapse sidebar">
             <IconPanel />

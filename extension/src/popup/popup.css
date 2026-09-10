@@ -1,4 +1,4 @@
-/* GammaQuality — SalesHub / Miaro design system, DARK set (design-system/tokens.css
+/* Miaro Verify — SalesHub / Miaro design system, DARK set (design-system/tokens.css
    `.dark`): canvas #0F1218, card #181C24, text #EDEFF3, accent inverts to a light
    fill, border #2C313C, radius 10px, Lexend / Lexend Deca. No iframe of the app. */
 :root {
@@ -29,7 +29,8 @@ body {
 
 .app { display: flex; flex-direction: column; min-height: 560px; padding: 14px; gap: 12px; }
 .head { display: flex; align-items: center; gap: 10px; }
-.logo { width: 28px; height: 28px; border-radius: 8px; background: var(--brand); display: grid; place-items: center; font-weight: 800; color: var(--brand-fg); }
+.logo { height: 22px; width: 104px; color: var(--text); line-height: 0; flex-shrink: 0; }
+.logo svg { width: 100%; height: 100%; display: block; }
 .brand { font-weight: 700; font-size: 14px; flex: 1; }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); font-size: 11px; }

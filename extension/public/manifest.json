@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "GammaQuality Time Log",
+  "name": "Miaro Verify Time Log",
   "version": "1.0.0",
-  "description": "Track time against GammaQuality projects and WBS tasks — Play / Pause / Stop, plus manual entries.",
+  "description": "Track time against Miaro Verify projects and WBS tasks — Play / Pause / Stop, plus manual entries.",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "GammaQuality Time Log"
+    "default_title": "Miaro Verify Time Log"
   },
   "background": {
     "service_worker": "background.js",

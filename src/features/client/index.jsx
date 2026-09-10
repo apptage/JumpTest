@@ -2,7 +2,7 @@
    ?client=<token>. Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
-import { card, inputStyle, Logo, CenteredMessage } from '@/ui.jsx';
+import { card, inputStyle, Wordmark, CenteredMessage } from '@/ui.jsx';
 import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER } from '@/constants.js';
 import { sideHead } from '@shared/ui-kit.jsx';
 import { WbsBadge, latestEst } from '@features/wbs';
@@ -486,10 +486,7 @@ export function ClientDashboard({ token }) {
         }}
       >
         <div style={{ maxWidth: 880, margin: '0 auto', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Logo size={28} />
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16 }}>
-            Jump<span style={{ color: 'var(--brand)' }}>Test</span>
-          </span>
+          <Wordmark size={26} />
           <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>Client portal</span>
         </div>
       </header>
@@ -639,7 +636,7 @@ export function ClientDashboard({ token }) {
         {effectiveTab === 'qa' && <ClientBugReport report={bugReport} />}
 
         <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
-          Read-only project status · powered by JumpTest
+          Read-only project status · powered by Miaro Verify
         </div>
       </div>
     </div>

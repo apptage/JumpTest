@@ -6,6 +6,7 @@ import {
   BUG_STATUSES,
 } from './constants.js';
 import { IconPackage, IconSend, IconGlobe } from './icons.jsx';
+import { MiaroMark, MiaroLogo } from './brand.jsx';
 
 /* ---------- style tokens ---------- */
 
@@ -103,48 +104,14 @@ export function DotPill({ color, label }) {
 
 /* ---------- brand ---------- */
 
-export function Logo({ size = 30 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ display: 'block', flexShrink: 0 }}
-      aria-hidden="true"
-    >
-      {/* charcoal accent mark — inverts with the theme via --accent tokens */}
-      <rect width="32" height="32" rx="11" fill="var(--accent)" />
-      <path
-        d="M12.5 11L8.5 16l4 5M19.5 11l4 5-4 5"
-        stroke="var(--accent-foreground)"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+/* Logo = the Miaro mark only; Wordmark = the full "miaro VERIFY" lock-up.
+   Both inherit the text colour (see src/brand.jsx). `size` is the height. */
+export function Logo({ size = 28, tone }) {
+  return <MiaroMark size={size} color={tone === 'ink' ? 'var(--on-ink)' : 'var(--color-text-primary)'} />;
 }
 
-export function Wordmark({ size = 30, tone }) {
-  const color = tone === 'ink' ? 'var(--on-ink)' : 'var(--color-text-primary)';
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <Logo size={size} />
-      <div
-        style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 16.5,
-          fontWeight: 700,
-          letterSpacing: '-0.02em',
-          color,
-        }}
-      >
-        Jump<span style={{ color: 'var(--brand)' }}>Test</span>
-      </div>
-    </div>
-  );
+export function Wordmark({ size = 26, tone }) {
+  return <MiaroLogo size={size} color={tone === 'ink' ? 'var(--on-ink)' : 'var(--color-text-primary)'} />;
 }
 
 /* ---------- badges ---------- */

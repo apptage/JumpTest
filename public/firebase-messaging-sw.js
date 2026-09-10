@@ -38,7 +38,7 @@ function linkFor(data) {
 messaging.onBackgroundMessage((payload) => {
   const n = payload.notification || {};
   const data = payload.data || {};
-  self.registration.showNotification(n.title || 'JumpTest', {
+  self.registration.showNotification(n.title || 'Miaro Verify', {
     body: n.body || '',
     icon: '/icon-192.png',
     badge: '/icon-192.png',

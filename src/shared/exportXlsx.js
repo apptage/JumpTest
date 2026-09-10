@@ -20,7 +20,7 @@ export function buildWorkbook(spec) {
   const wb = XLSX.utils.book_new();
 
   const about = [
-    [`JumpTest — ${spec.title}`, ''],
+    [`Miaro Verify — ${spec.title}`, ''],
     ['Generated', new Date().toISOString()],
     ['Source', spec.source || ''],
     ['Scope', spec.scope || ''],

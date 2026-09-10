@@ -4,6 +4,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, timeLogs, fetchProjects, fetchWbsTasks, fetchMyRole, todayISO } from '../supabase.js';
 import { elapsedMs } from '../../../src/api/timeLogs.js';
+import logoSvg from '../../../src/assets/brand/miaro-verify.svg?raw';
+
+// Miaro Verify lock-up, inlined so it inherits the popup text colour
+const BrandLogo = () => <div className="logo" role="img" aria-label="Miaro Verify" dangerouslySetInnerHTML={{ __html: logoSvg }} />;
 
 const send = (msg) =>
   new Promise((resolve, reject) =>
@@ -58,8 +62,7 @@ export default function App() {
 function Header({ user, right }) {
   return (
     <div className="head">
-      <div className="logo">J</div>
-      <div className="brand">GammaQuality</div>
+      <BrandLogo />
       {right}
       <button className="btn ghost faint" title={user.email} onClick={() => supabase.auth.signOut()}>Sign out</button>
     </div>
@@ -80,7 +83,7 @@ function Login({ onError }) {
   }
   return (
     <form className="app" onSubmit={go}>
-      <div className="head"><div className="logo">J</div><div className="brand">GammaQuality Time Log</div></div>
+      <div className="head"><BrandLogo /><div className="brand">Time Log</div></div>
       <div className="card stack">
         <div><label className="f">Email</label><input type="email" autoFocus value={email} placeholder="you@jumppace.com" onChange={(e) => setEmail(e.target.value)} /></div>
         <div><label className="f">Password</label><input type="password" value={pw} onChange={(e) => setPw(e.target.value)} /></div>
