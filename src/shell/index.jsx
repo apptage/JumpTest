@@ -1,8 +1,15 @@
-/* App shell — navigation rail, header (with global search + notifications),
-   and the settings page. Moved verbatim from ReleaseTracker.jsx (Phase 0). */
-import { useState } from 'react';
+/* App shell — SalesHub / Miaro design system (design-system/DESIGN.md).
+   Two chrome layers, never merged:
+     1. AppSidebar  — white 16rem rail, collapsible to a 3rem icon rail (⌘/Ctrl+B),
+                      uppercase section labels, 40px rounded-10 rows. Footer is EMPTY:
+                      the account menu lives in the header.
+     2. AppHeader   — 48px white bar: [sidebar trigger when collapsed] breadcrumb ·
+                      global search · quick "New" (dark fill) · notifications ·
+                      theme toggle · account menu.
+   Page titles/filters stay on the page (PageHeaderBar in ui-kit), never here. */
+import { useState, useEffect } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, Logo, Avatar, CountBadge } from '@/ui.jsx';
-import { PageHeader, sideHead, relativeTime, greeting } from '@shared/ui-kit.jsx';
+import { PageHeader, sideHead } from '@shared/ui-kit.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
 import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
 import { EDIT_WINDOW_HOURS, SLA_HOURS, BUG_SLA_DAYS } from '@/constants.js';
@@ -11,177 +18,236 @@ import {
   IconLayers, IconPackage, IconPlus, IconPower, IconSearch, IconSliders, IconTree, IconUsers, IconUpload,
 } from '@/icons.jsx';
 
-function Chevron({ size = 14, dir = 'down' }) {
+/* ---- tiny inline icons the kit doesn't ship (Lucide-style, 1.75 stroke) ---- */
+const svgProps = (size) => ({ width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true });
+const IconPanel = ({ size = 16 }) => (<svg {...svgProps(size)}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>);
+const IconSun = ({ size = 16 }) => (<svg {...svgProps(size)}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>);
+const IconMoon = ({ size = 16 }) => (<svg {...svgProps(size)}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" /></svg>);
+const IconChevron = ({ size = 14, dir = 'down' }) => {
   const d = { down: 'm6 9 6 6 6-6', up: 'm6 15 6-6 6 6', right: 'm9 6 6 6-6 6', left: 'm15 6-6 6 6 6' }[dir];
+  return <svg {...svgProps(size)} strokeWidth="2"><path d={d} /></svg>;
+};
+
+/* ---- nav model: sections in DS order; hidden items are omitted, not disabled ---- */
+export const PAGE_TITLES = {
+  dashboard: 'Dashboard', projecthub: 'Projects', releases: 'Releases',
+  bugs: 'Bugs', wbs: 'WBS', projects: 'Manage Projects', analytics: 'Analytics', users: 'Users',
+  teams: 'Teams', settings: 'Settings',
+};
+const SECTION_OF = {
+  dashboard: 'Main', projecthub: 'Work', releases: 'Work', bugs: 'Work', wbs: 'Work',
+  analytics: 'Insights', projects: 'Admin', users: 'Admin', teams: 'Admin', settings: 'Account',
+};
+function navSections({ canManage, isAdmin }) {
+  return [
+    { label: 'Main', items: [
+      { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: true },
+    ] },
+    { label: 'Work', items: [
+      { key: 'projecthub', label: 'Projects', Icon: IconFolder, show: true },
+      { key: 'releases', label: 'Releases', Icon: IconPackage, show: true },
+      { key: 'bugs', label: 'Bugs', Icon: IconBug, show: true },
+      { key: 'wbs', label: 'WBS', Icon: IconTree, show: true },
+    ] },
+    { label: 'Insights', items: [
+      { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
+    ] },
+    { label: 'Admin', items: [
+      { key: 'projects', label: 'Manage Projects', Icon: IconSliders, show: canManage },
+      { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
+      { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
+    ] },
+    { label: 'Account', items: [
+      { key: 'settings', label: 'Settings', Icon: IconCog, show: true },
+    ] },
+  ]
+    .map((s) => ({ ...s, items: s.items.filter((i) => i.show) }))
+    .filter((s) => s.items.length);
+}
+
+/* ================================================================== */
+/* AppSidebar                                                          */
+/* ================================================================== */
+export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, collapsed, onToggleCollapsed }) {
+  const sections = navSections({ canManage, isAdmin });
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={d} />
-    </svg>
+    <nav className={`nav-rail${collapsed ? ' collapsed' : ''}`} aria-label="Primary">
+      {/* SidebarHeader: logo (mark when collapsed) + trigger (expanded only) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: collapsed ? '2px 0 10px' : '2px 6px 10px', justifyContent: collapsed ? 'center' : 'flex-start' }}>
+        <Logo size={28} />
+        <span className="nav-wordmark" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15.5, color: 'var(--sidebar-foreground)', flex: 1, letterSpacing: '-0.01em' }}>
+          JumpTest
+        </span>
+        {!collapsed && (
+          <button className="hdr-icon-btn nav-trailing" onClick={onToggleCollapsed} title="Collapse sidebar (⌘B)" aria-label="Collapse sidebar">
+            <IconPanel />
+          </button>
+        )}
+      </div>
+
+      {/* SidebarContent */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {sections.map((s) => (
+          <div key={s.label}>
+            <div className="nav-section">{s.label}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {s.items.map((it) => {
+                const active = page === it.key;
+                return (
+                  <button
+                    key={it.key}
+                    onClick={() => onNavigate(it.key)}
+                    className={active ? 'nav-item on' : 'nav-item'}
+                    title={collapsed ? it.label : undefined}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <it.Icon size={19} />
+                    <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>{it.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* SidebarFooter — empty by design (account menu is in the header); a
+          quiet team label when expanded is the only thing here. */}
+      {teamName && !collapsed && (
+        <div className="nav-label" style={{ marginTop: 'auto', padding: '14px 12px 2px', fontSize: 11, color: 'var(--rail-muted)' }}>
+          Team · <span style={{ color: 'var(--rail-fg)', fontWeight: 600 }}>{teamName}</span>
+        </div>
+      )}
+    </nav>
   );
 }
 
-/* The dark navigation rail is the app's ONLY chrome now — it carries the brand,
-   the New-actions menu, the primary nav, notifications (with unread badge) and
-   the user/profile menu pinned to the bottom. No top header bar. */
-export function NavRail({
-  page, onNavigate, teamName, canManage, isAdmin, isExec,
-  user, canSubmit, unread, notifications, notifOpen,
+/* ================================================================== */
+/* AppHeader                                                           */
+/* ================================================================== */
+export function AppHeader({
+  user, page, canSubmit, canManage, isAdmin, collapsed, onToggleCollapsed,
+  unread, notifOpen, notifications, projects, releases, bugs, projectsById,
   onToggleNotif, onNotifClick, onMarkAllRead,
-  onSubmitClick, onNewProject, onInviteUser, onSettings, onSignOut,
+  onSubmitClick, onNewProject, onInviteUser, onOpenRelease, onNavigate, onSettings, onSignOut,
 }) {
   const [actionsOpen, setActionsOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const items = [
-    // Manager's executive home; also a first-class item for Admin (bridge)
-    { key: 'command-center', label: 'Command Center', Icon: IconSliders, show: isExec || isAdmin },
-    { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: !isExec },
-    { key: 'projecthub', label: 'Projects', Icon: IconFolder, show: !isExec },
-    { key: 'releases', label: 'Releases', Icon: IconPackage, show: !isExec },
-    { key: 'bugs', label: 'Bugs', Icon: IconBug, show: !isExec },
-    { key: 'wbs', label: 'WBS', Icon: IconTree, show: !isExec },
-    { key: 'projects', label: 'Manage Projects', Icon: IconSliders, show: canManage },
-    { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
-    { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
-    { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
-    { key: 'settings', label: 'Settings', Icon: IconCog, show: true },
-  ].filter((i) => i.show);
-
+  const [acctOpen, setAcctOpen] = useState(false);
   const menuItem = {
-    display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '9px 11px',
-    fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', background: 'transparent',
-    border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', borderRadius: 6,
+    display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '9px 11px', fontSize: 13, fontWeight: 500,
+    color: 'var(--color-text-primary)', background: 'transparent', border: 'none', cursor: 'pointer',
+    fontFamily: 'var(--font-body)', textAlign: 'left', borderRadius: 8,
   };
+  const dropdown = { ...card, position: 'absolute', top: 40, right: 0, zIndex: 50, padding: 4, boxShadow: 'var(--shadow-lg)' };
 
   return (
-    <nav className="nav-rail">
-      {/* brand */}
-      <div style={{ padding: '2px 6px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{
-          width: 34, height: 34, borderRadius: 10, background: 'var(--brand-gradient)',
-          display: 'grid', placeItems: 'center', color: '#fff', fontFamily: 'var(--font-display)',
-          fontWeight: 800, fontSize: 17, boxShadow: '0 2px 8px rgba(108,99,255,0.45)', flexShrink: 0,
-        }}>J</div>
-        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--rail-fg-strong)', flex: 1 }}>
-          JumpTest
-        </span>
+    <header className="app-header">
+      {/* trigger only when collapsed — expanded desktop keeps it in the sidebar (never both) */}
+      {collapsed && (
+        <button className="hdr-icon-btn" onClick={onToggleCollapsed} title="Expand sidebar (⌘B)" aria-label="Expand sidebar">
+          <IconPanel />
+        </button>
+      )}
+
+      {/* HeaderContextTitle — breadcrumb: section › page (muted) */}
+      <nav className="crumb" aria-label="Breadcrumb">
+        <span className="sect">{SECTION_OF[page] || 'Main'}</span>
+        <span className="sep">/</span>
+        <span className="page">{PAGE_TITLES[page] || 'Dashboard'}</span>
+      </nav>
+
+      {/* global search */}
+      <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 120, padding: '0 12px' }}>
+        <GlobalSearch projects={projects} releases={releases} bugs={bugs} projectsById={projectsById} onNavigate={onNavigate} onOpenRelease={onOpenRelease} />
       </div>
 
-      {/* New — quick-create menu (hidden for the read-only Manager) */}
-      {!isExec && (canSubmit || canManage) && (
-        <div style={{ position: 'relative', padding: '0 4px 12px' }}>
+      {/* QuickActionMenu — dark fill */}
+      {(canSubmit || canManage) && (
+        <div style={{ position: 'relative' }}>
           <button
             onClick={() => setActionsOpen((v) => !v)}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, width: '100%',
-              padding: '10px 12px', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-              color: '#fff', background: 'var(--brand)', border: 'none', borderRadius: 10,
-              boxShadow: '0 2px 10px rgba(108,99,255,0.4)',
-            }}
+            style={{ ...primaryButton(false), minHeight: 32, padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 10 }}
           >
             <IconPlus size={15} /> New
           </button>
           {actionsOpen && (
             <>
               <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setActionsOpen(false)} />
-              <div style={{ ...card, position: 'absolute', top: 46, left: 4, right: 4, zIndex: 50, padding: 4, boxShadow: 'var(--shadow-md)' }}>
-                {canSubmit && (
-                  <button style={menuItem} onClick={() => { setActionsOpen(false); onSubmitClick(); }}>
-                    <IconUpload size={15} /> Submit release
-                  </button>
-                )}
-                {canManage && (
-                  <button style={menuItem} onClick={() => { setActionsOpen(false); onNewProject(); }}>
-                    <IconFolder size={15} /> New project
-                  </button>
-                )}
-                {canManage && (
-                  <button style={menuItem} onClick={() => { setActionsOpen(false); onInviteUser(); }}>
-                    <IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}
-                  </button>
-                )}
+              <div style={{ ...dropdown, width: 210 }}>
+                {canSubmit && <button style={menuItem} onClick={() => { setActionsOpen(false); onSubmitClick(); }}><IconUpload size={15} /> Submit release</button>}
+                {canManage && <button style={menuItem} onClick={() => { setActionsOpen(false); onNewProject(); }}><IconFolder size={15} /> New project</button>}
+                {canManage && <button style={menuItem} onClick={() => { setActionsOpen(false); onInviteUser(); }}><IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}</button>}
               </div>
             </>
           )}
         </div>
       )}
 
-      {/* primary nav */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {items.map((it) => {
-          const active = page === it.key;
-          return (
-            <button key={it.key} onClick={() => onNavigate(it.key)} className={active ? 'nav-item on' : 'nav-item'}>
-              <it.Icon size={17} />
-              <span style={{ flex: 1, textAlign: 'left' }}>{it.label}</span>
-            </button>
-          );
-        })}
-
-        {/* notifications — nav-item styled, with the unread badge on the right */}
-        <div style={{ position: 'relative' }}>
-          <button onClick={onToggleNotif} className={notifOpen ? 'nav-item on' : 'nav-item'}>
-            <IconBell size={17} />
-            <span style={{ flex: 1, textAlign: 'left' }}>Notifications</span>
-            {unread > 0 && <CountBadge count={unread} />}
-          </button>
-          {notifOpen && (
-            <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={onToggleNotif} />
-              <div style={{ position: 'fixed', left: 14, bottom: 84, width: 300, zIndex: 50 }}>
-                <NotificationsDropdown
-                  notifications={notifications}
-                  onNotifClick={onNotifClick}
-                  onMarkAllRead={onMarkAllRead}
-                />
-              </div>
-            </>
-          )}
-        </div>
+      {/* NotificationNavLink */}
+      <div style={{ position: 'relative' }}>
+        <button className="hdr-icon-btn" onClick={onToggleNotif} title="Notifications" aria-label="Notifications">
+          <IconBell size={16} />
+          {unread > 0 && <span style={{ position: 'absolute', top: -5, right: -5 }}><CountBadge count={unread} /></span>}
+        </button>
+        {notifOpen && (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={onToggleNotif} />
+            <NotificationsDropdown notifications={notifications} onNotifClick={onNotifClick} onMarkAllRead={onMarkAllRead} />
+          </>
+        )}
       </div>
 
-      {/* profile — pinned to the bottom, opens Settings / Sign out */}
-      <div style={{ marginTop: 'auto', position: 'relative', paddingTop: 12 }}>
-        {teamName && (
-          <div style={{ fontSize: 11, color: 'var(--rail-muted)', padding: '0 10px 10px' }}>
-            Team · <span style={{ color: 'var(--rail-fg)', fontWeight: 600 }}>{teamName}</span>
-          </div>
-        )}
+      <HeaderThemeToggle />
+
+      {/* HeaderAccountMenu */}
+      <div style={{ position: 'relative' }}>
         <button
-          onClick={() => setProfileOpen((v) => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 8px',
-            background: 'var(--rail-hover)', border: '1px solid var(--rail-border)', borderRadius: 12,
-            cursor: 'pointer', fontFamily: 'inherit',
-          }}
+          onClick={() => setAcctOpen((v) => !v)}
+          title={user.email}
+          aria-label="Account"
+          style={{ border: '1px solid var(--ink-border)', background: 'var(--card)', borderRadius: 999, padding: 2, cursor: 'pointer', display: 'inline-flex' }}
         >
-          <Avatar name={user.name} size={30} />
-          <div style={{ flex: 1, textAlign: 'left', lineHeight: 1.2, overflow: 'hidden' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--rail-fg-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {user.name}
-            </div>
-            <div style={{ fontSize: 10.5, color: 'var(--rail-muted)' }}>{user.role}</div>
-          </div>
-          <span style={{ color: 'var(--rail-muted)' }}><Chevron dir={profileOpen ? 'down' : 'up'} /></span>
+          <Avatar name={user.name} size={26} />
         </button>
-        {profileOpen && (
+        {acctOpen && (
           <>
-            <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setProfileOpen(false)} />
-            <div style={{ ...card, position: 'absolute', bottom: 56, left: 0, right: 0, zIndex: 50, padding: 4, boxShadow: 'var(--shadow-md)' }}>
-              <button style={menuItem} onClick={() => { setProfileOpen(false); onSettings(); }}>
-                <IconCog size={15} /> Settings
-              </button>
-              <button style={{ ...menuItem, color: '#dc2626' }} onClick={() => { setProfileOpen(false); onSignOut(); }}>
-                <IconPower size={15} /> Sign out
-              </button>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setAcctOpen(false)} />
+            <div style={{ ...dropdown, width: 230 }}>
+              <div style={{ padding: '10px 11px 8px', borderBottom: '1px solid var(--color-border-primary)', marginBottom: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>{user.role}{user.email ? ` · ${user.email}` : ''}</div>
+              </div>
+              <button style={menuItem} onClick={() => { setAcctOpen(false); onSettings(); }}><IconCog size={15} /> Settings</button>
+              <button style={{ ...menuItem, color: 'var(--danger)' }} onClick={() => { setAcctOpen(false); onSignOut(); }}><IconPower size={15} /> Sign out</button>
             </div>
           </>
         )}
       </div>
-    </nav>
+    </header>
   );
 }
 
-export function SettingsPage({ user, team, onSignOut }) {
+/* HeaderThemeToggle — flips `.dark` on <html>, persisted (index.html applies it
+   before first paint so there is no flash). */
+function HeaderThemeToggle() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const toggle = () => {
+    const next = !dark;
+    document.documentElement.classList.toggle('dark', next);
+    try { localStorage.setItem('gq-theme', next ? 'dark' : 'light'); } catch { /* ignore */ }
+    setDark(next);
+  };
+  return (
+    <button className="hdr-icon-btn" onClick={toggle} title={dark ? 'Switch to light' : 'Switch to dark'} aria-label="Toggle theme">
+      {dark ? <IconSun /> : <IconMoon />}
+    </button>
+  );
+}
+
+/* ================================================================== */
+/* Settings page                                                       */
+/* ================================================================== */
+export function SettingsPage({ user, team, onSignOut, reports }) {
   const [pushMsg, setPushMsg] = useState('');
   const [pushBusy, setPushBusy] = useState(false);
   async function enablePush() {
@@ -204,7 +270,9 @@ export function SettingsPage({ user, team, onSignOut }) {
   );
   return (
     <>
-      <PageHeader title="Settings" subtitle="Your account and workspace" />
+      <PageHeader title="Settings" subtitle="Your account, workspace and departmental reports" icon={<IconCog size={18} />} />
+      {/* Reports (Settings → Reports) — passed in by the app so the shell stays data-free */}
+      {reports}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
         <div style={{ ...card, padding: 18 }}>
           <div style={{ ...sideHead, marginBottom: 10 }}>Profile</div>
@@ -214,33 +282,22 @@ export function SettingsPage({ user, team, onSignOut }) {
             'Role',
             <Pill
               label={user.role}
-              tone={
-                { Admin: 'info', 'Team Lead': 'warning', QA: 'success', Developer: 'neutral' }[user.role] ||
-                'neutral'
-              }
+              tone={{ Admin: 'info', 'Team Lead': 'warning', QA: 'success', Developer: 'neutral' }[user.role] || 'neutral'}
             />
           )}
           {row('Team', team ? team.name : '—')}
-          <button
-            style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644', marginTop: 14 }}
-            onClick={onSignOut}
-          >
-            Sign out
-          </button>
+          <button style={{ ...ghostButton, color: 'var(--danger)', marginTop: 14 }} onClick={onSignOut}>Sign out</button>
         </div>
         {pushConfigured && (
           <div style={{ ...card, padding: 18 }}>
             <div style={{ ...sideHead, marginBottom: 10 }}>Notifications</div>
             <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.6, margin: '0 0 12px' }}>
-              Get push notifications on this device for assignments, QA updates, comments and
-              mentions — even when the tab is closed.
+              Get push notifications on this device for assignments, QA updates, comments and mentions — even when the tab is closed.
             </p>
             <button style={{ ...primaryButton(pushBusy) }} disabled={pushBusy} onClick={enablePush}>
               {pushBusy ? 'Enabling…' : 'Enable push on this device'}
             </button>
-            {pushMsg && (
-              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>{pushMsg}</div>
-            )}
+            {pushMsg && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>{pushMsg}</div>}
           </div>
         )}
         <div style={{ ...card, padding: 18 }}>
@@ -256,242 +313,9 @@ export function SettingsPage({ user, team, onSignOut }) {
   );
 }
 
-
 /* ================================================================== */
-/* Header + notifications                                             */
+/* Global search (header) + notifications dropdown                    */
 /* ================================================================== */
-
-const PAGE_TITLES = {
-  'command-center': 'Command Center',
-  dashboard: 'Dashboard',
-  projecthub: 'Projects',
-  releases: 'Releases',
-  bugs: 'Bugs',
-  wbs: 'WBS',
-  projects: 'Manage Projects',
-  analytics: 'Analytics',
-  users: 'Users',
-  teams: 'Teams',
-  settings: 'Settings',
-};
-
-export function Header({
-  user,
-  page,
-  canSubmit,
-  canManage,
-  isAdmin,
-  isExec,
-  unread,
-  notifOpen,
-  notifications,
-  projects,
-  releases,
-  bugs,
-  projectsById,
-  onToggleNotif,
-  onNotifClick,
-  onMarkAllRead,
-  onSubmitClick,
-  onNewProject,
-  onInviteUser,
-  onOpenRelease,
-  onNavigate,
-  onSettings,
-  onSignOut,
-}) {
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const inkGhost = {
-    padding: '8px 13px',
-    fontSize: 13,
-    fontWeight: 500,
-    color: 'var(--color-text-primary)',
-    background: 'var(--color-background-primary)',
-    border: '1px solid var(--color-border-tertiary)',
-    borderRadius: 'var(--r-input)',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  };
-  const menuItem = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 9,
-    width: '100%',
-    padding: '9px 11px',
-    fontSize: 13,
-    fontWeight: 500,
-    color: 'var(--color-text-primary)',
-    background: 'transparent',
-    border: 'none',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    textAlign: 'left',
-    borderRadius: 6,
-  };
-  return (
-    <header
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 20,
-        background: 'var(--ink)',
-        borderBottom: '1px solid var(--ink-border)',
-      }}
-    >
-      <div
-        style={{
-          margin: '0 auto',
-          padding: '11px 22px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          flexWrap: 'wrap',
-        }}
-      >
-        {/* breadcrumb */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13.5 }}>
-          <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>JumpTest</span>
-          <span style={{ color: 'var(--color-text-tertiary)' }}>/</span>
-          <span style={{ fontWeight: 700 }}>{PAGE_TITLES[page] || 'Dashboard'}</span>
-        </div>
-
-        {/* global search — hidden for Manager (would leak release/bug detail) */}
-        {isExec ? (
-          <div style={{ flex: 1 }} />
-        ) : (
-          <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 180 }}>
-            <GlobalSearch
-              projects={projects}
-              releases={releases}
-              bugs={bugs}
-              projectsById={projectsById}
-              onNavigate={onNavigate}
-              onOpenRelease={onOpenRelease}
-            />
-          </div>
-        )}
-
-        {/* bell */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={onToggleNotif}
-            style={{ ...inkGhost, padding: 9, position: 'relative', display: 'inline-flex' }}
-            title="Notifications"
-          >
-            <IconBell size={17} />
-            {unread > 0 && (
-              <span style={{ position: 'absolute', top: -5, right: -5 }}>
-                <CountBadge count={unread} />
-              </span>
-            )}
-          </button>
-          {notifOpen && (
-            <NotificationsDropdown
-              notifications={notifications}
-              onNotifClick={onNotifClick}
-              onMarkAllRead={onMarkAllRead}
-            />
-          )}
-        </div>
-
-        {/* quick actions — Manager has no create actions */}
-        {!isExec && (
-        <div style={{ position: 'relative' }}>
-          <button
-            style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            onClick={() => setActionsOpen((v) => !v)}
-          >
-            <IconPlus size={15} />
-            New
-          </button>
-          {actionsOpen && (
-            <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 39 }} onClick={() => setActionsOpen(false)} />
-              <div
-                style={{
-                  ...card,
-                  position: 'absolute',
-                  top: 42,
-                  right: 0,
-                  width: 210,
-                  zIndex: 40,
-                  padding: 4,
-                  boxShadow: 'var(--shadow-md)',
-                }}
-              >
-                {canSubmit && (
-                  <button
-                    style={menuItem}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      onSubmitClick();
-                    }}
-                  >
-                    <IconUpload size={15} /> Submit release
-                  </button>
-                )}
-                {canManage && (
-                  <button
-                    style={menuItem}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      onNewProject();
-                    }}
-                  >
-                    <IconFolder size={15} /> New project
-                  </button>
-                )}
-                {canManage && (
-                  <button
-                    style={menuItem}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      onInviteUser();
-                    }}
-                  >
-                    <IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}
-                  </button>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-        )}
-
-        {/* user chip */}
-        <div
-          onClick={onSettings}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '5px 10px 5px 6px',
-            background: 'var(--color-background-secondary)',
-            border: '1px solid var(--color-border-tertiary)',
-            borderRadius: 999,
-            cursor: 'pointer',
-          }}
-        >
-          <Avatar name={user.name} size={26} />
-          <div style={{ lineHeight: 1.15 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-              {user.name}
-            </div>
-            <div style={{ fontSize: 10.5, color: 'var(--color-text-secondary)' }}>{user.role}</div>
-          </div>
-        </div>
-        <button
-          style={{ ...inkGhost, padding: 9, display: 'inline-flex' }}
-          onClick={onSignOut}
-          title="Sign out"
-        >
-          <IconPower size={17} />
-        </button>
-      </div>
-    </header>
-  );
-}
-
 function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOpenRelease }) {
   const [q, setQ] = useState('');
   const [focused, setFocused] = useState(false);
@@ -501,19 +325,9 @@ function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOp
     term.length >= 2
       ? [
           ...releases
-            .filter(
-              (r) =>
-                `v${r.version}`.toLowerCase().includes(term) ||
-                (projectsById[r.projectId]?.name || '').toLowerCase().includes(term)
-            )
+            .filter((r) => `v${r.version}`.toLowerCase().includes(term) || (projectsById[r.projectId]?.name || '').toLowerCase().includes(term))
             .slice(0, 5)
-            .map((r) => ({
-              key: 'r' + r.id,
-              type: 'release',
-              id: r.id,
-              label: `v${r.version} · ${projectsById[r.projectId]?.name || ''}`,
-              sub: `${r.platform} release`,
-            })),
+            .map((r) => ({ key: 'r' + r.id, type: 'release', id: r.id, label: `v${r.version} · ${projectsById[r.projectId]?.name || ''}`, sub: `${r.platform} release` })),
           ...bugs
             .filter((b) => b.title.toLowerCase().includes(term))
             .slice(0, 5)
@@ -534,16 +348,7 @@ function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOp
 
   return (
     <div style={{ position: 'relative', width: '100%', maxWidth: 440 }}>
-      <span
-        style={{
-          position: 'absolute',
-          left: 11,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          color: 'var(--color-text-tertiary)',
-          pointerEvents: 'none',
-        }}
-      >
+      <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none', display: 'inline-flex' }}>
         <IconSearch size={15} />
       </span>
       <input
@@ -552,54 +357,21 @@ function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOp
         onChange={(e) => setQ(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
-        style={{ ...inputStyle, paddingLeft: 34, height: 36 }}
+        style={{ ...inputStyle, paddingLeft: 34, minHeight: 32, padding: '0 12px 0 34px', borderRadius: 10, borderColor: 'var(--ink-border)' }}
       />
       {focused && results.length > 0 && (
-        <div
-          style={{
-            ...card,
-            position: 'absolute',
-            top: 42,
-            left: 0,
-            right: 0,
-            zIndex: 40,
-            padding: 4,
-            maxHeight: 360,
-            overflowY: 'auto',
-            boxShadow: 'var(--shadow-md)',
-          }}
-        >
+        <div style={{ ...card, position: 'absolute', top: 38, left: 0, right: 0, zIndex: 40, padding: 4, maxHeight: 360, overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}>
           {results.map((r) => (
             <div
               key={r.key}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                pick(r);
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 9,
-                padding: '8px 10px',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontSize: 13,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-secondary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              onMouseDown={(e) => { e.preventDefault(); pick(r); }}
+              className="mgr-row"
+              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}
             >
               <span style={{ color: 'var(--color-text-tertiary)', display: 'inline-flex' }}>
-                {r.type === 'bug' ? (
-                  <IconBug size={15} />
-                ) : r.type === 'project' ? (
-                  <IconFolder size={15} />
-                ) : (
-                  <IconUpload size={15} />
-                )}
+                {r.type === 'bug' ? <IconBug size={15} /> : r.type === 'project' ? <IconFolder size={15} /> : <IconUpload size={15} />}
               </span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {r.label}
-              </span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
               <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{r.sub}</span>
             </div>
           ))}
@@ -611,79 +383,25 @@ function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOp
 
 function NotificationsDropdown({ notifications, onNotifClick, onMarkAllRead }) {
   return (
-    <div
-      style={{
-        ...card,
-        position: 'absolute',
-        top: 44,
-        right: 0,
-        width: 320,
-        maxHeight: 400,
-        overflowY: 'auto',
-        zIndex: 40,
-        padding: 0,
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          padding: '10px 12px',
-          borderBottom: '0.5px solid var(--color-border-primary)',
-        }}
-      >
-        <div style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>
-          Notifications
-        </div>
-        <button
-          onClick={onMarkAllRead}
-          style={{
-            ...ghostButton,
-            padding: '4px 8px',
-            fontSize: 11,
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--brand)',
-          }}
-        >
+    <div style={{ ...card, position: 'absolute', top: 40, right: 0, width: 320, maxHeight: 400, overflowY: 'auto', zIndex: 50, padding: 0, boxShadow: 'var(--shadow-lg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Notifications</div>
+        <button onClick={onMarkAllRead} style={{ ...ghostButton, padding: '4px 8px', minHeight: 0, fontSize: 11, border: 'none', background: 'transparent', color: 'var(--accent)' }}>
           Mark all read
         </button>
       </div>
       {notifications.length === 0 ? (
-        <div
-          style={{
-            padding: 20,
-            fontSize: 12,
-            color: 'var(--color-text-secondary)',
-            textAlign: 'center',
-          }}
-        >
-          No notifications.
-        </div>
+        <div style={{ padding: 20, fontSize: 12, color: 'var(--color-text-secondary)', textAlign: 'center' }}>No notifications.</div>
       ) : (
         notifications.map((n) => (
           <div
             key={n.id}
             onClick={() => onNotifClick(n)}
-            style={{
-              padding: '10px 12px',
-              borderBottom: '0.5px solid var(--color-border-primary)',
-              cursor: 'pointer',
-              background: n.read
-                ? 'transparent'
-                : 'var(--color-background-secondary)',
-            }}
+            className="mgr-row"
+            style={{ padding: '10px 12px', borderBottom: '1px solid var(--color-border-primary)', cursor: 'pointer', background: n.read ? 'transparent' : 'var(--accent-soft)' }}
           >
             <div style={{ fontSize: 12, lineHeight: 1.4 }}>{n.message}</div>
-            <div
-              style={{
-                fontSize: 10,
-                color: 'var(--color-text-secondary)',
-                marginTop: 3,
-              }}
-            >
-              {new Date(n.createdAt).toLocaleString()}
-            </div>
+            <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginTop: 3 }}>{new Date(n.createdAt).toLocaleString()}</div>
           </div>
         ))
       )}
@@ -691,3 +409,4 @@ function NotificationsDropdown({ notifications, onNotifClick, onMarkAllRead }) {
   );
 }
 
+export { IconChevron };

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, StatusBadge, TypeBadge, Avatar, CountBadge } from '@/ui.jsx';
 import { Chevron, StatBig, StatCard, StageBars, TrendChart, Segmented, Pill } from '@shared/dashboard-kit.jsx';
-import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, greeting } from '@shared/ui-kit.jsx';
+import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, greeting, PageHeader } from '@shared/ui-kit.jsx';
 import { computeReleaseMetrics, computeWorkload } from '@shared/releaseMetrics.js';
 import { aggregateBugMetrics } from '@shared/bugMetrics.js';
 import {
@@ -15,6 +15,7 @@ import {
   slaLevel,
   platformsForProjectType,
   formatVersion,
+  isActiveBug,
 } from '@/constants.js';
 import {
   IconBug, IconChart, IconCheck, IconClock, IconFolder,
@@ -39,6 +40,26 @@ const STATUS_TONE = {
   sent_back: 'danger',
   closed: 'neutral',
 };
+
+/* A little personality per role — a nickname, a colour for the avatar ring, and a
+   daily line. The line is picked from a hash of name+date so it's stable for the
+   whole day per person (no flicker, no randomness at render). */
+const ROLE_FLAVOR = {
+  Developer: { title: 'Build Captain', color: '#6366F1' },
+  QA: { title: 'Bug Hunter', color: '#14B8A6' },
+  'Team Lead': { title: 'Squad Lead', color: '#F59E0B' },
+  Admin: { title: 'Mission Control', color: '#121317' },
+};
+const DAILY_LINES = [
+  'Every bug closed today is one fewer for tomorrow-you.',
+  'Green builds are a team sport.',
+  'Ship small, ship often, sleep well.',
+  'The best bug report is the one nobody has to write.',
+  'A clean release is the loudest kind of quiet.',
+  'Test like a user, fix like an engineer.',
+  'Momentum beats heroics.',
+  'Today’s approved build is tomorrow’s baseline.',
+];
 
 /* Bug pipeline stages (ordered, with a colour each) for the Pipeline panel. */
 const BUG_STAGES = [
@@ -76,6 +97,33 @@ export function DashboardHome({
 }) {
   const [pipeMode, setPipeMode] = useState('releases');
   const firstName = (user?.name || '').split(/[\s_]+/)[0] || 'there';
+  const role = user?.role || 'Developer';
+  const flavor = ROLE_FLAVOR[role] || ROLE_FLAVOR.Developer;
+  const seed = [...`${user?.name || ''}|${new Date().toDateString()}`].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
+  const dailyLine = DAILY_LINES[seed % DAILY_LINES.length];
+  const wave = ['👋', '✨', '🚀', '🎯', '☕'][seed % 5];
+  // "your numbers" — role-aware, from the same scoped data as the rest of the page
+  const myBuilds = releases.filter((r) => r.submittedById === user?.id);
+  const myBuildIds = new Set(myBuilds.map((r) => r.id));
+  const myTested = releases.filter((r) => r.assignedQa === user?.id);
+  const myReported = bugs.filter((b) => b.createdById === user?.id);
+  const mine = role === 'QA'
+    ? [
+        { value: myTested.length, label: 'builds tested' },
+        { value: myReported.length, label: 'bugs reported' },
+        { value: myReported.filter((b) => b.status === 'fixed').length, label: 'fixes to re-check', hot: true },
+      ]
+    : role === 'Admin'
+      ? [
+          { value: projects.length, label: 'projects' },
+          { value: releases.length, label: 'releases' },
+          { value: openBugTotal, label: 'open bugs', hot: true },
+        ]
+      : [
+          { value: myBuilds.length, label: 'builds shipped' },
+          { value: myBuilds.filter((r) => r.status === 'approved').length, label: 'approved' },
+          { value: bugs.filter((b) => myBuildIds.has(b.releaseId) && isActiveBug(b)).length, label: 'bugs waiting on you', hot: true },
+        ];
 
   // ---- headline metrics (all from the shared metric layer) ----
   const m = computeReleaseMetrics(releases, bugs);
@@ -83,7 +131,7 @@ export function DashboardHome({
   const totalReleases = releases.length;
   const approved = counts.approved || 0;
   const passRate = Math.round(m.passRate || 0);
-  const cycle = m.cycleDays || 0;
+  const cycle = m.cycleDays ? Math.round(m.cycleDays * 10) / 10 : 0; // one decimal, never a float tail
   const awaiting = counts.qa_pending || 0;
   const inQa = (counts.qa_in_progress || 0) + (counts.qa_done || 0);
   const sentBack = counts.sent_back || 0;
@@ -128,14 +176,31 @@ export function DashboardHome({
 
   return (
     <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
-      {/* title row */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
-        <div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>QA Reports</h1>
+      {/* Personal hero — who you are, your numbers, one glance */}
+      <header className="glass" style={{ padding: '20px 22px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flexShrink: 0, padding: 4 }}>
+          <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: `2px solid ${flavor.color}` }} />
+          <Avatar name={user?.name} size={54} />
+        </div>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
+              {greeting()}, {firstName} {wave}
+            </h1>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#fff', background: flavor.color, padding: '3px 10px', borderRadius: 999 }}>
+              {flavor.title}
+            </span>
+          </div>
           <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '5px 0 0' }}>
-            {greeting()}, {firstName} · all-time performance overview{teamName ? ' — ' : ''}
-            {teamName && <strong style={{ color: 'var(--color-text-primary)' }}>{teamName}</strong>}
+            {dailyLine}{teamName ? <> · <strong style={{ color: 'var(--color-text-primary)' }}>{teamName}</strong></> : null}
           </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            {mine.map((c) => (
+              <span key={c.label} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, fontSize: 12, padding: '4px 11px', borderRadius: 999, background: 'var(--accent-soft)', color: 'var(--color-text-secondary)' }}>
+                <b className="tnum" style={{ fontSize: 13, color: c.hot && c.value > 0 ? 'var(--danger)' : 'var(--text)' }}>{c.value.toLocaleString()}</b> {c.label}
+              </span>
+            ))}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button style={{ ...ghostButton, display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => onNavigate && onNavigate('releases')}>
@@ -147,7 +212,7 @@ export function DashboardHome({
             </button>
           )}
         </div>
-      </div>
+      </header>
 
       {/* KPI row 1 */}
       <div className="dash-kpis" style={{ marginBottom: 14 }}>
@@ -158,13 +223,16 @@ export function DashboardHome({
         <StatCard label="Avg Cycle Time" value={`${cycle}d`} foot="SUBMIT → APPROVE" />
       </div>
 
-      {/* KPI row 2 */}
-      <div className="dash-kpis" style={{ marginBottom: 22 }}>
-        <StatCard label="Awaiting QA" value={awaiting.toLocaleString()} foot="IN THE QUEUE" />
-        <StatCard label="In QA" value={inQa.toLocaleString()} foot="BEING REVIEWED" />
-        <StatCard label="Returned for Rework" value={sentBack.toLocaleString()} foot={sentBack ? 'SENT BACK TO DEV' : 'NONE PENDING'} />
-        <StatCard label="Blocking Bugs" value={blocking.toLocaleString()} foot="MAJOR · CRITICAL OPEN" />
-        <StatCard label="Verified Bugs" value={verified.toLocaleString()} foot="RESOLVED · CLOSED" />
+      {/* Queue at a glance — the second-tier numbers as one quiet strip, not five more cards */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 22 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 'var(--tracking-label)', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginRight: 4 }}>Queue</span>
+        {[
+          ['awaiting QA', awaiting, 'warning'],
+          ['in QA', inQa, 'info'],
+          ['sent back', sentBack, sentBack ? 'danger' : 'neutral'],
+          ['blocking bugs', blocking, blocking ? 'danger' : 'neutral'],
+          ['verified bugs', verified, 'success'],
+        ].map(([l, v, tone]) => <Pill key={l} label={`${v.toLocaleString()} ${l}`} tone={tone} />)}
       </div>
 
       {/* chart + pipeline */}
@@ -343,21 +411,20 @@ export function ReleasesPage({
 
   return (
     <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
-      {/* header */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
-        <div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>Releases</h1>
-          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '5px 0 0' }}>
-            Every build across your projects · <strong style={{ color: 'var(--color-text-primary)' }}>{scopedCount}</strong> total
-            {openBugTotal > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{openBugTotal}</strong> open bug{openBugTotal === 1 ? '' : 's'}</>}
-          </p>
-        </div>
-        {canSubmit && (
+      {/* PageHeaderBar (glass) */}
+      <PageHeader
+        title="Releases"
+        icon={<IconPackage size={18} />}
+        subtitle={<>
+          Every build across your projects · <strong style={{ color: 'var(--color-text-primary)' }}>{scopedCount}</strong> total
+          {openBugTotal > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{openBugTotal}</strong> open bug{openBugTotal === 1 ? '' : 's'}</>}
+        </>}
+        actions={canSubmit && (
           <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={onSubmit}>
             <IconUpload size={15} /> Submit release
           </button>
         )}
-      </div>
+      />
 
       {/* status summary chips (click to filter by status) */}
       <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>

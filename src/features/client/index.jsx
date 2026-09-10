@@ -25,7 +25,7 @@ function relTime(iso) {
 // it PASSED QA (not that it's been delivered), so it isn't labelled "Completed".
 const CLIENT_STATUS = {
   qa_pending: { label: 'Awaiting QA', color: '#d97706' },
-  qa_in_progress: { label: 'In testing', color: '#6c63ff' },
+  qa_in_progress: { label: 'In testing', color: '#6366F1' },
   qa_done: { label: 'In review', color: '#7c3aed' },
   approved: { label: 'QA approved', color: '#16a34a' },
   sent_back: { label: 'Resolving issues', color: '#dc2626' },
@@ -227,9 +227,9 @@ const BUG_SEV = {
 const BUG_STATE = {
   open: { label: 'Open', color: '#dc2626' },
   in_progress: { label: 'In progress', color: '#d97706' },
-  fixed: { label: 'Fixed — awaiting QA', color: '#6c63ff' },
+  fixed: { label: 'Fixed — awaiting QA', color: '#6366F1' },
   disputed: { label: 'Needs clarification', color: '#7c3aed' },
-  pending_tl: { label: 'Pending review', color: '#6c63ff' },
+  pending_tl: { label: 'Pending review', color: '#6366F1' },
   verified: { label: 'Resolved', color: '#16a34a' },
 };
 // format an ISO timestamp → short date (reported/resolved dates)

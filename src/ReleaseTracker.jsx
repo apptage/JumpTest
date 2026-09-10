@@ -108,15 +108,16 @@ import {
   TagChip,
 } from '@shared/ui-kit.jsx';
 import { WbsPage } from '@features/wbs';
-import { AnalyticsModal, HistoryModal, ManagerDashboard } from '@features/analytics';
-import { CommandCenter } from '@features/command-center';
+import { HistoryModal } from '@features/analytics';
+import { Analytics } from '@features/analytics/Analytics.jsx';
 import { ProjectsTab, UsersTab, TeamsTab } from '@features/admin';
 import { SubmitModal, EditReleaseModal, DetailModal } from '@features/releases';
 import { AuthScreen, SetPasswordScreen } from '@features/auth';
 import { BugsPage } from '@features/bugs';
 import { DashboardHome, ReleasesPage } from '@features/dashboard';
 import { ProjectHub } from '@features/project-hub';
-import { NavRail, SettingsPage } from '@/shell';
+import { ReportsSection } from '@features/reports';
+import { NavRail, AppHeader, SettingsPage } from '@/shell';
 import { useAppData } from '@shared/useAppData.js';
 import { filterBugs } from '@shared/filters.js';
 import { usePush } from '@/push/usePush.js';
@@ -143,7 +144,7 @@ export default function ReleaseTracker() {
   const [statusFilter, setStatusFilter] = useState('all');
 
   // persist the active page across refreshes (no router yet)
-  const KNOWN_PAGES = ['command-center', 'dashboard', 'bugs', 'projects', 'analytics', 'users', 'teams', 'settings', 'wbs'];
+  const KNOWN_PAGES = ['dashboard', 'projecthub', 'releases', 'bugs', 'wbs', 'projects', 'analytics', 'users', 'teams', 'settings'];
   const [page, setPage] = useState(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('jt_page') : null;
     return saved && KNOWN_PAGES.includes(saved) ? saved : 'dashboard';
@@ -155,17 +156,30 @@ export default function ReleaseTracker() {
       /* storage unavailable — non-critical */
     }
   }, [page]);
-  // Manager is confined to the Command Center + Settings — never release ops.
-  useEffect(() => {
-    if (user?.role === 'Manager' && page !== 'command-center' && page !== 'settings') {
-      setPage('command-center');
-    }
-  }, [user?.role, page]);
   const [showSubmit, setShowSubmit] = useState(false);
   const [editingRelease, setEditingRelease] = useState(null);
   const [historyProject, setHistoryProject] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [hubProjectId, setHubProjectId] = useState(null); // Project Hub selection (deep-linkable)
+  // Sidebar collapse (DS: cookie-persisted + ⌘/Ctrl+B) — persisted in localStorage.
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try { return localStorage.getItem('gq-sidebar') === 'collapsed'; } catch { return false; }
+  });
+  const toggleNav = () =>
+    setNavCollapsed((c) => {
+      try { localStorage.setItem('gq-sidebar', c ? 'expanded' : 'collapsed'); } catch { /* ignore */ }
+      return !c;
+    });
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleNav();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [showNotif, setShowNotif] = useState(false);
 
   const showToast = useCallback((message, kind = 'success') => {
@@ -304,7 +318,7 @@ export default function ReleaseTracker() {
      their team's projects + temporary support grants on other teams' projects).
      Admins see everything. Expired support grants drop out automatically.
      Manager is org-wide read-only (Command Center), so it gets full scope too. */
-  const adminScope = user?.role === 'Admin' || user?.role === 'Manager';
+  const adminScope = user?.role === 'Admin';
   const myTeamId = user?.teamId ?? null;
 
   const myProjectIds = useMemo(() => {
@@ -1259,9 +1273,6 @@ export default function ReleaseTracker() {
 
   const isAdmin = user.role === 'Admin';
   const isLead = user.role === 'Team Lead';
-  // executive read-only Command Center role — named distinctly from the release
-  // "manager" (Team Lead / Admin) used in DetailModal etc. to avoid confusion.
-  const isExecutiveManager = user.role === 'Manager';
   const canManage = isAdmin || isLead; // can open the Manage panel
   const canSubmit = user.role === 'Developer' || isLead || isAdmin;
   const myTeam = teams.find((t) => t.id === myTeamId) || null;
@@ -1280,34 +1291,51 @@ export default function ReleaseTracker() {
         {/* The dark rail is the only chrome — brand, New menu, nav, notifications
             and the profile menu all live in NavRail; there is no top header bar. */}
         <div className="nav-layout">
+          {/* AppSidebar — nav only; account + notifications live in AppHeader */}
           <NavRail
             page={page}
             onNavigate={setPage}
-            user={user}
             teamName={isAdmin ? null : myTeam?.name}
-            canSubmit={canSubmit}
             canManage={canManage}
             isAdmin={isAdmin}
-            isExec={isExecutiveManager}
-            unread={unread}
-            notifOpen={showNotif}
-            notifications={notifications}
-            onToggleNotif={handleOpenNotif}
-            onNotifClick={(n) => {
-              handleNotifClick(n);
-              // Manager never opens a release — route notifications to the Command Center
-              if (n.releaseId) setPage(isExecutiveManager ? 'command-center' : 'dashboard');
-            }}
-            onMarkAllRead={handleMarkAllRead}
-            onSubmitClick={() => setShowSubmit(true)}
-            onNewProject={() => setPage('projects')}
-            onInviteUser={() => setPage('users')}
-            onSettings={() => setPage('settings')}
-            onSignOut={handleSignOut}
+            collapsed={navCollapsed}
+            onToggleCollapsed={toggleNav}
           />
 
           <div className="nav-main">
-        {page === 'dashboard' && !isExecutiveManager && (
+            <AppHeader
+              user={user}
+              page={page}
+              canSubmit={canSubmit}
+              canManage={canManage}
+              isAdmin={isAdmin}
+              collapsed={navCollapsed}
+              onToggleCollapsed={toggleNav}
+              unread={unread}
+              notifOpen={showNotif}
+              notifications={notifications}
+              projects={scopedProjects}
+              releases={scopedReleases}
+              bugs={scopedBugs}
+              projectsById={projectsById}
+              onToggleNotif={handleOpenNotif}
+              onNotifClick={(n) => {
+                handleNotifClick(n);
+                if (n.releaseId) setPage('dashboard');
+              }}
+              onMarkAllRead={handleMarkAllRead}
+              onSubmitClick={() => setShowSubmit(true)}
+              onNewProject={() => setPage('projects')}
+              onInviteUser={() => setPage('users')}
+              onOpenRelease={(id) => {
+                setSelectedId(id);
+                setPage('dashboard');
+              }}
+              onNavigate={setPage}
+              onSettings={() => setPage('settings')}
+              onSignOut={handleSignOut}
+            />
+        {page === 'dashboard' && (
           <div className="page-area">
             <DashboardHome
               releases={scopedReleases}
@@ -1329,7 +1357,7 @@ export default function ReleaseTracker() {
 
         {page !== 'dashboard' && (
           <div className="page-area anim-in">
-            {page === 'projecthub' && !isExecutiveManager && (
+            {page === 'projecthub' && (
               <ProjectHub
                 user={user}
                 projects={scopedProjects}
@@ -1353,7 +1381,7 @@ export default function ReleaseTracker() {
               />
             )}
 
-            {page === 'releases' && !isExecutiveManager && (
+            {page === 'releases' && (
               <ReleasesPage
                 releases={filtered}
                 scopedCount={scopedReleases.length}
@@ -1375,23 +1403,6 @@ export default function ReleaseTracker() {
                 canSubmit={canSubmit}
                 onSubmit={() => setShowSubmit(true)}
                 onOpen={(id) => setSelectedId(id)}
-              />
-            )}
-
-            {page === 'command-center' && (isExecutiveManager || isAdmin) && (
-              <CommandCenter
-                projects={scopedProjects}
-                releases={scopedReleases}
-                bugs={scopedBugs}
-                profiles={profiles}
-                teams={teams}
-                projectsById={projectsById}
-                profilesById={profilesById}
-                onOpenProject={
-                  isExecutiveManager
-                    ? undefined // Manager is read-only — no hub drill-through
-                    : (pid) => { setHubProjectId(pid); setPage('projecthub'); }
-                }
               />
             )}
 
@@ -1449,30 +1460,21 @@ export default function ReleaseTracker() {
               <WbsPage user={user} projects={scopedProjects} profiles={profiles} showToast={showToast} />
             )}
 
+            {/* ONE Analytics page for every stakeholder, scoped by role:
+                Admin → whole org + team filter; Team Lead → their team only. */}
             {page === 'analytics' && canManage && (
-              isAdmin ? (
-                <ManagerDashboard
-                  projects={scopedProjects}
-                  releases={scopedReleases}
-                  bugs={scopedBugs}
-                  profiles={profiles}
-                  teams={teams}
-                  projectsById={projectsById}
-                  profilesById={profilesById}
-                  onOpenRelease={(id) => setSelectedId(id)}
-                />
-              ) : (
-                <AnalyticsModal
-                  embedded
-                  projects={scopedProjects}
-                  releases={scopedReleases}
-                  bugs={scopedBugs}
-                  profiles={profiles}
-                  teams={teams.filter((t) => t.id === myTeamId)}
-                  isAdmin={isAdmin}
-                  onOpenHistory={(p) => setHistoryProject(p)}
-                />
-              )
+              <Analytics
+                projects={scopedProjects}
+                releases={scopedReleases}
+                bugs={scopedBugs}
+                profiles={isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
+                teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
+                projectsById={projectsById}
+                profilesById={profilesById}
+                isAdmin={isAdmin}
+                onOpenRelease={(id) => setSelectedId(id)}
+                onOpenHistory={(p) => setHistoryProject(p)}
+              />
             )}
 
             {page === 'users' && canManage && (
@@ -1509,7 +1511,26 @@ export default function ReleaseTracker() {
             )}
 
             {page === 'settings' && (
-              <SettingsPage user={user} team={myTeam} onSignOut={handleSignOut} />
+              <SettingsPage
+                user={user}
+                team={myTeam}
+                onSignOut={handleSignOut}
+                reports={canManage && (
+                  <ReportsSection
+                    user={user}
+                    isAdmin={isAdmin}
+                    projects={scopedProjects}
+                    releases={scopedReleases}
+                    bugs={scopedBugs}
+                    profiles={isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
+                    teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
+                    projectMembers={projectMembers}
+                    projectsById={projectsById}
+                    profilesById={profilesById}
+                    showToast={showToast}
+                  />
+                )}
+              />
             )}
           </div>
         )}
@@ -1546,7 +1567,7 @@ export default function ReleaseTracker() {
         />
       )}
 
-      {selected && !isExecutiveManager && (
+      {selected && (
         <DetailModal
           release={selected}
           project={projectsById[selected.projectId]}

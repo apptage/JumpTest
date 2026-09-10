@@ -36,14 +36,32 @@ export function Empty({ children }) {
   );
 }
 
-export function PageHeader({ title, subtitle }) {
+/* PageHeaderBar (DS "glass" variant): rounded-2xl, border-border, bg-card/50 +
+   backdrop-blur. Row = [icon] h1 Lexend 25px extrabold + description Lexend
+   Deca muted + actions (right); optional toolbar row (mt-4) for search/filters.
+   Breadcrumbs live in AppHeader — never duplicate them here. */
+export function PageHeader({ title, subtitle, icon, actions, toolbar }) {
   return (
-    <div style={{ marginBottom: 18 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{title}</h1>
-      {subtitle && (
-        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>{subtitle}</p>
-      )}
-    </div>
+    <header className="glass" style={{ padding: '18px 22px', marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+        {icon && (
+          <span style={{
+            display: 'inline-grid', placeItems: 'center', width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+            background: 'var(--accent-soft)', color: 'var(--text)', marginTop: 2,
+          }}>{icon}</span>
+        )}
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-page-title)', fontWeight: 800, margin: 0, letterSpacing: '-0.02em', lineHeight: 1.15 }}>
+            {title}
+          </h1>
+          {subtitle && (
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--color-text-secondary)', margin: '5px 0 0' }}>{subtitle}</p>
+          )}
+        </div>
+        {actions && <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>{actions}</div>}
+      </div>
+      {toolbar && <div style={{ marginTop: 16 }}>{toolbar}</div>}
+    </header>
   );
 }
 
@@ -135,10 +153,12 @@ export function EnvBadge({ environment }) {
   );
 }
 
+/* DS section label: 11px uppercase, tracking 0.8px, Lexend Deca */
 export const sideHead = {
+  fontFamily: 'var(--font-body)',
   fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: '0.04em',
+  fontWeight: 600,
+  letterSpacing: 'var(--tracking-label)',
   textTransform: 'uppercase',
   color: 'var(--color-text-tertiary)',
   marginBottom: 10,

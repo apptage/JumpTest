@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "GammaQuality Time Log",
+  "version": "1.0.0",
+  "description": "Track time against GammaQuality projects and WBS tasks — Play / Pause / Stop, plus manual entries.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "GammaQuality Time Log"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://*.supabase.co/*"]
+}

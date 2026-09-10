@@ -11,7 +11,7 @@ import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
 import { card, ghostButton, primaryButton, Avatar, StatusBadge, SeverityBadge, TypeBadge, CountBadge, inputStyle } from '@/ui.jsx';
 import { SubTabs, DataTable, Pill, StatCard, TONES } from '@shared/dashboard-kit.jsx';
-import { relativeTime, StatusAge } from '@shared/ui-kit.jsx';
+import { relativeTime, StatusAge, PageHeader } from '@shared/ui-kit.jsx';
 import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel } from '@shared/wbsMetrics.js';
 import { computeReleaseMetrics } from '@shared/releaseMetrics.js';
 import { filterBugs } from '@shared/filters.js';
@@ -40,12 +40,11 @@ function ProjectPicker({ projects, releases, bugs, releaseById, onOpen }) {
   });
   return (
     <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>Projects</h1>
-        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '5px 0 0' }}>
-          Open a project to plan work, track builds, and see its health in one place.
-        </p>
-      </div>
+      <PageHeader
+        title="Projects"
+        icon={<IconFolder size={18} />}
+        subtitle="Open a project to plan work, track builds, and see its health in one place."
+      />
       {rows.length === 0 ? (
         <div style={{ ...card, padding: 48, textAlign: 'center' }}>
           <div style={{ display: 'inline-flex', marginBottom: 10, color: 'var(--color-text-tertiary)' }}><IconFolder size={30} /></div>
@@ -198,7 +197,10 @@ function TeamTab({ project, members, profiles, profilesById, wbsItems, rel, pbug
     const assigned = wbsItems.filter((i) => i.assignedTo === mem.userId).length;
     const activeBuilds = rel.filter((r) => r.submittedById === mem.userId && isActiveStatus(r.status)).length;
     const openBugs = pbugs.filter((b) => b.createdById === mem.userId && isActiveBug(b)).length;
-    const logged = timeLogs.filter((l) => l.userId === mem.userId).reduce((s, l) => s + l.hours, 0);
+    // completed rows only — an open timer has hours = null
+    const logged = timeLogs
+      .filter((l) => l.userId === mem.userId && l.status === 'completed' && l.hours != null)
+      .reduce((s, l) => s + l.hours, 0);
     return { mem, prof, assigned, activeBuilds, openBugs, logged };
   });
   return (
@@ -280,9 +282,17 @@ function TimeTab({ projectId, user, wbsItems, logs, loading, profilesById, canMa
     return it ? (it.title || it.module || 'Task') : null;
   };
 
-  const total = logs.reduce((s, l) => s + l.hours, 0);
+  // Totals count COMPLETED rows only — a running/paused timer has hours = null
+  // (the DB writes hours on Stop), so it must not enter the sums.
+  const done = (l) => l.status === 'completed' && l.hours != null;
+  const fmtClock = (ms) => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  };
+  const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '');
+  const total = logs.filter(done).reduce((s, l) => s + l.hours, 0);
   const byUser = {};
-  logs.forEach((l) => { byUser[l.userId] = (byUser[l.userId] || 0) + l.hours; });
+  logs.filter(done).forEach((l) => { byUser[l.userId] = (byUser[l.userId] || 0) + l.hours; });
   const memberRollup = Object.entries(byUser)
     .map(([uid, h]) => ({ uid, h, name: profilesById[uid]?.name || 'Unknown' }))
     .sort((a, b) => b.h - a.h);
@@ -350,9 +360,20 @@ function TimeTab({ projectId, user, wbsItems, logs, loading, profilesById, canMa
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 420, overflowY: 'auto' }}>
               {logs.map((l) => {
                 const mine = l.userId === user.id;
+                const open = l.status === 'running' || l.status === 'paused';
+                const timer = l.source === 'timer' && l.startedAt && l.endedAt;
                 return (
                   <div key={l.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', borderRadius: 8 }}>
-                    <span className="tnum" style={{ fontSize: 13, fontWeight: 700, minWidth: 44 }}>{l.hours}h</span>
+                    {open ? (
+                      <span style={{ minWidth: 44, display: 'inline-flex', flexDirection: 'column', lineHeight: 1.15 }}>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: l.status === 'running' ? 'var(--success)' : 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {l.status === 'running' ? 'In progress' : 'Paused'}
+                        </span>
+                        <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{fmtClock(api.elapsedMs(l))}</span>
+                      </span>
+                    ) : (
+                      <span className="tnum" style={{ fontSize: 13, fontWeight: 700, minWidth: 44 }}>{l.hours}h</span>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {itemLabel(l.wbsItemId) ? <span style={{ fontWeight: 500 }}>{itemLabel(l.wbsItemId)}</span> : <span style={{ color: 'var(--color-text-tertiary)' }}>General</span>}
@@ -360,9 +381,11 @@ function TimeTab({ projectId, user, wbsItems, logs, loading, profilesById, canMa
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
                         {profilesById[l.userId]?.name || 'Unknown'} · {l.logDate}
+                        {timer && <> · {fmtTime(l.startedAt)}–{fmtTime(l.endedAt)}</>}
                       </div>
                     </div>
-                    {(mine || canManage) && (
+                    {/* an open timer is discarded from the extension, never removed here */}
+                    {!open && (mine || canManage) && (
                       <button onClick={() => remove(l.id)} style={{ ...ghostButton, padding: '4px 9px', fontSize: 11, color: 'var(--danger)', borderColor: 'transparent' }}>Remove</button>
                     )}
                   </div>
@@ -470,22 +493,18 @@ export function ProjectHub({
     <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
       {/* breadcrumb + header */}
       <button style={{ ...ghostButton, padding: '5px 11px', marginBottom: 14 }} onClick={() => setSel(null)}>← All projects</button>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ display: 'inline-flex', color: 'var(--brand)' }}><IconPackage size={22} /></span>
-          <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 10 }}>
-              {project.name}
-              {project.type && <TypeBadge type={project.type} />}
-            </h1>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <HealthDot tone={health.tone} />
-              <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{health.label}</span>
-            </div>
-          </div>
-        </div>
-        <button style={{ ...primaryButton(false) }} onClick={onSubmit}>Submit release</button>
-      </div>
+      <PageHeader
+        icon={<IconPackage size={18} />}
+        title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {project.name}
+          {project.type && <TypeBadge type={project.type} />}
+        </span>}
+        subtitle={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <HealthDot tone={health.tone} />
+          {health.label}
+        </span>}
+        actions={<button style={{ ...primaryButton(false) }} onClick={onSubmit}>Submit release</button>}
+      />
 
       <SubTabs tabs={tabs} active={tab} onChange={setTab} />
 

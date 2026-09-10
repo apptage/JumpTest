@@ -24,6 +24,37 @@ import {
   SLA_COLORS,
 } from '@/constants.js';
 
+/* Clickable status chip — same look as the Releases page so the platform reads
+   the same everywhere: dot · label · count; accent fill when active. */
+function QuickChip({ label, value, color, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 12,
+        cursor: 'pointer', fontFamily: 'inherit', boxShadow: 'var(--shadow-sm)',
+        background: active ? 'var(--accent)' : 'var(--card)',
+        color: active ? 'var(--accent-foreground)' : 'var(--color-text-primary)',
+        border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: 999, background: active ? 'var(--accent-foreground)' : color, flexShrink: 0 }} />
+      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</span>
+      <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700, color: active ? 'var(--accent-foreground)' : 'var(--color-text-secondary)' }}>{value}</span>
+    </button>
+  );
+}
+/* Shared section heading (matches Analytics / Hub): Lexend title + muted line. */
+const sectionTitle = (t, sub, dot) => (
+  <div style={{ marginBottom: 12, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+    {dot && <span style={{ width: 8, height: 8, borderRadius: 999, background: dot, marginTop: 6, flexShrink: 0 }} />}
+    <div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>{t}</div>
+      {sub && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  </div>
+);
+
 export function BugsPage({
   bugs,
   releases,
@@ -60,6 +91,10 @@ export function BugsPage({
   const [to, setTo] = useState('');
   const [sort, setSort] = useState('newest');
   const [visible, setVisible] = useState(20);
+  const [quick, setQuick] = useState('all'); // status chip: all | needsDev | awaitingQa | verified | carried | aging
+  const [more, setMore] = useState(false);   // secondary filters row
+  const [showAging, setShowAging] = useState(false);       // attention panels are capped at 4 rows
+  const [showDecisions, setShowDecisions] = useState(false);
 
   // Developer filter = actual Developers only (not Team Leads / Admins / the
   // read-only Manager, which the old `role !== 'QA'` test wrongly included).
@@ -73,15 +108,25 @@ export function BugsPage({
       ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
-  const pageBugs = filtered.slice(0, visible);
   const metrics = aggregateBugMetrics(filtered);
-
   // aging = active bugs from the SAME filtered dataset, at/over SLA, oldest first
   const aging = agingBugs(filtered, 6);
-
+  const agingAll = agingBugs(filtered);
+  const agingIds = new Set(agingAll.map((b) => b.id));
   // Each bug is a single row now — carried is a plain per-bug flag.
   const carried = filtered.filter((b) => b.carriedForward).length;
   const wf = bugWorkflow(metrics);
+  // The status chips narrow the list ON TOP of the dropdown filters; chip counts
+  // stay on `filtered` so they don't change while you click between them.
+  const QUICK = {
+    needsDev: (b) => ['open', 'in_progress', 'disputed'].includes(b.status),
+    awaitingQa: (b) => ['fixed', 'pending_tl'].includes(b.status),
+    verified: (b) => b.status === 'verified',
+    carried: (b) => !!b.carriedForward,
+    aging: (b) => agingIds.has(b.id),
+  };
+  const listed = quick === 'all' ? filtered : filtered.filter(QUICK[quick] || (() => true));
+  const pageBugs = listed.slice(0, visible);
 
   // Delays & Attention Needed — operational bottlenecks (over-SLA releases,
   // developer/reviewer overload). Lives here on the live board, not Analytics.
@@ -115,178 +160,159 @@ export function BugsPage({
   if (from || to) crumbs.push(`${from || '…'} → ${to || '…'}`);
   if (q.trim()) crumbs.push(`"${q.trim()}"`);
 
-  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+  const fSel = { ...inputStyle, width: 'auto', minHeight: 36, padding: '0 10px', fontSize: 12 };
+  const tbBtn = {
+    minHeight: 36, padding: '0 12px', fontSize: 12.5, fontWeight: 600, borderRadius: 12, cursor: 'pointer',
+    border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-body)',
+  };
+  // secondary filters live behind "More filters"; auto-shown while any of them is active
+  const secondaryCount = [platform, tag, feature, team, developer, qa].filter((v) => v !== 'all').length + (from ? 1 : 0) + (to ? 1 : 0);
+  const showMore = more || secondaryCount > 0;
+  const anyFilter = crumbs.length > 0 || quick !== 'all';
+  const resetAll = () => {
+    setQ(''); setStatus('all'); setSev('all'); setPlatform('all'); setTag('all'); setFeature('all'); setProject('all');
+    setTeam('all'); setDeveloper('all'); setQa('all'); setFrom(''); setTo(''); setSort('newest'); setQuick('all'); setMore(false); setVisible(20);
+  };
 
   return (
     <>
       <PageHeader title="Bugs" subtitle="Track and triage every bug across your releases" />
 
-      {/* dataset scope — the live operational board */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 12 }}>
-        <span style={{ fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
-          Scope: Active Releases
-        </span>
-        <span style={{ color: 'var(--color-text-tertiary)' }}>
-          Showing bugs from active (non-closed) releases only — for the full history, see Analytics.
-        </span>
+      {/* status chips — click to narrow the list (counts follow the toolbar filters) */}
+      <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+        {[
+          ['all', 'All bugs', wf.total, 'var(--color-text-tertiary)'],
+          ['needsDev', 'With the developer', wf.needsDev, 'var(--danger)'],
+          ['awaitingQa', 'Fixed, awaiting QA', wf.awaitingQa, 'var(--warning)'],
+          ['verified', 'Confirmed fixed', wf.verified, 'var(--success)'],
+          ['carried', 'Left over from a previous build', carried, 'var(--warning)'],
+          ['aging', 'Overdue', agingIds.size, 'var(--danger)'],
+        ].map(([k, label, value, color]) => (
+          <QuickChip key={k} label={label} value={value} color={color} active={quick === k} onClick={() => { setQuick(k); setVisible(20); }} />
+        ))}
       </div>
 
-      {/* what am I looking at? */}
-      <ScopeSummary shown={metrics.active} total={scopeOpen} noun="active bugs" crumbs={crumbs} />
-
-      {/* the workflow at a glance — who holds the ball right now */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <StatSmall label="Total Bugs" value={wf.total} sub="in scope" />
-        <StatSmall label="Needs Development" value={wf.needsDev} color={wf.needsDev ? 'var(--danger)' : undefined} sub="with the developer" />
-        <StatSmall label="Awaiting QA" value={wf.awaitingQa} color={wf.awaitingQa ? 'var(--warning)' : undefined} sub="waiting for QA" />
-        <StatSmall label="Verified Bugs" value={wf.verified} color="var(--success)" sub="closed" />
-        <StatSmall label="Carried Forward Bugs" value={carried} color={carried ? 'var(--warning)' : undefined} sub="from a prior build" />
-        <StatSmall label="Aging Bugs" value={aging.length} color={aging.length ? 'var(--warning)' : undefined} sub="over SLA" />
-      </div>
-
-      {/* filters */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-        <input
-          style={{ ...inputStyle, flex: '1 1 220px', width: 'auto' }}
-          value={q}
-          placeholder="Search bugs or projects…"
-          onChange={(e) => {
-            setQ(e.target.value);
-            setVisible(20);
-          }}
-        />
-        <select style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="all">All statuses</option>
-          {BUG_STATUS_ORDER.map((s) => (
-            <option key={s} value={s}>{BUG_STATUSES[s].label}</option>
-          ))}
-        </select>
-        <select style={fSel} value={sev} onChange={(e) => setSev(e.target.value)}>
-          <option value="all">All severities</option>
-          {SEVERITY_ORDER.map((s) => (
-            <option key={s} value={s}>{SEVERITIES[s].label}</option>
-          ))}
-        </select>
-        <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
-          <option value="all">All platforms</option>
-          {RELEASE_PLATFORMS.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
-        <select style={fSel} value={tag} onChange={(e) => setTag(e.target.value)}>
-          <option value="all">All tags</option>
-          {BUG_TAGS.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <select style={fSel} value={feature} onChange={(e) => setFeature(e.target.value)}>
-          <option value="all">All features</option>
-          {BUG_FEATURES.map((ft) => (
-            <option key={ft} value={ft}>{ft}</option>
-          ))}
-        </select>
-        <select style={fSel} value={project} onChange={(e) => setProject(e.target.value)}>
-          <option value="all">All projects</option>
-          {(projects || []).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        {isAdmin && (
-          <select style={fSel} value={team} onChange={(e) => setTeam(e.target.value)}>
-            <option value="all">All teams</option>
-            {(teams || []).map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
+      {/* one toolbar — the primary filters visible, everything else behind "More filters" */}
+      <div style={{ ...card, padding: 12, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            style={{ ...inputStyle, flex: '1 1 220px', width: 'auto', minHeight: 36 }}
+            value={q}
+            placeholder="Search bugs or projects…"
+            onChange={(e) => { setQ(e.target.value); setVisible(20); }}
+          />
+          <select style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="all">All statuses</option>
+            {BUG_STATUS_ORDER.map((s) => <option key={s} value={s}>{BUG_STATUSES[s].label}</option>)}
           </select>
+          <select style={fSel} value={sev} onChange={(e) => setSev(e.target.value)}>
+            <option value="all">All severities</option>
+            {SEVERITY_ORDER.map((s) => <option key={s} value={s}>{SEVERITIES[s].label}</option>)}
+          </select>
+          <select style={fSel} value={project} onChange={(e) => setProject(e.target.value)}>
+            <option value="all">All projects</option>
+            {(projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <select style={fSel} value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+          <button style={tbBtn} onClick={() => setMore((v) => !v)}>
+            {showMore ? 'Fewer filters' : `More filters${secondaryCount ? ` (${secondaryCount})` : ''}`}
+          </button>
+          {anyFilter && <button style={tbBtn} onClick={resetAll}>Reset</button>}
+        </div>
+        {showMore && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', paddingTop: 10, borderTop: '1px solid var(--color-border-primary)' }}>
+            <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
+              <option value="all">All platforms</option>
+              {RELEASE_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select style={fSel} value={tag} onChange={(e) => setTag(e.target.value)}>
+              <option value="all">All tags</option>
+              {BUG_TAGS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select style={fSel} value={feature} onChange={(e) => setFeature(e.target.value)}>
+              <option value="all">All features</option>
+              {BUG_FEATURES.map((ft) => <option key={ft} value={ft}>{ft}</option>)}
+            </select>
+            {isAdmin && (
+              <select style={fSel} value={team} onChange={(e) => setTeam(e.target.value)}>
+                <option value="all">All teams</option>
+                {(teams || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
+            <select style={fSel} value={developer} onChange={(e) => setDeveloper(e.target.value)}>
+              <option value="all">All developers</option>
+              {devs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <select style={fSel} value={qa} onChange={(e) => setQa(e.target.value)}>
+              <option value="all">All QA</option>
+              {qas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <input style={fSel} type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
+            <input style={fSel} type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
+          </div>
         )}
-        <select style={fSel} value={developer} onChange={(e) => setDeveloper(e.target.value)}>
-          <option value="all">All developers</option>
-          {devs.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <select style={fSel} value={qa} onChange={(e) => setQa(e.target.value)}>
-          <option value="all">All QA</option>
-          {qas.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <input style={fSel} type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
-        <input style={fSel} type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
-        <select style={fSel} value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-        </select>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+          Showing <b style={{ color: 'var(--color-text-secondary)' }}>{listed.length}</b> of {scopeOpen} active bugs
+          {crumbs.length ? ` · ${crumbs.join(' · ')}` : ''} · active releases only — full history lives in Analytics
+        </div>
       </div>
 
-      {/* aging */}
-      {aging.length > 0 && (
-        <div style={{ ...card, padding: 14, marginBottom: 16 }}>
-          <div style={{ ...sideHead, marginBottom: 10, color: 'var(--danger)' }}>
-            Aging issues — needs immediate attention
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {aging.map((b) => (
-              <div
-                key={b.id}
-                onClick={() => onOpenRelease(b.releaseId)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 9,
-                  padding: '9px 11px',
-                  background: 'var(--color-background-secondary)',
-                  border: '1px solid var(--color-border-tertiary)',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                }}
-              >
-                <SlaBadge level={bugSlaLevel(b.status, b.createdAt)} />
-                <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1, minWidth: 0 }}>{b.title}</span>
-                {relById[b.releaseId] && (
-                  <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
-                    v{relById[b.releaseId].version}
-                  </span>
-                )}
-                <SeverityBadge severity={b.severity} />
-                <BugStatusBadge status={b.status} />
-                <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>open {humanizeSince(b.createdAt)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Delays & Attention Needed — operational bottlenecks (moved here from
-          Analytics: it's about current active work, not project history) */}
-      {bottlenecks.length > 0 && (
-        <div style={{ ...card, padding: 14, marginBottom: 16 }}>
-          <div style={{ ...sideHead, marginBottom: 10 }}>Delays &amp; Attention Needed</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {bottlenecks.map((b, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 9,
-                  padding: '9px 11px',
-                  background: 'var(--color-background-secondary)',
-                  border: '1px solid var(--color-border-tertiary)',
-                  borderRadius: 8,
-                  fontSize: 12.5,
-                }}
-              >
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 4 }} />
-                <span style={{ lineHeight: 1.45 }}>{b.text}</span>
-              </div>
-            ))}
-          </div>
+      {/* attention — two compact side-by-side panels, capped at 4 rows each so the
+          bug list (the actual work) stays near the top */}
+      {(agingAll.length > 0 || bottlenecks.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16, marginBottom: 16, alignItems: 'stretch' }}>
+          {agingAll.length > 0 && (
+            <div style={{ ...card, padding: 16 }}>
+              {sectionTitle('Oldest open problems', `${agingAll.length} open longer than the agreed limit · click one to open its build`, 'var(--danger)')}
+              {(showAging ? agingAll : agingAll.slice(0, 4)).map((b) => (
+                <div
+                  key={b.id}
+                  className="mgr-row"
+                  onClick={() => onOpenRelease(b.releaseId)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 6px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5 }}
+                >
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[bugSlaLevel(b.status, b.createdAt)] || 'var(--danger)', flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{b.title}</span>
+                  {relById[b.releaseId] && (
+                    <span className="tnum" style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                      v{String(relById[b.releaseId].version).replace(/^v+/i, '')}
+                    </span>
+                  )}
+                  <SeverityBadge severity={b.severity} />
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{humanizeSince(b.createdAt)}</span>
+                </div>
+              ))}
+              {agingAll.length > 4 && (
+                <button onClick={() => setShowAging((v) => !v)} style={{ ...tbBtn, minHeight: 30, fontSize: 12, marginTop: 8 }}>
+                  {showAging ? 'Show fewer' : `Show all ${agingAll.length}`}
+                </button>
+              )}
+            </div>
+          )}
+          {bottlenecks.length > 0 && (
+            <div style={{ ...card, padding: 16 }}>
+              {sectionTitle('Needs a decision', `${bottlenecks.length} thing${bottlenecks.length === 1 ? '' : 's'} slowing this work down right now`)}
+              {(showDecisions ? bottlenecks : bottlenecks.slice(0, 4)).map((b, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 6px', fontSize: 12.5, lineHeight: 1.45 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 5 }} />
+                  <span>{b.text}</span>
+                </div>
+              ))}
+              {bottlenecks.length > 4 && (
+                <button onClick={() => setShowDecisions((v) => !v)} style={{ ...tbBtn, minHeight: 30, fontSize: 12, marginTop: 8 }}>
+                  {showDecisions ? 'Show fewer' : `Show all ${bottlenecks.length}`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {/* list */}
-      {filtered.length === 0 ? (
+      {listed.length === 0 ? (
         <Empty>No bugs match your filters.</Empty>
       ) : (
         <>
@@ -310,9 +336,9 @@ export function BugsPage({
               />
             ))}
           </div>
-          {visible < filtered.length && (
+          {visible < listed.length && (
             <button style={{ ...ghostButton, width: '100%', marginTop: 12 }} onClick={() => setVisible((v) => v + 20)}>
-              Load more ({filtered.length - visible} left)
+              Load more ({listed.length - visible} left)
             </button>
           )}
         </>

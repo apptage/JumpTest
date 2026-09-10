@@ -117,10 +117,10 @@ export function Segmented({ options, value, onChange }) {
           key={k}
           onClick={() => onChange(k)}
           style={{
-            padding: '5px 11px', fontSize: 12, fontWeight: 600, borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
-            color: value === k ? '#fff' : 'var(--color-text-primary)',
-            background: value === k ? 'var(--brand)' : 'var(--color-background-primary)',
-            border: `1px solid ${value === k ? 'var(--brand)' : 'var(--color-border-tertiary)'}`,
+            padding: '5px 11px', fontSize: 12, fontWeight: 600, borderRadius: 999, cursor: 'pointer', fontFamily: 'var(--font-body)',
+            color: value === k ? 'var(--accent-foreground)' : 'var(--color-text-primary)',
+            background: value === k ? 'var(--accent)' : 'var(--card)',
+            border: `1px solid ${value === k ? 'var(--accent)' : 'var(--border)'}`,
           }}
         >
           {label}
@@ -188,7 +188,7 @@ export function DataTable({ columns, rows, rowKey, searchText, searchPlaceholder
             {shown.map((r) => (
               <tr key={rowKey(r)} className={onRowClick ? 'mgr-row' : undefined} onClick={onRowClick ? () => onRowClick(r) : undefined} style={{ cursor: onRowClick ? 'pointer' : 'default' }}>
                 {columns.map((c) => (
-                  <td key={c.label} style={{ fontSize: 12.5, padding: '10px 12px', borderBottom: '1px solid var(--color-border-primary)', ...(c.tdStyle || {}) }}>{c.render(r)}</td>
+                  <td key={c.label} style={{ fontSize: 13, fontFamily: 'var(--font-body)', padding: '10px 12px', borderBottom: '1px solid var(--color-border-primary)', ...(c.tdStyle || {}) }}>{c.render(r)}</td>
                 ))}
               </tr>
             ))}
@@ -365,17 +365,22 @@ function TrendArrow({ dir = 'up', size = 13 }) {
 
 /* KPI tile — uppercase eyebrow, big tabular metric, optional trend-delta pill,
    uppercase footer. A row of these leads every dashboard. */
-export function StatCard({ label, value, delta, deltaDir = 'up', foot, size = 'big', style }) {
+/* DS KPICard accents (indigo / teal / amber / rose / slate) — a 3px left stripe. */
+export const KPI_ACCENTS = {
+  indigo: '#6366F1', teal: '#14B8A6', amber: '#F59E0B', rose: '#F43F5E', slate: '#64748B',
+};
+export function StatCard({ label, value, delta, deltaDir = 'up', foot, size = 'big', accent, style }) {
   const pos = deltaDir === 'up';
   const dc = pos
     ? { bg: 'var(--tone-success-bg)', fg: 'var(--tone-success-fg)' }
     : { bg: 'var(--tone-danger-bg)', fg: 'var(--tone-danger-fg)' };
   const eyebrow = {
-    fontSize: 11, fontWeight: 600, letterSpacing: 'var(--tracking-label)',
+    fontFamily: 'var(--font-body)', fontSize: 11, fontWeight: 600, letterSpacing: 'var(--tracking-label)',
     textTransform: 'uppercase', color: 'var(--color-text-secondary)',
   };
+  const stripe = accent ? { borderLeft: `3px solid ${KPI_ACCENTS[accent] || accent}` } : {};
   return (
-    <div className="mgr-card" style={{ ...card, padding: '18px 20px', flex: '1 1 180px', minWidth: 168, ...style }}>
+    <div className="mgr-card" style={{ ...card, padding: '18px 20px', flex: '1 1 180px', minWidth: 168, ...stripe, ...style }}>
       <div style={eyebrow}>{label}</div>
       <div className="tnum" style={{
         fontFamily: 'var(--font-display)', fontSize: size === 'small' ? 22 : 28, fontWeight: 700,

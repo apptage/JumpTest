@@ -16,17 +16,20 @@ export const card = {
   boxShadow: 'var(--shadow-sm)',
 };
 
+/* Input — DS recipe: h-10, rounded-xl, bg-bg/50, Lexend Deca; focus = accent
+   border + accent/15 ring (the ring comes from the global input:focus rule). */
 export const inputStyle = {
   width: '100%',
-  padding: '10px 12px',
+  minHeight: 40,
+  padding: '9px 12px',
   fontSize: 13,
-  fontWeight: 400,
+  fontWeight: 500,
   color: 'var(--color-text-primary)',
-  background: 'var(--color-background-primary)',
-  border: '1px solid var(--color-border-tertiary)',
+  background: 'var(--input-bg)',
+  border: '1px solid var(--border)',
   borderRadius: 'var(--r-input)',
   outline: 'none',
-  fontFamily: 'inherit',
+  fontFamily: 'var(--font-body)',
 };
 
 export const labelStyle = {
@@ -36,34 +39,41 @@ export const labelStyle = {
   color: 'var(--color-text-secondary)',
   marginBottom: 6,
   letterSpacing: '0.01em',
+  fontFamily: 'var(--font-body)',
 };
 
+/* Button default — DS: rounded-xl, Lexend Deca 13px semibold, bg-accent
+   (charcoal in light; inverts to a light fill in dark via --accent-foreground). */
 export function primaryButton(disabled) {
   return {
     padding: '9px 16px',
+    minHeight: 36,
     fontSize: 13,
     fontWeight: 600,
-    color: '#fff',
-    background: disabled ? 'var(--color-text-tertiary)' : 'var(--brand-grad)',
-    border: 'none',
+    color: disabled ? 'var(--color-text-secondary)' : 'var(--accent-foreground)',
+    background: disabled ? 'var(--accent-muted)' : 'var(--accent)',
+    border: '1px solid transparent',
     borderRadius: 'var(--r-input)',
     cursor: disabled ? 'default' : 'pointer',
-    fontFamily: 'inherit',
-    boxShadow: disabled ? 'none' : 'var(--shadow-brand)',
+    fontFamily: 'var(--font-body)',
+    boxShadow: 'none',
+    transition: 'background 0.2s var(--ease), filter 0.2s var(--ease)',
   };
 }
 
+/* Outline / secondary — DS chip language: border-border, bg-card, rounded-xl. */
 export const ghostButton = {
   padding: '9px 16px',
+  minHeight: 36,
   fontSize: 13,
-  fontWeight: 500,
+  fontWeight: 600,
   color: 'var(--color-text-primary)',
-  background: 'var(--color-background-primary)',
-  border: '0.5px solid var(--color-border-tertiary)',
+  background: 'var(--card)',
+  border: '1px solid var(--border)',
   borderRadius: 'var(--r-input)',
   cursor: 'pointer',
-  fontFamily: 'inherit',
-  boxShadow: 'var(--shadow-sm)',
+  fontFamily: 'var(--font-body)',
+  boxShadow: 'none',
 };
 
 /* subtle, consistent status chip: dot + neutral text + thin border
@@ -104,17 +114,11 @@ export function Logo({ size = 30 }) {
       style={{ display: 'block', flexShrink: 0 }}
       aria-hidden="true"
     >
-      <defs>
-        <linearGradient id="rt-grad" x1="0" y1="0" x2="32" y2="32">
-          <stop stopColor="#8078ff" />
-          <stop offset="1" stopColor="#6c63ff" />
-        </linearGradient>
-      </defs>
-      <rect width="32" height="32" rx="11" fill="url(#rt-grad)" />
-      {/* </> code mark in ink */}
+      {/* charcoal accent mark — inverts with the theme via --accent tokens */}
+      <rect width="32" height="32" rx="11" fill="var(--accent)" />
       <path
         d="M12.5 11L8.5 16l4 5M19.5 11l4 5-4 5"
-        stroke="#0c0d11"
+        stroke="var(--accent-foreground)"
         strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -251,7 +255,9 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15, 23, 42, 0.45)',
+        background: 'rgba(0, 0, 0, 0.4)',          /* DS Dialog overlay: bg-black/40 + blur */
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -288,7 +294,7 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              {title && <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</div>}
+              {title && <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</div>}
               {subtitle && (
                 <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: title ? 3 : 0 }}>
                   {subtitle}
@@ -333,27 +339,30 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
 export function Toast({ toast }) {
   if (!toast) return null;
   const isError = toast.kind === 'error';
-  const color = isError ? '#ef4444' : '#10b981';
+  const color = isError ? 'var(--danger)' : 'var(--success)';
   return (
+    /* DS Sonner: bottom-center */
     <div
       className="anim-toast"
       style={{
         position: 'fixed',
-        top: 18,
-        right: 18,
+        bottom: 18,
+        left: '50%',
+        transform: 'translateX(-50%)',
         zIndex: 100,
-        maxWidth: 360,
+        maxWidth: 380,
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        padding: '12px 14px',
-        background: 'var(--color-background-primary)',
-        border: '0.5px solid var(--color-border-tertiary)',
+        padding: '11px 14px',
+        background: 'var(--card)',
+        border: '1px solid var(--border)',
         borderRadius: 12,
         boxShadow: 'var(--shadow-lg)',
         fontSize: 13,
         fontWeight: 500,
         color: 'var(--color-text-primary)',
+        fontFamily: 'var(--font-body)',
       }}
     >
       <span

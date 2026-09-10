@@ -1,0 +1,84 @@
+/* GammaQuality — SalesHub / Miaro design system, DARK set (design-system/tokens.css
+   `.dark`): canvas #0F1218, card #181C24, text #EDEFF3, accent inverts to a light
+   fill, border #2C313C, radius 10px, Lexend / Lexend Deca. No iframe of the app. */
+:root {
+  --bg: #0F1218;
+  --surface: #181C24;
+  --surface-2: #242A34;
+  --border: #2C313C;
+  --text: #EDEFF3;
+  --muted: #AAB2BE;
+  --faint: #7C8494;
+  --brand: #EDEFF3;              /* --accent (dark) */
+  --brand-fg: #0F1218;           /* --accent-foreground (dark) */
+  --brand-strong: #FFFFFF;
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --danger: #FB7185;
+  --r: 10px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  width: 360px; min-height: 560px;
+  font: 13px/1.45 'Lexend Deca', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.brand, .timer .clock, .head .brand { font-family: 'Lexend', system-ui, sans-serif; }
+#root { min-height: 560px; display: flex; flex-direction: column; }
+
+.app { display: flex; flex-direction: column; min-height: 560px; padding: 14px; gap: 12px; }
+.head { display: flex; align-items: center; gap: 10px; }
+.logo { width: 28px; height: 28px; border-radius: 8px; background: var(--brand); display: grid; place-items: center; font-weight: 800; color: var(--brand-fg); }
+.brand { font-weight: 700; font-size: 14px; flex: 1; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); font-size: 11px; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+label.f { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin: 0 0 5px; }
+input, select, textarea {
+  width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 9px 10px; font: inherit; outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(237, 239, 243, 0.18); }
+input:disabled, select:disabled { opacity: 0.55; }
+.row { display: flex; gap: 8px; align-items: center; }
+.grow { flex: 1; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 14px; border-radius: var(--r); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+}
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-fg); box-shadow: none; }
+.btn.danger { color: var(--danger); }
+.btn.big { width: 64px; height: 64px; border-radius: 50%; font-size: 22px; padding: 0; }
+.btn.ghost { background: transparent; border-color: transparent; }
+
+.timer { text-align: center; padding: 18px 0 8px; }
+.timer .clock { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; }
+.timer .state { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.state.running { color: var(--success); }
+.state.paused { color: var(--warning); }
+
+.list { display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow-y: auto; }
+.entry { display: flex; align-items: center; gap: 10px; padding: 8px 8px; border-radius: 8px; }
+.entry:hover { background: var(--surface-2); }
+.entry .h { font-weight: 700; min-width: 46px; }
+.entry .t { flex: 1; min-width: 0; }
+.entry .t .l1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { text-align: center; color: var(--faint); padding: 18px 0; }
+.err { color: var(--danger); font-size: 12px; }
+
+.toast {
+  position: fixed; left: 14px; right: 14px; bottom: 14px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; font-size: 12.5px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.toast.error { border-color: rgba(255, 107, 107, 0.5); }
+
+.sheet { position: fixed; inset: 0; background: var(--bg); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.center { display: grid; place-items: center; flex: 1; color: var(--muted); }

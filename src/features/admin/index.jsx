@@ -484,98 +484,75 @@ export function UsersTab({
         </span>
       </div>
 
+      {/* member cards — responsive grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginTop: 10 }}>
       {pageUsers.map((p) => {
         const isSelf = p.id === currentUser.id;
         // a team lead may only adjust Developers/QA in their own team
         const leadLocked =
           !isAdmin && (p.role === 'Admin' || p.role === 'Team Lead');
         const roleDisabled = isSelf || leadLocked || busyId === p.id;
+        const roleTone = { Admin: 'info', 'Team Lead': 'warning', QA: 'success' }[p.role] || 'neutral';
+        const fieldLbl = { display: 'block', fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' };
         return (
-          <div
-            key={p.id}
-            className="mgr-row"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '10px 12px',
-              background: 'var(--color-background-secondary)',
-              border: '0.5px solid var(--color-border-primary)',
-              borderRadius: 10,
-              flexWrap: 'wrap',
-            }}
-          >
-            <Avatar name={p.name} role={p.role} />
-            <div style={{ flex: 1, minWidth: 120 }}>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>
-                {p.name}
-                {isSelf && (
-                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: 6 }}>
-                    (you)
-                  </span>
-                )}
+          <div key={p.id} className="mgr-card" style={{ ...card, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Avatar name={p.name} size={40} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.name}
+                  {isSelf && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: 6 }}>(you)</span>}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</div>
               </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'var(--color-text-secondary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {p.email}
-              </div>
+              <Pill label={p.role} tone={roleTone} />
             </div>
 
-            {isAdmin ? (
-              <select
-                style={selStyle}
-                value={p.teamId || ''}
-                disabled={busyId === p.id}
-                onChange={(e) => patch(p.id, { team_id: e.target.value || null })}
-                title="Team"
-              >
-                <option value="">No team</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                {p.teamId ? teamsById[p.teamId]?.name : '—'}
-              </span>
-            )}
-
-            <select
-              style={selStyle}
-              value={p.role}
-              disabled={roleDisabled}
-              onChange={(e) => patch(p.id, { role: e.target.value })}
-              title={leadLocked ? 'Only an admin can change this role' : 'Role'}
-            >
-              {/* keep the current role visible even if outside a lead's options */}
-              {(roleOptions.includes(p.role) ? roleOptions : [p.role, ...roleOptions]).map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {isAdmin ? (
+                <label style={{ display: 'block', minWidth: 0 }}>
+                  <span style={fieldLbl}>Team</span>
+                  <select
+                    style={{ ...selStyle, width: '100%' }}
+                    value={p.teamId || ''}
+                    disabled={busyId === p.id}
+                    onChange={(e) => patch(p.id, { team_id: e.target.value || null })}
+                  >
+                    <option value="">No team</option>
+                    {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </label>
+              ) : (
+                <div style={{ minWidth: 0 }}>
+                  <span style={fieldLbl}>Team</span>
+                  <div style={{ fontSize: 12.5, minHeight: 32, display: 'flex', alignItems: 'center' }}>{p.teamId ? teamsById[p.teamId]?.name : '—'}</div>
+                </div>
+              )}
+              <label style={{ display: 'block', minWidth: 0 }}>
+                <span style={fieldLbl}>Role</span>
+                <select
+                  style={{ ...selStyle, width: '100%' }}
+                  value={p.role}
+                  disabled={roleDisabled}
+                  onChange={(e) => patch(p.id, { role: e.target.value })}
+                  title={leadLocked ? 'Only an admin can change this role' : 'Role'}
+                >
+                  {/* keep the current role visible even if outside a lead's options */}
+                  {(roleOptions.includes(p.role) ? roleOptions : [p.role, ...roleOptions]).map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
 
             {isAdmin && (
               <button
                 onClick={() => removeUser(p)}
                 disabled={isSelf || busyId === p.id}
                 style={{
-                  ...ghostButton,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  color: isSelf ? 'var(--color-text-secondary)' : '#dc2626',
-                  borderColor: isSelf ? 'var(--color-border-tertiary)' : '#dc262644',
-                  opacity: isSelf ? 0.5 : 1,
-                  cursor: isSelf ? 'default' : 'pointer',
+                  ...ghostButton, alignSelf: 'flex-end', padding: '6px 10px', minHeight: 0, fontSize: 12,
+                  color: isSelf ? 'var(--color-text-secondary)' : 'var(--danger)',
+                  opacity: isSelf ? 0.5 : 1, cursor: isSelf ? 'default' : 'pointer',
                 }}
               >
                 Remove
@@ -584,6 +561,7 @@ export function UsersTab({
           </div>
         );
       })}
+      </div>
       {filteredUsers.length === 0 && (
         <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 2px' }}>
           No users match.
@@ -805,7 +783,7 @@ export function ProjectsTab({
           {projects.length === 0 ? 'No projects yet — create your first one above.' : 'No projects match.'}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, alignItems: 'start' }}>
           {pageProjects.map((p) => (
             <ProjectRow
               key={p.id}
@@ -830,7 +808,7 @@ export function ProjectsTab({
           ))}
           {visible < filteredProjects.length && (
             <button
-              style={{ ...ghostButton, width: '100%', marginTop: 4 }}
+              style={{ ...ghostButton, width: '100%', marginTop: 4, gridColumn: '1 / -1' }}
               onClick={() => setVisible((v) => v + 12)}
             >
               Load more ({filteredProjects.length - visible} left)
@@ -906,66 +884,38 @@ function ProjectRow({
   });
 
   return (
-    <div className="mgr-card clickable" style={{ ...card, padding: 0, overflow: 'hidden' }}>
-      {/* header */}
-      <div
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '12px 14px', cursor: 'pointer' }}
-      >
-        <span
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            flexShrink: 0,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--color-text-secondary)',
-            background: 'var(--color-background-secondary)',
-            border: '1px solid var(--color-border-tertiary)',
-          }}
-        >
-          {isWeb ? <IconGlobe size={17} /> : <IconSmartphone size={17} />}
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
-            {project.name}
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: teamName ? 'var(--brand)' : 'var(--color-text-tertiary)',
-                background: teamName ? 'var(--brand-soft)' : 'var(--color-background-secondary)',
-                padding: '2px 7px',
-                borderRadius: 999,
-              }}
-            >
-              {teamName || 'No team'}
-            </span>
+    // grid card — spans the full row while expanded so checklist / members have room
+    <div className="mgr-card clickable" style={{ ...card, padding: 0, overflow: 'hidden', gridColumn: open ? '1 / -1' : undefined }}>
+      {/* card face — click anywhere to expand */}
+      <div onClick={() => setOpen((o) => !o)} style={{ padding: 16, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <span style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)', background: 'var(--accent-soft)' }}>
+            {isWeb ? <IconGlobe size={18} /> : <IconSmartphone size={18} />}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{projectTypeLabel(project.type)}</div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-            {projectTypeLabel(project.type)} · {releaseCount} release
-            {releaseCount === 1 ? '' : 's'} · {items.length} checklist item
-            {items.length === 1 ? '' : 's'}
-          </div>
+          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{open ? '▾' : '▸'}</span>
         </div>
-        <button style={iconBtn('var(--brand)')} onClick={startEdit} disabled={isSubmitting}>
-          Edit
-        </button>
-        <button
-          style={iconBtn('#dc2626')}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          disabled={isSubmitting}
-        >
-          Delete
-        </button>
-        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', width: 12, textAlign: 'center' }}>
-          {open ? '▾' : '▸'}
-        </span>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <Pill label={teamName || 'No team'} tone={teamName ? 'info' : 'neutral'} />
+          <Pill label={`${releaseCount} release${releaseCount === 1 ? '' : 's'}`} tone="neutral" />
+          <Pill label={`${items.length} checklist item${items.length === 1 ? '' : 's'}`} tone="neutral" />
+          {members.length > 0 && <Pill label={`${members.length} member${members.length === 1 ? '' : 's'}`} tone="neutral" />}
+        </div>
+        <div style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--color-border-primary)', paddingTop: 12 }}>
+          <button style={{ ...ghostButton, flex: 1, padding: '6px 10px', minHeight: 0, fontSize: 12 }} onClick={startEdit} disabled={isSubmitting}>
+            Edit
+          </button>
+          <button
+            style={{ ...ghostButton, flex: 1, padding: '6px 10px', minHeight: 0, fontSize: 12, color: 'var(--danger)' }}
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            disabled={isSubmitting}
+          >
+            Delete
+          </button>
+        </div>
       </div>
 
       {/* expanded */}
@@ -1182,7 +1132,7 @@ export function ProjectMembersSection({
     </span>
   );
 
-  const roleColor = { qa: '#6c63ff', lead: '#d97706', developer: '#16a34a', viewer: '#64748b' };
+  const roleColor = { qa: '#6366F1', lead: '#d97706', developer: '#16a34a', viewer: '#64748b' };
 
   const memberRow = (m) => {
     const p = profileById[m.userId];

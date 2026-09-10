@@ -11,6 +11,7 @@
     "build": "node scripts/with-env.mjs vite build",
     "build:staging": "vite build --mode staging",
     "build:production": "vite build --mode production",
+    "build:extension": "node scripts/with-env.mjs vite build --config vite.extension.config.js",
     "preview": "node scripts/with-env.mjs vite preview",
     "db:push": "npm run env:sync && supabase db push",
     "db:link": "npm run env:sync && node scripts/supabase-link.mjs"
