@@ -318,7 +318,7 @@ export default function ReleaseTracker() {
      their team's projects + temporary support grants on other teams' projects).
      Admins see everything. Expired support grants drop out automatically.
      Manager is org-wide read-only (Command Center), so it gets full scope too. */
-  const adminScope = user?.role === 'Admin';
+  const adminScope = user?.role === 'Admin' || user?.role === 'Manager';
   const myTeamId = user?.teamId ?? null;
 
   const myProjectIds = useMemo(() => {
@@ -1273,9 +1273,19 @@ export default function ReleaseTracker() {
 
   const isAdmin = user.role === 'Admin';
   const isLead = user.role === 'Team Lead';
+  const isExecutive = isAdmin || user.role === 'Manager';
   const canManage = isAdmin || isLead; // can open the Manage panel
+  const canExportReports = isExecutive || isLead;
   const canSubmit = user.role === 'Developer' || isLead || isAdmin;
   const myTeam = teams.find((t) => t.id === myTeamId) || null;
+  const reportProjects = isExecutive
+    ? projects
+    : isLead && myTeamId
+      ? projects.filter((p) => p.teamId === myTeamId)
+      : scopedProjects;
+  const reportProjectIds = new Set(reportProjects.map((p) => p.id));
+  const reportReleases = releases.filter((r) => reportProjectIds.has(r.projectId));
+  const reportBugs = bugs.filter((b) => reportProjectIds.has(releaseProjectId[b.releaseId]));
 
   // manager rights on the selected release (admin everywhere; lead in own team)
   const selProjectTeam = selected ? projectsById[selected.projectId]?.teamId : null;
@@ -1515,15 +1525,15 @@ export default function ReleaseTracker() {
                 user={user}
                 team={myTeam}
                 onSignOut={handleSignOut}
-                reports={canManage && (
+                reports={canExportReports && (
                   <ReportsSection
                     user={user}
-                    isAdmin={isAdmin}
-                    projects={scopedProjects}
-                    releases={scopedReleases}
-                    bugs={scopedBugs}
-                    profiles={isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
-                    teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
+                    isAdmin={isExecutive}
+                    projects={reportProjects}
+                    releases={reportReleases}
+                    bugs={reportBugs}
+                    profiles={isExecutive ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
+                    teams={isExecutive ? teams : teams.filter((t) => t.id === myTeamId)}
                     projectMembers={projectMembers}
                     projectsById={projectsById}
                     profilesById={profilesById}

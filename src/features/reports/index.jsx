@@ -4,7 +4,7 @@
    autofilter sheet per table). All numbers come from the shared metric layer, so
    a report always agrees with the Dashboard and Analytics. Data is role-scoped
    exactly like the pages (Admin: whole org + team filter; Team Lead: their team). */
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import * as api from '@/api.js';
 import { card, primaryButton, ghostButton, inputStyle } from '@/ui.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
@@ -15,6 +15,7 @@ import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel } from 
 import {
   STATUSES, BUG_STATUSES, SEVERITIES, BUG_RESOLUTIONS, WBS_STATUSES,
   isActiveBug, isActiveStatus, isClosedStatus, bugSlaLevel, slaLevel, projectTypeLabel, formatVersion,
+  STATUS_ORDER,
 } from '@/constants.js';
 import { IconChart } from '@/icons.jsx';
 
@@ -38,24 +39,115 @@ const monthKeys = (n) => {
 };
 const ym = (iso) => (iso ? String(iso).slice(0, 7) : '');
 
+const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const sameId = (a, b) => a != null && b != null && String(a) === String(b);
+
+function releaseDay(r) {
+  return r.date || d(r.createdAt);
+}
+
+function releaseInDateRange(r, f) {
+  if (!f.from && !f.to) return true;
+  const day = releaseDay(r);
+  if (!day) return true;
+  return (!f.from || day >= f.from) && (!f.to || day <= f.to);
+}
+
+function bugInDateRange(b, f) {
+  if (!f.from && !f.to) return true;
+  const day = d(b.createdAt);
+  if (!day) return true;
+  return (!f.from || day >= f.from) && (!f.to || day <= f.to);
+}
+
+function releaseSubmittedByPerson(r, person) {
+  if (!person) return false;
+  if (sameId(r.submittedById, person.id)) return true;
+  return normName(r.submittedBy) === normName(person.name);
+}
+
+function releaseQaAssignedToPerson(r, person) {
+  if (!person?.id) return false;
+  return sameId(r.assignedQa, person.id);
+}
+
+function releaseTouchesPerson(r, person) {
+  return releaseSubmittedByPerson(r, person) || releaseQaAssignedToPerson(r, person);
+}
+
+function bugReportedByPerson(b, person) {
+  if (!person) return false;
+  if (sameId(b.createdById, person.id)) return true;
+  return normName(b.createdBy) === normName(person.name);
+}
+
+function releaseQaTestedByPerson(r, person, bugsForRelease) {
+  if (releaseQaAssignedToPerson(r, person)) return true;
+  return (bugsForRelease || []).some((b) => bugReportedByPerson(b, person));
+}
+
+function resourcePerformanceRows(ctx, person) {
+  const bugsPool = ctx.allBugs || ctx.bugsOnProjects;
+  const relPool = ctx.relsBase;
+  const bugsByRelease = {};
+  bugsPool.forEach((b) => {
+    (bugsByRelease[b.releaseId] = bugsByRelease[b.releaseId] || []).push(b);
+  });
+
+  const submitted = relPool.filter((r) => releaseInDateRange(r, ctx.f) && releaseSubmittedByPerson(r, person));
+  const tested = relPool.filter(
+    (r) => releaseInDateRange(r, ctx.f) && releaseQaTestedByPerson(r, person, bugsByRelease[r.id])
+  );
+  const subIds = new Set(submitted.map((r) => r.id));
+  const testIds = new Set(tested.map((r) => r.id));
+  const bugsOnSubmitted = bugsPool.filter((b) => subIds.has(b.releaseId));
+  const bugsOnTested = bugsPool.filter((b) => testIds.has(b.releaseId));
+  const reported = bugsPool.filter((b) => bugReportedByPerson(b, person) && bugInDateRange(b, ctx.f));
+  return { submitted, tested, bugsOnSubmitted, bugsOnTested, reported };
+}
+
 /* ---------- scope: role + toolbar filters → the datasets every report reads ---------- */
 function makeCtx(props, f) {
   const { projects, releases, bugs, profiles, teams, projectMembers, projectsById, profilesById } = props;
   const teamsById = Object.fromEntries((teams || []).map((t) => [t.id, t]));
+  const individualResource = f.resource !== 'all';
   const inTeam = (x) => f.team === 'all' || x.teamId === f.team;
-  const projs = projects.filter(inTeam);
+  const projs = individualResource ? projects : projects.filter(inTeam);
   const pids = new Set(projs.map((p) => p.id));
   const inRange = (day) => (!f.from || day >= f.from) && (!f.to || day <= f.to);
   const releaseById = Object.fromEntries(releases.map((r) => [r.id, r]));
-  const rels = releases.filter((r) => pids.has(r.projectId) && inRange(r.date || d(r.createdAt)));
-  const bugsAll = bugs.filter((b) => pids.has(releaseById[b.releaseId]?.projectId) && inRange(d(b.createdAt)));
-  const people = profiles.filter((p) => f.team === 'all' || p.teamId === f.team);
+  const relsBase = individualResource
+    ? releases
+    : releases.filter((r) => pids.has(r.projectId));
+  const allBugs = bugs;
+  const bugsOnProjects = individualResource
+    ? bugs
+    : bugs.filter((b) => {
+        const rel = releaseById[b.releaseId];
+        return rel && pids.has(rel.projectId);
+      });
+  let rels = relsBase.filter((r) => releaseInDateRange(r, f));
+  let bugsAll = bugsOnProjects.filter((b) => bugInDateRange(b, f));
+  const person = f.resource !== 'all' ? profilesById[f.resource] : null;
+  if (person) {
+    rels = rels.filter((r) => releaseTouchesPerson(r, person));
+    const relIds = new Set(rels.map((r) => r.id));
+    bugsAll = bugsAll.filter((b) => bugReportedByPerson(b, person) || relIds.has(b.releaseId));
+  }
+  const people =
+    f.resource !== 'all'
+      ? profiles.filter((p) => p.id === f.resource)
+      : profiles.filter(
+          (p) => (f.team === 'all' || p.teamId === f.team) && (f.role === 'all' || p.role === f.role)
+        );
   const scopeBits = [
+    f.resource !== 'all' ? `Resource: ${profilesById[f.resource]?.name || ''}` : null,
     f.team !== 'all' ? `Team: ${teamsById[f.team]?.name || ''}` : null,
+    f.role !== 'all' ? `Role: ${f.role}` : null,
     f.from || f.to ? `Dates: ${f.from || '…'} → ${f.to || '…'}` : null,
   ].filter(Boolean);
   return {
-    ...props, teamsById, projs, pids, rels, bugsAll, people, releaseById, f,
+    ...props, teamsById, projs, pids, relsBase, allBugs, bugsOnProjects, rels, bugsAll, people, releaseById, f,
     name: (id) => profilesById[id]?.name || '',
     teamName: (id) => teamsById[id]?.name || '',
     projName: (id) => projectsById[id]?.name || '',
@@ -77,10 +169,268 @@ async function loadBugStats() {
 }
 const col = (header, key, width) => ({ header, key, width });
 
+function countReleaseStatuses(rels) {
+  const counts = Object.fromEntries(STATUS_ORDER.map((k) => [k, 0]));
+  rels.forEach((r) => {
+    if (counts[r.status] != null) counts[r.status] += 1;
+  });
+  return counts;
+}
+
 /* ====================================================================== */
 /* The report catalogue                                                    */
 /* ====================================================================== */
 export const REPORTS = [
+  {
+    key: 'resource-performance',
+    file: 'Resource_Performance_Report',
+    title: 'Resource Performance',
+    requiresResource: true,
+    desc: 'Pick a resource above, set dates, then export — one person’s builds, QA outcomes, status breakdown, and bugs reported.',
+    sheets: ['Resource Summary', 'Builds Submitted', 'Builds QA Tested', 'Bugs Reported'],
+    build: async (ctx) => {
+      const trackRoles = ['Developer', 'QA', 'Team Lead'];
+      let workCtx = ctx;
+      if (ctx.f.resource !== 'all') {
+        try {
+          const extra = await api.fetchResourcePerformanceSupplement(ctx.f.resource);
+          const relMap = new Map(ctx.relsBase.map((r) => [r.id, r]));
+          extra.releases.forEach((r) => relMap.set(r.id, r));
+          const bugMap = new Map((ctx.allBugs || []).map((b) => [b.id, b]));
+          extra.bugs.forEach((b) => bugMap.set(b.id, b));
+          const releaseById = Object.fromEntries([...relMap.values()].map((r) => [r.id, r]));
+          workCtx = {
+            ...ctx,
+            relsBase: [...relMap.values()],
+            allBugs: [...bugMap.values()],
+            bugsOnProjects: [...bugMap.values()],
+            releaseById,
+          };
+        } catch {
+          /* use in-memory data only */
+        }
+      }
+      const roster = workCtx.people.filter((p) => trackRoles.includes(p.role));
+      const individual = workCtx.f.resource !== 'all';
+
+      const summary = roster
+        .map((p) => {
+          const { submitted, tested, bugsOnSubmitted, bugsOnTested, reported } = resourcePerformanceRows(workCtx, p);
+          const sm = computeReleaseMetrics(submitted, bugsOnSubmitted, { releaseById: workCtx.releaseById });
+          const tm = computeReleaseMetrics(tested, bugsOnTested, { releaseById: workCtx.releaseById });
+          const ss = countReleaseStatuses(submitted);
+          const ts = countReleaseStatuses(tested);
+          const openOnSubmitted = bugsOnSubmitted.filter(isActiveBug);
+          return {
+            name: p.name,
+            email: p.email,
+            role: p.role,
+            team: ctx.teamName(p.teamId),
+            buildsSubmitted: submitted.length,
+            subQaPending: ss.qa_pending,
+            subInQa: ss.qa_in_progress,
+            subQaDone: ss.qa_done,
+            subApproved: sm.approved,
+            subSentBack: sm.rejected,
+            subApprovalRate: sm.decided ? `${sm.passRate}%` : '',
+            subClosed: ss.closed,
+            bugsOnSubmittedBuilds: bugsOnSubmitted.length,
+            openBugsOnSubmitted: openOnSubmitted.length,
+            buildsQaTested: tested.length,
+            qaPending: ts.qa_pending,
+            qaInProgress: ts.qa_in_progress,
+            qaDone: ts.qa_done,
+            qaApproved: tm.approved,
+            qaSentBack: tm.rejected,
+            qaApprovalRate: tm.decided ? `${tm.passRate}%` : '',
+            qaClosed: ts.closed,
+            bugsReported: reported.length,
+            bugsVerifiedReported: reported.filter((b) => b.status === 'verified').length,
+            bugsOpenReported: reported.filter(isActiveBug).length,
+          };
+        })
+        .filter((r) => individual || r.buildsSubmitted || r.buildsQaTested || r.bugsReported)
+        .sort((a, b) => b.buildsSubmitted - a.buildsSubmitted || b.bugsReported - a.bugsReported);
+
+      const asSubmitter = [];
+      roster.forEach((p) => {
+        const { submitted, bugsOnSubmitted } = resourcePerformanceRows(workCtx, p);
+        submitted.forEach((r) => {
+          const onRel = bugsOnSubmitted.filter((b) => b.releaseId === r.id);
+          asSubmitter.push({
+            resource: p.name,
+            role: p.role,
+            team: ctx.teamName(p.teamId),
+            project: ctx.projName(r.projectId),
+            version: formatVersion(r.version),
+            platform: r.platform,
+            env: r.environment || 'Production',
+            status: relStatus(r.status),
+            qa: ctx.name(r.assignedQa),
+            submitted: d(r.date || r.createdAt),
+            qaDone: d(r.qaCompletedAt),
+            bugsOnBuild: onRel.length,
+            openBugs: onRel.filter(isActiveBug).length,
+          });
+        });
+      });
+      asSubmitter.sort((a, b) => (b.submitted || '').localeCompare(a.submitted || ''));
+
+      const asQa = [];
+      roster.forEach((p) => {
+        const { tested, bugsOnTested } = resourcePerformanceRows(workCtx, p);
+        tested.forEach((r) => {
+          const onRel = bugsOnTested.filter((b) => b.releaseId === r.id);
+          const reportedHere = onRel.filter((b) => bugReportedByPerson(b, p));
+          const assigned = releaseQaAssignedToPerson(r, p);
+          asQa.push({
+            qa: p.name,
+            team: ctx.teamName(p.teamId),
+            project: ctx.projName(r.projectId),
+            version: formatVersion(r.version),
+            platform: r.platform,
+            env: r.environment || 'Production',
+            status: relStatus(r.status),
+            involvement: assigned ? 'Assigned QA' : 'Reported bugs on build',
+            submitter: r.submittedBy || ctx.name(r.submittedById),
+            submitted: d(r.date || r.createdAt),
+            qaDone: d(r.qaCompletedAt),
+            bugsOnBuild: onRel.length,
+            bugsReportedHere: reportedHere.length,
+          });
+        });
+      });
+      asQa.sort((a, b) => (b.submitted || '').localeCompare(a.submitted || ''));
+
+      const person = workCtx.people[0];
+      const { reported: reportedBugs } = person ? resourcePerformanceRows(workCtx, person) : { reported: [] };
+      const bugsReportedRows = [...reportedBugs]
+        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+        .map((b) => {
+          const r = workCtx.releaseById[b.releaseId];
+          return {
+            project: workCtx.projName(r?.projectId),
+            version: r ? formatVersion(r.version) : '',
+            platform: r?.platform || '',
+            title: b.title,
+            severity: sev(b.severity),
+            status: bugStatus(b.status),
+            reported: d(b.createdAt),
+            verified: d(b.verifiedAt),
+            submitter: r?.submittedBy || workCtx.name(r?.submittedById),
+          };
+        });
+
+      const empty =
+        individual &&
+        !summary.some((r) => r.buildsSubmitted || r.buildsQaTested || r.bugsReported);
+
+      return {
+        title: person ? `Resource performance — ${person.name}` : 'Resource performance report',
+        source: 'releases + bugs + profiles',
+        scope:
+          'Single resource: builds they submitted and/or QA-tested, plus bugs they reported. Builds use submission date; bugs use report date. Leave dates empty for all time.',
+        notes: empty
+          ? [
+              'No rows matched this resource in the current scope. Clear the date filters, confirm team scope, and check Analytics for the same person.',
+              'Older builds may only have submitter name (not user id); matching uses name as a fallback.',
+            ]
+          : [],
+        legend: [
+          ['Builds submitted — Approved', 'QA-approved builds with no open Critical/Major bugs'],
+          ['Builds submitted — Sent back', 'Sent back, or approved while still carrying blocking bugs'],
+          ['Builds QA tested — Approved', 'Same gate rules, for builds assigned to that QA'],
+          ['Bugs reported', 'Bugs filed by that person in the date range (or all time if dates are empty)'],
+        ],
+        sheets: [
+          {
+            name: 'Resource Summary',
+            rows: summary,
+            columns: [
+              col('Resource', 'name', 22),
+              col('Email', 'email', 28),
+              col('Role', 'role', 12),
+              col('Team', 'team', 16),
+              col('Builds submitted', 'buildsSubmitted'),
+              col('Sub — QA pending', 'subQaPending'),
+              col('Sub — In QA', 'subInQa'),
+              col('Sub — QA done', 'subQaDone'),
+              col('Sub — Approved', 'subApproved'),
+              col('Sub — Sent back', 'subSentBack'),
+              col('Sub — Approval rate', 'subApprovalRate'),
+              col('Sub — Closed', 'subClosed'),
+              col('Bugs on submitted builds', 'bugsOnSubmittedBuilds'),
+              col('Open bugs on submitted', 'openBugsOnSubmitted'),
+              col('Builds QA tested', 'buildsQaTested'),
+              col('QA — Pending', 'qaPending'),
+              col('QA — In progress', 'qaInProgress'),
+              col('QA — Done', 'qaDone'),
+              col('QA — Approved', 'qaApproved'),
+              col('QA — Sent back', 'qaSentBack'),
+              col('QA — Approval rate', 'qaApprovalRate'),
+              col('QA — Closed', 'qaClosed'),
+              col('Bugs reported', 'bugsReported'),
+              col('Bugs verified (reported)', 'bugsVerifiedReported'),
+              col('Bugs still open (reported)', 'bugsOpenReported'),
+            ],
+          },
+          {
+            name: 'Builds Submitted',
+            rows: asSubmitter,
+            columns: [
+              col('Resource', 'resource', 22),
+              col('Role', 'role', 12),
+              col('Team', 'team', 16),
+              col('Project', 'project', 22),
+              col('Version', 'version', 12),
+              col('Platform', 'platform', 10),
+              col('Environment', 'env', 12),
+              col('Status', 'status', 18),
+              col('QA', 'qa', 20),
+              col('Submitted', 'submitted', 12),
+              col('QA done', 'qaDone', 12),
+              col('Bugs on build', 'bugsOnBuild'),
+              col('Open bugs', 'openBugs'),
+            ],
+          },
+          {
+            name: 'Builds QA Tested',
+            rows: asQa,
+            columns: [
+              col('QA resource', 'qa', 22),
+              col('Team', 'team', 16),
+              col('Project', 'project', 22),
+              col('Version', 'version', 12),
+              col('Platform', 'platform', 10),
+              col('Environment', 'env', 12),
+              col('Status', 'status', 18),
+              col('Involvement', 'involvement', 22),
+              col('Submitted by', 'submitter', 20),
+              col('Submitted', 'submitted', 12),
+              col('QA done', 'qaDone', 12),
+              col('Bugs on build', 'bugsOnBuild'),
+              col('Bugs they reported here', 'bugsReportedHere'),
+            ],
+          },
+          {
+            name: 'Bugs Reported',
+            rows: bugsReportedRows,
+            columns: [
+              col('Project', 'project', 22),
+              col('Build', 'version', 12),
+              col('Platform', 'platform', 10),
+              col('Title', 'title', 40),
+              col('Severity', 'severity', 10),
+              col('Status', 'status', 22),
+              col('Reported on', 'reported', 12),
+              col('Verified on', 'verified', 12),
+              col('Build submitter', 'submitter', 20),
+            ],
+          },
+        ],
+      };
+    },
+  },
   {
     key: 'qa-workload', file: 'QA_Workload_Report', title: 'QA Workload',
     desc: 'Which projects each QA resource is assigned to — home, support and other — with expiry.',
@@ -382,18 +732,67 @@ export const REPORTS = [
 /* ====================================================================== */
 /* Settings → Reports                                                      */
 /* ====================================================================== */
+const TRACKED_ROLES = ['Developer', 'QA', 'Team Lead'];
+
+function fileSlug(name) {
+  return String(name || 'resource')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^\w-]+/g, '')
+    .slice(0, 48);
+}
+
 export function ReportsSection(props) {
-  const { isAdmin, teams, showToast } = props;
-  const [f, setF] = useState({ from: '', to: '', team: 'all' });
+  const { isAdmin, teams, profiles, profilesById, showToast } = props;
+  const [f, setF] = useState({ from: '', to: '', team: 'all', role: 'all', resource: 'all' });
   const [busy, setBusy] = useState(null);
   const fSel = { ...inputStyle, width: 'auto', minHeight: 36, padding: '0 10px', fontSize: 12 };
+  const fSelWide = { ...fSel, minWidth: 180, maxWidth: 260 };
+
+  const resourceOptions = useMemo(
+    () =>
+      (profiles || [])
+        .filter((p) => {
+          if (!TRACKED_ROLES.includes(p.role)) return false;
+          if (f.team !== 'all' && p.teamId !== f.team) return false;
+          if (f.role !== 'all' && p.role !== f.role) return false;
+          return true;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [profiles, f.team, f.role]
+  );
+
+  function resourceStillVisible(id, filters) {
+    if (id === 'all') return true;
+    const p = profilesById[id];
+    if (!p || !TRACKED_ROLES.includes(p.role)) return false;
+    if (filters.team !== 'all' && p.teamId !== filters.team) return false;
+    if (filters.role !== 'all' && p.role !== filters.role) return false;
+    return true;
+  }
+
+  function setFilters(patch) {
+    setF((s) => {
+      const next = { ...s, ...patch };
+      if (next.resource !== 'all' && !resourceStillVisible(next.resource, next)) {
+        next.resource = 'all';
+      }
+      return next;
+    });
+  }
 
   async function run(rep) {
+    if (rep.requiresResource && f.resource === 'all') {
+      showToast?.('Select a resource name, then export.', 'error');
+      return;
+    }
     setBusy(rep.key);
     try {
       const ctx = makeCtx(props, f);
       const spec = await rep.build(ctx);
-      downloadWorkbook(buildWorkbook({ ...spec, scope: `${spec.scope} ${ctx.scopeText}`.trim() }), rep.file);
+      const person = f.resource !== 'all' ? profilesById[f.resource]?.name : null;
+      const fileBase = person ? `${rep.file}_${fileSlug(person)}` : rep.file;
+      downloadWorkbook(buildWorkbook({ ...spec, scope: `${spec.scope} ${ctx.scopeText}`.trim() }), fileBase);
       showToast?.(`${rep.title} exported`);
     } catch (e) {
       showToast?.(e?.message || 'Export failed', 'error');
@@ -410,20 +809,44 @@ export function ReportsSection(props) {
             <IconChart size={17} /> Reports
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 3 }}>
-            Departmental exports as clean Excel workbooks. Each opens with an About sheet (when it was generated, its source, scope and definitions), then one filterable sheet per table.
+            Departmental exports as clean Excel workbooks. For <b>Resource Performance</b>, choose a person, leave dates empty for all-time data, then export.
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select
+            style={fSelWide}
+            value={f.resource}
+            onChange={(e) => setFilters({ resource: e.target.value })}
+            title="Resource"
+          >
+            <option value="all">Select resource…</option>
+            {resourceOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.role})
+              </option>
+            ))}
+          </select>
           {isAdmin && (
-            <select style={fSel} value={f.team} onChange={(e) => setF((s) => ({ ...s, team: e.target.value }))}>
+            <select style={fSel} value={f.team} onChange={(e) => setFilters({ team: e.target.value })}>
               <option value="all">All teams</option>
               {(teams || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           )}
+          <select style={fSel} value={f.role} onChange={(e) => setFilters({ role: e.target.value })} title="Role">
+            <option value="all">All roles</option>
+            <option value="Developer">Developer</option>
+            <option value="QA">QA</option>
+            <option value="Team Lead">Team Lead</option>
+          </select>
           <input style={fSel} type="date" value={f.from} onChange={(e) => setF((s) => ({ ...s, from: e.target.value }))} title="From" />
           <input style={fSel} type="date" value={f.to} onChange={(e) => setF((s) => ({ ...s, to: e.target.value }))} title="To" />
-          {(f.from || f.to || f.team !== 'all') && (
-            <button style={{ ...ghostButton, minHeight: 36, padding: '0 12px' }} onClick={() => setF({ from: '', to: '', team: 'all' })}>Reset</button>
+          {(f.from || f.to || f.team !== 'all' || f.role !== 'all' || f.resource !== 'all') && (
+            <button
+              style={{ ...ghostButton, minHeight: 36, padding: '0 12px' }}
+              onClick={() => setF({ from: '', to: '', team: 'all', role: 'all', resource: 'all' })}
+            >
+              Reset
+            </button>
           )}
         </div>
       </div>
@@ -438,10 +861,10 @@ export function ReportsSection(props) {
             </div>
             <button
               style={{ ...primaryButton(busy === rep.key), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-              disabled={busy === rep.key}
+              disabled={busy === rep.key || (rep.requiresResource && f.resource === 'all')}
               onClick={() => run(rep)}
             >
-              {busy === rep.key ? 'Preparing…' : 'Export .xlsx'}
+              {busy === rep.key ? 'Preparing…' : rep.requiresResource && f.resource === 'all' ? 'Select resource first' : 'Export .xlsx'}
             </button>
           </div>
         ))}

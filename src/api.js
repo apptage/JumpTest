@@ -924,6 +924,25 @@ export async function fetchBugs() {
   return data.map(mapBug);
 }
 
+/** Extra releases + bugs for Settings → Resource Performance (by profile id). */
+export async function fetchResourcePerformanceSupplement(personId) {
+  if (!personId) return { releases: [], bugs: [] };
+  const [subRes, qaRes, bugRes] = await Promise.all([
+    supabase.from('releases').select('*').eq('submitted_by_id', personId),
+    supabase.from('releases').select('*').eq('assigned_qa', personId),
+    supabase.from('bugs').select('*').eq('created_by_id', personId),
+  ]);
+  if (subRes.error) throw subRes.error;
+  if (qaRes.error) throw qaRes.error;
+  if (bugRes.error) throw bugRes.error;
+  const relMap = new Map();
+  [...(subRes.data || []), ...(qaRes.data || [])].forEach((r) => relMap.set(r.id, mapRelease(r)));
+  return {
+    releases: [...relMap.values()],
+    bugs: (bugRes.data || []).map(mapBug),
+  };
+}
+
 export async function createBug(payload) {
   const { data, error } = await supabase
     .from('bugs')

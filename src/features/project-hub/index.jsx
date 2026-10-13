@@ -212,7 +212,7 @@ function TeamTab({ project, members, profiles, profilesById, wbsItems, rel, pbug
           <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No members yet.</div>
         ) : (
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {memberRows.map(({ mem, prof, assigned, activeBuilds, openBugs }) => (
+            {memberRows.map(({ mem, prof, assigned, activeBuilds, openBugs, logged }) => (
               <div key={mem.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 8px', borderRadius: 8 }}>
                 <Avatar name={prof?.name || '—'} size={28} />
                 <div style={{ flex: 1, minWidth: 0 }}>
