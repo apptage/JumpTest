@@ -1,0 +1,99 @@
+name: Deploy to Vercel
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Sync Environment Variables
+        env:
+          VERCEL_ENV: ${{ secrets.VERCEL_ENV }}
+        run: |
+          set -euo pipefail
+          API="https://api.vercel.com"
+          AUTH="Authorization: Bearer $VERCEL_TOKEN"
+          # Fetch production env vars once (key -> id)
+          existing=$(curl -sS -H "$AUTH" \
+            "$API/v9/projects/$VERCEL_PROJECT_ID/env")
+
+          while IFS= read -r line || [ -n "$line" ]; do
+            [ -z "$line" ] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+            key="${line%%=*}"
+            value="${line#*=}"
+
+            # Remove surrounding double quotes
+            if [[ "$value" == \"*\" ]]; then
+              value="${value#\"}"; value="${value%\"}"
+            fi
+            # Remove surrounding single quotes
+            if [[ "$value" == \'*\' ]]; then
+              value="${value#\'}"; value="${value%\'}"
+            fi
+
+            echo "→ Syncing $key"
+
+            # Overwrite: remove if it exists
+            env_id=$(echo "$existing" | jq -r \
+              --arg key "$key" \
+              '.envs[] | select(.key == $key and (.target | index("production"))) | .id' \
+              | head -n 1)
+
+            if [ -n "$env_id" ] && [ "$env_id" != "null" ]; then
+              curl -sS -X DELETE -H "$AUTH" \
+                "$API/v9/projects/$VERCEL_PROJECT_ID/env/$env_id" > /dev/null
+            fi
+
+            # Set fresh value (GitHub = source of truth)
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "$AUTH" -H "Content-Type: application/json" \
+              "$API/v10/projects/$VERCEL_PROJECT_ID/env" \
+              -d "$(jq -n --arg k "$key" --arg v "$value" \
+                '{key:$k, value:$v, type:"encrypted", target:["production"]}')")
+
+            if [ "$status" -ge 300 ]; then
+              echo "✗ Failed to set $key (HTTP $status)" >&2
+              exit 1
+            fi
+          done <<< "$VERCEL_ENV"
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+
+ 
