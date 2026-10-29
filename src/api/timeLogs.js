@@ -75,6 +75,28 @@ export function makeTimeLogApi(supabase) {
       return (data || []).map(mapTimeLog);
     },
 
+    // every log the caller may see for these users (RLS-scoped), paged past
+    // PostgREST's row cap — feeds the per-user summaries on the Users page
+    async fetchTimeLogsForUsers(userIds) {
+      if (!userIds?.length) return [];
+      const PAGE = 1000;
+      const out = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('time_logs')
+          .select('*')
+          .in('user_id', userIds)
+          .order('id')
+          .range(from, from + PAGE - 1);
+        if (error) {
+          if (isMissingTimeLogs(error)) return [];
+          throw error;
+        }
+        out.push(...(data || []).map(mapTimeLog));
+        if (!data || data.length < PAGE) return out;
+      }
+    },
+
     // the caller's own logs on a project for one calendar date (extension "today")
     async fetchMyTimeLogsForProject(projectId, logDate, userId) {
       const { data, error } = await supabase

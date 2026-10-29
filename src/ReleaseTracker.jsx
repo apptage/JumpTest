@@ -1427,6 +1427,7 @@ export default function ReleaseTracker() {
                   teamsById={teamsById}
                   projects={scopedProjects}
                   releases={scopedReleases}
+                  bugs={scopedBugs}
                   checklistItems={checklistItems}
                   profiles={profiles}
                   projectMembers={projectMembers}
@@ -1497,6 +1498,9 @@ export default function ReleaseTracker() {
                   profiles={visibleProfiles}
                   teams={teams}
                   teamsById={teamsById}
+                  releases={scopedReleases}
+                  bugs={scopedBugs}
+                  projectMembers={projectMembers}
                   isSubmitting={isSubmitting}
                   showToast={showToast}
                   onUpdateMember={handleUpdateProfile}

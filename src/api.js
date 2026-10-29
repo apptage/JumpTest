@@ -491,7 +491,7 @@ export async function fetchWbsPlatformTargetsForProjects(projectIds) {
 /* ------------------------------------------------------------------ */
 const timeLogApi = makeTimeLogApi(supabase);
 export const {
-  fetchTimeLogsForProject, fetchMyTimeLogsForProject, fetchMyOpenTimeLog,
+  fetchTimeLogsForProject, fetchTimeLogsForUsers, fetchMyTimeLogsForProject, fetchMyOpenTimeLog,
   createTimeLog, deleteTimeLog,
   startTimeLog, pauseTimeLog, resumeTimeLog, stopTimeLog, discardTimeLog,
 } = timeLogApi;
