@@ -4,6 +4,7 @@
 import { isActiveStatus, slaLevel } from '@/constants.js';
 import { avgDaysBetween, statusSince } from '@shared/ui-kit.jsx';
 import { isActiveBug } from '@/constants.js';
+import { elapsedMs } from '@/api/timeLogs.js';
 
 const isBlocking = (b) => isActiveBug(b) && (b.severity === 'critical' || b.severity === 'major');
 
@@ -174,4 +175,104 @@ export function computeWorkload(profiles, releasesF, bugsF, teamFilter = 'all') 
     })
     .filter((w) => w.activeReleases || w.pendingReviews || w.openBugs)
     .sort((a, b) => b.pendingReviews + b.activeReleases - (a.pendingReviews + a.activeReleases));
+}
+
+/* Per-project bird's-eye summary for the Projects grid: build count, latest
+   build's QA status, open / resolved bugs, and one derived project status.
+   Bugs map to projects through their release. */
+const QA_OPEN = ['qa_pending', 'qa_in_progress', 'qa_done'];
+export function computeProjectSummaries(releases, bugs) {
+  const out = {};
+  const get = (pid) =>
+    (out[pid] = out[pid] || { builds: 0, latest: null, inQa: 0, openBugs: 0, resolvedBugs: 0, blockingBugs: 0 });
+  const projectOfRelease = {};
+  const ts = (r) => new Date(r.createdAt || r.date || 0).getTime();
+
+  releases.forEach((r) => {
+    if (!r.projectId) return;
+    projectOfRelease[r.id] = r.projectId;
+    const s = get(r.projectId);
+    s.builds += 1;
+    if (QA_OPEN.includes(r.status)) s.inQa += 1;
+    // latest build — prefer one still in play over a superseded (closed) one
+    const cur = s.latest;
+    const better =
+      !cur ||
+      (cur.status === 'closed' && r.status !== 'closed') ||
+      ((cur.status === 'closed') === (r.status === 'closed') && ts(r) > ts(cur));
+    if (better) s.latest = r;
+  });
+
+  bugs.forEach((b) => {
+    const pid = projectOfRelease[b.releaseId];
+    if (!pid) return;
+    const s = get(pid);
+    if (isActiveBug(b)) {
+      s.openBugs += 1;
+      if (isBlocking(b)) s.blockingBugs += 1;
+    } else s.resolvedBugs += 1;
+  });
+
+  Object.values(out).forEach((s) => {
+    s.status =
+      !s.builds ? { label: 'No builds', tone: 'neutral' }
+      : s.blockingBugs ? { label: 'At risk', tone: 'danger' }
+      : s.inQa ? { label: 'In QA', tone: 'info' }
+      : s.latest?.status === 'sent_back' ? { label: 'Needs fixes', tone: 'warning' }
+      : s.latest?.status === 'approved' ? { label: 'On track', tone: 'success' }
+      : { label: 'Idle', tone: 'neutral' };
+  });
+  return out;
+}
+
+/* Per-user overview for the Users grid. Projects = membership ∪ projects they
+   logged time on. Hours include running/paused timers at their current elapsed.
+   Developers are measured on the builds they submitted; QA on the builds they
+   reviewed and the bugs they filed (same split as computeWorkload). */
+const QA_REVIEWED = ['qa_done', 'approved', 'sent_back', 'closed'];
+export function computeUserSummaries(profiles, { releases = [], bugs = [], projectMembers = [], timeLogs = [] } = {}) {
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const out = {};
+  profiles.forEach((p) => {
+    out[p.id] = { projects: new Set(), hours: 0, hoursWeek: 0, builds: 0, openBugsOnBuilds: 0, passRate: null, reviewed: 0, pendingReviews: 0, bugsFiled: 0 };
+  });
+  projectMembers.forEach((m) => out[m.userId]?.projects.add(m.projectId));
+  timeLogs.forEach((l) => {
+    const s = out[l.userId];
+    if (!s) return;
+    const h = l.hours != null ? l.hours : elapsedMs(l) / 3600000;
+    s.hours += h;
+    if (l.logDate >= weekAgo) s.hoursWeek += h;
+    if (l.projectId) s.projects.add(l.projectId);
+  });
+
+  const bugsByRelease = {};
+  bugs.forEach((b) => (bugsByRelease[b.releaseId] = bugsByRelease[b.releaseId] || []).push(b));
+  const mine = {};
+  releases.forEach((r) => {
+    if (out[r.submittedById]) (mine[r.submittedById] = mine[r.submittedById] || []).push(r);
+    const qa = out[r.assignedQa];
+    if (qa) {
+      if (QA_REVIEWED.includes(r.status)) qa.reviewed += 1;
+      else if (r.status === 'qa_pending' || r.status === 'qa_in_progress') qa.pendingReviews += 1;
+    }
+  });
+  Object.entries(mine).forEach(([uid, rs]) => {
+    const s = out[uid];
+    const bs = rs.flatMap((r) => bugsByRelease[r.id] || []);
+    const m = computeReleaseMetrics(rs, bs);
+    s.builds = rs.length;
+    s.openBugsOnBuilds = bs.filter(isActiveBug).length;
+    s.passRate = m.decided ? m.passRate : null;
+  });
+  bugs.forEach((b) => {
+    if (out[b.createdById]) out[b.createdById].bugsFiled += 1;
+  });
+
+  Object.values(out).forEach((s) => {
+    s.projectCount = s.projects.size;
+    s.hours = Math.round(s.hours * 10) / 10;
+    s.hoursWeek = Math.round(s.hoursWeek * 10) / 10;
+  });
+  return out;
 }

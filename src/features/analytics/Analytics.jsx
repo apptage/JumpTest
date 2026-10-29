@@ -9,7 +9,8 @@
        old pages had — nothing was dropped, only organised and re-labelled.
    Every number comes from the shared metric layer (releaseMetrics / bugMetrics /
    filters), so this page always agrees with the Dashboard and Command Center. */
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import * as api from '@/api.js';
 import { card, ghostButton, inputStyle, Avatar, StatusBadge, SeverityBadge, ModalShell } from '@/ui.jsx';
 import { PageHeader, sideHead, avgDaysBetween, statusSince } from '@shared/ui-kit.jsx';
 import {
@@ -21,7 +22,7 @@ import { computeReleaseMetrics, computeBottlenecks, computeWorkload } from '@sha
 import { aggregateBugMetrics, bugWorkflow, agingBugs } from '@shared/bugMetrics.js';
 import {
   STATUSES, STATUS_ORDER, SEVERITIES, SEVERITY_ORDER, BUG_STATUSES, BUG_STATUS_ORDER, BUG_RESOLUTIONS,
-  RELEASE_PLATFORMS, ENVIRONMENTS, isActiveBug, isActiveStatus, isClosedStatus, slaLevel, formatVersion,
+  RELEASE_PLATFORMS, ENVIRONMENTS, WBS_STATUSES, WBS_STATUS_ORDER, isActiveBug, isActiveStatus, isClosedStatus, slaLevel, formatVersion,
 } from '@/constants.js';
 import { IconChart } from '@/icons.jsx';
 import { ReleaseHistory } from './ReleaseHistory.jsx';
@@ -93,6 +94,31 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
   const [member, setMember] = useState(null);
   const [glossary, setGlossary] = useState(false);
   const [peopleTab, setPeopleTab] = useState('developers'); // one list at a time, never four stacked
+
+  // WBS story points (one WBS work item = one point) across every project in scope
+  const [wbsItems, setWbsItems] = useState({ list: [], loading: true });
+  const projectIdsKey = projects.map((p) => p.id).sort().join(',');
+  useEffect(() => {
+    let cancelled = false;
+    setWbsItems((w) => ({ ...w, loading: true }));
+    api.fetchWbsItemsForProjects(projectIdsKey ? projectIdsKey.split(',') : [])
+      .then((list) => { if (!cancelled) setWbsItems({ list, loading: false }); })
+      .catch(() => { if (!cancelled) setWbsItems({ list: [], loading: false }); });
+    return () => { cancelled = true; };
+  }, [projectIdsKey]);
+  const wbs = useMemo(() => {
+    const work = wbsItems.list.filter(
+      (i) =>
+        i.type !== 'milestone' &&
+        (f.project === 'all' || i.projectId === f.project) &&
+        (f.team === 'all' || projectsById[i.projectId]?.teamId === f.team)
+    );
+    const by = {};
+    WBS_STATUS_ORDER.forEach((k) => (by[k] = 0));
+    work.forEach((i) => (by[i.status] = (by[i.status] || 0) + 1));
+    const pct = (n) => (work.length ? Math.round((n / work.length) * 100) : 0);
+    return { total: work.length, projects: new Set(work.map((i) => i.projectId)).size, by, pct };
+  }, [wbsItems.list, f.project, f.team, projectsById]);
 
   const releaseById = Object.fromEntries(releases.map((r) => [r.id, r]));
   const name = (id) => profilesById[id]?.name || '—';
@@ -225,6 +251,7 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
             {Object.keys(WORDS).map((k) => (
               <div key={k}><strong>{L(k)}</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— {HELP(k)}</span></div>
             ))}
+            <div><strong>Story points</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— each work-breakdown (WBS) item counts as one point; milestones aren’t counted. Follows the team and project filters only.</span></div>
             <div><strong>All history vs Active only</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— everything ever shipped, or just builds still in flight.</span></div>
             <div><strong>Judged builds</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— approved or sent back; builds still in testing aren’t counted in rates. A build approved with a serious bug still open counts as sent back.</span></div>
           </div>
@@ -257,6 +284,33 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
             <StatCard accent="rose" label={L('active')} value={num(activeBugs.length)} foot={`${critical} critical · ${wf.awaitingQa} awaiting QA`} />
             <StatCard accent="amber" label={L('cycle')} value={m.cycleDays ? `${num(m.cycleDays, 1)}d` : '—'} foot={HELP('cycle')} />
             <StatCard accent="rose" label={L('prod')} value={num(m.prodBugs)} foot={HELP('prod')} />
+          </div>
+
+          <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+            {sectionTitle(
+              'Story points across all projects',
+              wbsItems.loading ? 'Loading work breakdowns…' : `${wbs.total} story points across ${wbs.projects} project${wbs.projects === 1 ? '' : 's'} with a work breakdown`
+            )}
+            {!wbsItems.loading && wbs.total === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No work breakdown items in this scope yet.</div>
+            ) : (
+              <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+                {[['completed', 'Completed'], ['not_started', 'Not started']].map(([k, label]) => (
+                  <div key={k} style={{ minWidth: 130 }}>
+                    <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 700, color: WBS_STATUSES[k].color }}>
+                      {wbsItems.loading ? '…' : `${wbs.pct(wbs.by[k])}%`}
+                    </div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</div>
+                    <div className="tnum" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+                      {wbsItems.loading ? '' : `${wbs.by[k]} of ${wbs.total} points`}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+                  <StackedBar segments={WBS_STATUS_ORDER.map((k) => ({ label: WBS_STATUSES[k].label, value: wbs.by[k] || 0, color: WBS_STATUSES[k].color }))} />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="dash-mid">

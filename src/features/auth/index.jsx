@@ -6,6 +6,7 @@ import { Field, authLink } from '@shared/ui-kit.jsx';
 import { ALLOWED_EMAIL_DOMAIN, emailDomainOk } from '@/constants.js';
 import { IconCode, IconShieldCheck } from '@/illustrations.jsx';
 import { IconBug } from '@/icons.jsx';
+import { ApptageLogo } from '@/brand.jsx';
 
 export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest }) {
   const [mode, setMode] = useState('signin');
@@ -102,6 +103,14 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
                   <span style={{ color: 'var(--on-ink)' }}>{t}</span>
                 </div>
               ))}
+            </div>
+
+            {/* customer proof — Apptage runs its project tracking + client reviews here */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 26, paddingTop: 20, borderTop: '1px solid var(--ink-border)' }}>
+              <ApptageLogo size={26} color="var(--on-ink)" />
+              <span style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--on-ink-dim)', flex: '1 1 240px' }}>
+                Apptage uses Miaro Verify for live project tracking and client status reviews.
+              </span>
             </div>
           </div>
         </div>

@@ -3,6 +3,8 @@
    on-ink inside the auth hero. Source: src/assets/brand/*.svg */
 import markSvg from './assets/brand/miaro-mark.svg?raw';
 import logoSvg from './assets/brand/miaro-verify.svg?raw';
+import apptageLogoSvg from './assets/brand/apptage-logo.svg?raw';
+import apptageMarkSvg from './assets/brand/apptage-mark.svg?raw';
 
 export const BRAND_NAME = 'Miaro Verify';
 
@@ -29,6 +31,36 @@ export function MiaroLogo({ size = 26, color = 'currentColor', style }) {
       aria-label={BRAND_NAME}
       style={{ display: 'inline-block', height: size, width: Math.round(size * LOGO_RATIO), color, lineHeight: 0, flexShrink: 0, ...style }}
       dangerouslySetInnerHTML={{ __html: logoSvg }}
+    />
+  );
+}
+
+/* ---- Apptage — the company running this workspace ----
+   The mark keeps its brand purple; the wordmark is currentColor so it reads on
+   light, dark and ink backgrounds. Source: Apptage Logo-01.svg (cropped). */
+export const COMPANY_NAME = 'Apptage';
+const APPTAGE_LOGO_RATIO = 749.5 / 182;
+
+/* Full Apptage lock-up (mark + wordmark). `size` is the height in px. */
+export function ApptageLogo({ size = 22, color = 'currentColor', style }) {
+  return (
+    <span
+      role="img"
+      aria-label={COMPANY_NAME}
+      style={{ display: 'inline-block', height: size, width: Math.round(size * APPTAGE_LOGO_RATIO), color, lineHeight: 0, flexShrink: 0, ...style }}
+      dangerouslySetInnerHTML={{ __html: apptageLogoSvg }}
+    />
+  );
+}
+
+/* Apptage mark only (square). `size` is the height in px. */
+export function ApptageMark({ size = 22, style }) {
+  return (
+    <span
+      role="img"
+      aria-label={COMPANY_NAME}
+      style={{ display: 'inline-block', height: size, width: size, lineHeight: 0, flexShrink: 0, ...style }}
+      dangerouslySetInnerHTML={{ __html: apptageMarkSvg }}
     />
   );
 }

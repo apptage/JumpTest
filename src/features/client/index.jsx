@@ -2,10 +2,11 @@
    ?client=<token>. Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
-import { card, inputStyle, Wordmark, CenteredMessage } from '@/ui.jsx';
+import { card, inputStyle, ghostButton, CenteredMessage } from '@/ui.jsx';
 import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER } from '@/constants.js';
 import { sideHead } from '@shared/ui-kit.jsx';
 import { WbsBadge, latestEst } from '@features/wbs';
+import { ApptageLogo, MiaroLogo } from '@/brand.jsx';
 
 // relative "updated Xm ago" — coarse, no external dep
 function relTime(iso) {
@@ -46,9 +47,49 @@ function fmtDate(d) {
   return dt.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+// Plain-language guide to the WBS view — client-facing, so no internal jargon.
+const WBS_STATUS_HELP = {
+  not_started: 'planned and in scope, but work hasn’t begun yet.',
+  in_progress: 'our developers are building it right now.',
+  in_qa: 'built and now being tested by our QA team before it counts as done.',
+  completed: 'built and passed QA testing.',
+  blocked: 'paused while waiting on something — often a decision or input from you.',
+};
+const WBS_READ_HELP = [
+  ['Total items', 'every feature or task in the agreed scope. Milestones are listed separately and aren’t counted.'],
+  ['Overall project completion', 'the share of items marked Completed. Items still in progress or in QA aren’t counted yet, so this can trail behind visible activity.'],
+  ['Platform sections', 'work is grouped by platform (e.g. Mobile App), then by feature area. Completion is the target date to finish building that platform; Deployment is when it’s planned to go live.'],
+  ['Feature-area % and Target', 'the % shows how many items in that group are completed; Target is the latest estimated finish date among them.'],
+  ['Dates next to items', 'the estimated completion date for that item.'],
+  ['Milestones', 'key checkpoints in the project timeline.'],
+  ['Search and status filter', 'only narrow down the list below — the numbers at the top always cover the whole project.'],
+  ['Live · updated', 'this page refreshes on its own; the time shows when our team last updated an item.'],
+];
+
+function WbsReadGuide() {
+  const row = (term, text, badge) => (
+    <div key={term}>
+      {badge || <strong>{term}</strong>} <span style={{ color: 'var(--color-text-secondary)' }}>— {text}</span>
+    </div>
+  );
+  return (
+    <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>How to read this page</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>What each number, status and date on this work breakdown means.</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '10px 20px', fontSize: 12.5, lineHeight: 1.5 }}>
+        {WBS_STATUS_ORDER.map((k) => row(k, WBS_STATUS_HELP[k], <WbsBadge status={k} />))}
+        {WBS_READ_HELP.map(([term, text]) => row(term, text))}
+      </div>
+    </div>
+  );
+}
+
 function ClientWbsView({ wbs, platformTargets = [] }) {
   const [q, setQ] = useState('');
   const [sf, setSf] = useState('all');
+  const [guide, setGuide] = useState(false);
 
   // platform milestones keyed the same way the groups are (empty → 'General')
   const targetMap = {};
@@ -102,6 +143,11 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
 
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button style={ghostButton} onClick={() => setGuide((v) => !v)}>{guide ? 'Hide' : 'How to read this page'}</button>
+      </div>
+      {guide && <WbsReadGuide />}
+
       {/* status stat strip */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
         {stats.map((s) => (
@@ -486,8 +532,11 @@ export function ClientDashboard({ token }) {
         }}
       >
         <div style={{ maxWidth: 880, margin: '0 auto', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Wordmark size={26} />
-          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>Client portal</span>
+          {/* Apptage runs this portal for its clients; Miaro Verify is the platform underneath */}
+          <ApptageLogo size={26} color="var(--color-text-primary)" />
+          <span style={{ width: 1, height: 20, background: 'var(--color-border-primary)', margin: '0 4px' }} />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Client portal</span>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>Live project tracking</span>
         </div>
       </header>
 
@@ -635,8 +684,9 @@ export function ClientDashboard({ token }) {
 
         {effectiveTab === 'qa' && <ClientBugReport report={bugReport} />}
 
-        <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
-          Read-only project status · powered by Miaro Verify
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
+          Live project tracking &amp; client status reviews by Apptage · powered by
+          <MiaroLogo size={14} color="var(--color-text-secondary)" />
         </div>
       </div>
     </div>

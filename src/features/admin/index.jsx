@@ -4,12 +4,15 @@ import { useState, useEffect, useMemo } from 'react';
 import * as api from '@/api.js';
 import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, ModalShell } from '@/ui.jsx';
 import { Field } from '@shared/ui-kit.jsx';
-import { StatSmall, Pill } from '@shared/dashboard-kit.jsx';
+import { StatSmall, Pill, passColor } from '@shared/dashboard-kit.jsx';
+import { computeProjectSummaries, computeUserSummaries } from '@shared/releaseMetrics.js';
 import {
   ALLOWED_EMAIL_DOMAIN,
   PROJECT_TYPES,
   ROLES,
+  STATUSES,
   TEAM_ASSIGNABLE_ROLES,
+  formatVersion,
   projectTypeLabel,
   emailDomainOk,
 } from '@/constants.js';
@@ -373,6 +376,9 @@ export function UsersTab({
   profiles,
   teams,
   teamsById,
+  releases = [],
+  bugs = [],
+  projectMembers = [],
   isSubmitting,
   showToast,
   onUpdateMember,
@@ -380,6 +386,20 @@ export function UsersTab({
   refetchProfiles,
 }) {
   const [busyId, setBusyId] = useState(null);
+  const [timeLogs, setTimeLogs] = useState({ list: [], loading: true });
+  const userIdsKey = profiles.map((p) => p.id).sort().join(',');
+  useEffect(() => {
+    let cancelled = false;
+    setTimeLogs((t) => ({ ...t, loading: true }));
+    api.fetchTimeLogsForUsers(userIdsKey ? userIdsKey.split(',') : [])
+      .then((list) => { if (!cancelled) setTimeLogs({ list, loading: false }); })
+      .catch(() => { if (!cancelled) setTimeLogs({ list: [], loading: false }); });
+    return () => { cancelled = true; };
+  }, [userIdsKey]);
+  const summaries = useMemo(
+    () => computeUserSummaries(profiles, { releases, bugs, projectMembers, timeLogs: timeLogs.list }),
+    [profiles, releases, bugs, projectMembers, timeLogs.list]
+  );
   const roleOptions = isAdmin ? ROLES : TEAM_ASSIGNABLE_ROLES;
 
   async function patch(id, p) {
@@ -508,6 +528,8 @@ export function UsersTab({
               <Pill label={p.role} tone={roleTone} />
             </div>
 
+            <UserSummary s={summaries[p.id]} role={p.role} hoursLoading={timeLogs.loading} />
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {isAdmin ? (
                 <label style={{ display: 'block', minWidth: 0 }}>
@@ -592,6 +614,7 @@ export function ProjectsTab({
   teamsById,
   projects,
   releases,
+  bugs = [],
   checklistItems,
   profiles,
   projectMembers,
@@ -614,7 +637,7 @@ export function ProjectsTab({
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const needsTeam = isAdmin && teams.length > 0;
   const invalid = !form.name.trim() || (needsTeam && !form.team);
-  const releaseCount = (id) => releases.filter((r) => r.projectId === id).length;
+  const summaries = useMemo(() => computeProjectSummaries(releases, bugs), [releases, bugs]);
 
   const [q, setQ] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
@@ -792,7 +815,7 @@ export function ProjectsTab({
               user={user}
               teams={teams}
               teamName={p.teamId ? teamsById[p.teamId]?.name : null}
-              releaseCount={releaseCount(p.id)}
+              summary={summaries[p.id]}
               items={checklistItems.filter((c) => c.projectId === p.id)}
               profiles={profiles}
               members={projectMembers.filter((m) => m.projectId === p.id)}
@@ -820,13 +843,91 @@ export function ProjectsTab({
   );
 }
 
+/* Bird's-eye strip on each user tile: projects, hours logged and one role
+   metric, with secondary KPIs underneath. QA is measured on reviews and bugs
+   filed; everyone else on the builds they submitted. */
+function UserSummary({ s, role, hoursLoading }) {
+  if (!s) return null;
+  const isQa = role === 'QA';
+  const cell = (label, value, color) => (
+    <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 10, background: 'var(--color-background-secondary)' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+    </div>
+  );
+  const fmtH = (h) => (hoursLoading ? '…' : `${h}h`);
+  const extras = isQa
+    ? [
+        [`${s.bugsFiled}`, `bug${s.bugsFiled === 1 ? '' : 's'} filed`],
+        [`${s.pendingReviews}`, 'pending review' + (s.pendingReviews === 1 ? '' : 's'), s.pendingReviews ? 'var(--warning)' : null],
+      ]
+    : [
+        [`${s.openBugsOnBuilds}`, `open bug${s.openBugsOnBuilds === 1 ? '' : 's'} on builds`, s.openBugsOnBuilds ? 'var(--danger)' : null],
+        [s.passRate == null ? '—' : `${s.passRate}%`, 'pass rate', s.passRate == null ? null : passColor(s.passRate)],
+      ];
+  extras.push([fmtH(s.hoursWeek), 'last 7 days']);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {cell(`Project${s.projectCount === 1 ? '' : 's'}`, s.projectCount)}
+        {cell('Hours logged', fmtH(s.hours))}
+        {isQa ? cell('Builds reviewed', s.reviewed) : cell('Builds submitted', s.builds)}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+        {extras.map(([v, label, color]) => (
+          <span key={label} style={{ whiteSpace: 'nowrap' }}>
+            <b style={{ fontWeight: 600, color: color || 'var(--color-text-primary)' }}>{v}</b> {label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_SUMMARY = { builds: 0, latest: null, openBugs: 0, resolvedBugs: 0, status: { label: 'No builds', tone: 'neutral' } };
+
+/* Bird's-eye strip on each project tile: builds / open / resolved bugs + the
+   latest build's QA status. */
+function ProjectSummary({ s }) {
+  const qa = s.latest ? STATUSES[s.latest.status] : null;
+  const cell = (label, value, color) => (
+    <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 10, background: 'var(--color-background-secondary)' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: value ? color : 'var(--color-text-primary)' }}>{value}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 1 }}>{label}</div>
+    </div>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {cell(`Build${s.builds === 1 ? '' : 's'} submitted`, s.builds, 'var(--color-text-primary)')}
+        {cell('Open bugs', s.openBugs, 'var(--danger)')}
+        {cell('Resolved bugs', s.resolvedBugs, 'var(--success)')}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--color-text-secondary)', minWidth: 0 }}>
+        <span style={{ fontWeight: 600 }}>QA status</span>
+        {qa ? (
+          <>
+            <span style={{ width: 7, height: 7, borderRadius: 999, background: qa.color, flexShrink: 0 }} />
+            <span style={{ color: qa.color, fontWeight: 600, whiteSpace: 'nowrap' }}>{qa.label}</span>
+            <span style={{ color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              · {formatVersion(s.latest.version) || 'latest build'}
+            </span>
+          </>
+        ) : (
+          <span style={{ color: 'var(--color-text-tertiary)' }}>No builds yet</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProjectRow({
   project,
   isAdmin,
   user,
   teams,
   teamName,
-  releaseCount,
+  summary,
   items,
   profiles,
   members,
@@ -848,6 +949,8 @@ function ProjectRow({
   });
   const [label, setLabel] = useState('');
 
+  const s = summary || EMPTY_SUMMARY;
+  const status = s.status || EMPTY_SUMMARY.status;
   const isWeb = project.type === 'web';
   const typeColor = isWeb ? '#f59e0b' : '#10b981';
 
@@ -896,11 +999,12 @@ function ProjectRow({
             <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</div>
             <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{projectTypeLabel(project.type)}</div>
           </div>
+          <Pill label={status.label} tone={status.tone} />
           <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{open ? '▾' : '▸'}</span>
         </div>
+        <ProjectSummary s={s} />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <Pill label={teamName || 'No team'} tone={teamName ? 'info' : 'neutral'} />
-          <Pill label={`${releaseCount} release${releaseCount === 1 ? '' : 's'}`} tone="neutral" />
           <Pill label={`${items.length} checklist item${items.length === 1 ? '' : 's'}`} tone="neutral" />
           {members.length > 0 && <Pill label={`${members.length} member${members.length === 1 ? '' : 's'}`} tone="neutral" />}
         </div>
