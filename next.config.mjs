@@ -12,6 +12,13 @@ const nextConfig = {
   env: nextClientEnvBlock(),
   reactStrictMode: true,
   webpack(config) {
+    // Inline SVG as string (brand.jsx uses `*.svg?raw`, same as the old Vite setup)
+    config.module.rules.push({
+      test: /\.svg$/i,
+      resourceQuery: /raw/,
+      type: 'asset/source',
+    });
+
     config.resolve.alias = {
       ...config.resolve.alias,
       '@': path.resolve(__dirname, './src'),
