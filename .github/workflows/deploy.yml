@@ -87,6 +87,21 @@ jobs:
             fi
           done <<< "$VERCEL_ENV"
 
+      - name: Configure Vercel project for Next.js
+        run: |
+          set -euo pipefail
+          status=$(curl -sS -o /tmp/vercel-patch.json -w '%{http_code}' -X PATCH \
+            "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"framework":"nextjs","outputDirectory":null,"buildCommand":"npm run build"}')
+          if [ "$status" -ge 300 ]; then
+            echo "Failed to update Vercel project (HTTP $status):" >&2
+            cat /tmp/vercel-patch.json >&2
+            exit 1
+          fi
+          echo "Vercel project set to Next.js (outputDirectory cleared from legacy Vite dist)"
+
       - name: Pull Vercel project settings
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
 
