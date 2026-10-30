@@ -45,6 +45,31 @@ jobs:
           existing=$(curl -sS -H "$AUTH" \
             "$API/v9/projects/$VERCEL_PROJECT_ID/env")
 
+          sync_env_key() {
+            local sync_key="$1"
+            local sync_value="$2"
+            echo "→ Syncing $sync_key"
+            local env_id
+            env_id=$(echo "$existing" | jq -r \
+              --arg key "$sync_key" \
+              '.envs[] | select(.key == $key and (.target | index("production"))) | .id' \
+              | head -n 1)
+            if [ -n "$env_id" ] && [ "$env_id" != "null" ]; then
+              curl -sS -X DELETE -H "$AUTH" \
+                "$API/v9/projects/$VERCEL_PROJECT_ID/env/$env_id" > /dev/null
+            fi
+            local status
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "$AUTH" -H "Content-Type: application/json" \
+              "$API/v10/projects/$VERCEL_PROJECT_ID/env" \
+              -d "$(jq -n --arg k "$sync_key" --arg v "$sync_value" \
+                '{key:$k, value:$v, type:"encrypted", target:["production"]}')")
+            if [ "$status" -ge 300 ]; then
+              echo "✗ Failed to set $sync_key (HTTP $status)" >&2
+              exit 1
+            fi
+          }
+
           while IFS= read -r line || [ -n "$line" ]; do
             [ -z "$line" ] && continue
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -61,31 +86,26 @@ jobs:
               value="${value#\'}"; value="${value%\'}"
             fi
 
-            echo "→ Syncing $key"
-
-            # Overwrite: remove if it exists
-            env_id=$(echo "$existing" | jq -r \
-              --arg key "$key" \
-              '.envs[] | select(.key == $key and (.target | index("production"))) | .id' \
-              | head -n 1)
-
-            if [ -n "$env_id" ] && [ "$env_id" != "null" ]; then
-              curl -sS -X DELETE -H "$AUTH" \
-                "$API/v9/projects/$VERCEL_PROJECT_ID/env/$env_id" > /dev/null
-            fi
-
-            # Set fresh value (GitHub = source of truth)
-            status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-              -H "$AUTH" -H "Content-Type: application/json" \
-              "$API/v10/projects/$VERCEL_PROJECT_ID/env" \
-              -d "$(jq -n --arg k "$key" --arg v "$value" \
-                '{key:$k, value:$v, type:"encrypted", target:["production"]}')")
-
-            if [ "$status" -ge 300 ]; then
-              echo "✗ Failed to set $key (HTTP $status)" >&2
-              exit 1
+            sync_env_key "$key" "$value"
+            if [[ "$key" == VITE_* ]]; then
+              sync_env_key "NEXT_PUBLIC_${key#VITE_}" "$value"
             fi
           done <<< "$VERCEL_ENV"
+
+          existing=$(curl -sS -H "$AUTH" \
+            "$API/v9/projects/$VERCEL_PROJECT_ID/env")
+          echo "Mirroring existing VITE_* production env vars to NEXT_PUBLIC_* (Next.js client)..."
+          while IFS= read -r legacy_key; do
+            [ -z "$legacy_key" ] && continue
+            next_key="NEXT_PUBLIC_${legacy_key#VITE_}"
+            has_next=$(echo "$existing" | jq -r --arg k "$next_key" \
+              '.envs[] | select(.key == $k and (.target | index("production"))) | .key' | head -n 1)
+            [ -n "$has_next" ] && [ "$has_next" != "null" ] && continue
+            legacy_value=$(echo "$existing" | jq -r --arg k "$legacy_key" \
+              '.envs[] | select(.key == $k and (.target | index("production"))) | .value' | head -n 1)
+            [ -z "$legacy_value" ] || [ "$legacy_value" = "null" ] && continue
+            sync_env_key "$next_key" "$legacy_value"
+          done < <(echo "$existing" | jq -r '.envs[].key | select(startswith("VITE_"))')
 
       - name: Configure Vercel project for Next.js
         run: |

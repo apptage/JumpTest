@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnvFile } from './env-file.mjs';
+import { applyPublicEnvAliases } from './public-env.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const userArgs = process.argv.slice(2);
@@ -32,7 +33,7 @@ const envFile = join(root, `.env.${mode}.local`);
 const [cmd, ...args] = userArgs;
 
 const branchEnv = loadEnvFile(envFile);
-const childEnv = { ...process.env, ...branchEnv };
+const childEnv = applyPublicEnvAliases({ ...process.env, ...branchEnv });
 
 let result;
 if (cmd === 'next') {

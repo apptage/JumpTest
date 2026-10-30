@@ -38,5 +38,8 @@ if (existsSync(target)) {
   console.log(`Created .env.${mode}.local — add your Supabase keys from GammaQuality${mode === 'staging' ? '-Staging' : ''}`);
 }
 
+copyFileSync(target, join(root, '.env.local'));
+console.log(`Synced .env.local from .env.${mode}.local (Next.js dev/build)`);
+
 console.log(`Mode: ${mode} | Branch: ${branch}`);
 process.stdout.write(mode);
