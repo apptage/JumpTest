@@ -1,4 +1,8 @@
+'use client';
+
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { pageFromPathname, pathForPage } from './navigation.js';
 import { supabase } from './supabaseClient.js';
 import * as api from './api.js';
 import {
@@ -128,6 +132,22 @@ import { unregisterDevice } from '@/push/pushClient.js';
 /* ================================================================== */
 
 export default function ReleaseTracker() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const page = pageFromPathname(pathname) ?? 'dashboard';
+  const setPage = useCallback(
+    (next) => {
+      router.push(pathForPage(next));
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (pageFromPathname(pathname) === null && pathname && pathname !== '/') {
+      router.replace('/');
+    }
+  }, [pathname, router]);
+
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
@@ -143,19 +163,6 @@ export default function ReleaseTracker() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // persist the active page across refreshes (no router yet)
-  const KNOWN_PAGES = ['dashboard', 'projecthub', 'releases', 'bugs', 'wbs', 'projects', 'analytics', 'users', 'teams', 'settings'];
-  const [page, setPage] = useState(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('jt_page') : null;
-    return saved && KNOWN_PAGES.includes(saved) ? saved : 'dashboard';
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem('jt_page', page);
-    } catch (_) {
-      /* storage unavailable — non-critical */
-    }
-  }, [page]);
   const [showSubmit, setShowSubmit] = useState(false);
   const [editingRelease, setEditingRelease] = useState(null);
   const [historyProject, setHistoryProject] = useState(null);
@@ -253,10 +260,9 @@ export default function ReleaseTracker() {
     const rel = params.get('release');
     if (rel) {
       setSelectedId(rel);
-      setPage('dashboard');
-      window.history.replaceState(null, '', window.location.pathname);
+      router.replace('/');
     }
-  }, []);
+  }, [router]);
 
   /* ---- server state via React Query ----
      Independent queries (no fragile Promise.all), auto-fetch when a user is

@@ -1,7 +1,7 @@
 # GammaQuality (JumpTest) — Complete Scope of Work
 
 **Product:** Internal release & QA tracking platform for software teams  
-**Stack:** React 18 + Vite SPA · Supabase (Auth, Postgres, Storage, Edge Functions) · Firebase Cloud Messaging  
+**Stack:** Next.js 15 (App Router) + React 18 · Supabase (Auth, Postgres, Storage, Edge Functions) · Firebase Cloud Messaging  
 **Org:** `@jumppace.com` only · First signup = Admin
 
 ---
@@ -421,8 +421,8 @@ open → in_progress → fixed → verified
 | Edge Functions | `admin-create-user`, `send-push` |
 | Triggers | Signup profile creation, domain enforcement, role change guard |
 | RPCs | `move_bugs_to_release`, `set_wbs_enabled`, `public_project_status`, team admin RPCs |
-| Deploy | Vite build → Vercel (`vercel.json`) |
-| Env | `VITE_SUPABASE_*`, optional `VITE_FIREBASE_*` for push |
+| Deploy | Next.js build → Vercel (`vercel.json`) |
+| Env | `NEXT_PUBLIC_SUPABASE_*`, optional `NEXT_PUBLIC_FIREBASE_*` for push |
 
 ---
 

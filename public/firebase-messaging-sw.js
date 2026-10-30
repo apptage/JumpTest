@@ -3,8 +3,8 @@
    Handles pushes that arrive while the app tab is closed/backgrounded, shows
    the OS notification, and deep-links to the right screen when tapped.
 
-   A service worker can't read import.meta.env, so the Firebase *public* config
-   is inlined below. Paste the same values you put in your .env (VITE_FIREBASE_*).
+   A service worker can't read Next.js env at runtime, so the Firebase *public* config
+   is inlined below. Paste the same values as NEXT_PUBLIC_FIREBASE_* in your .env.
    These are public identifiers — safe to commit. */
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');

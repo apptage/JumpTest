@@ -5,14 +5,15 @@
   "type": "module",
   "scripts": {
     "env:sync": "node scripts/setup-env.mjs",
-    "dev": "node scripts/with-env.mjs vite",
-    "dev:staging": "npm run env:sync && vite --mode staging",
-    "dev:production": "npm run env:sync && vite --mode production",
-    "build": "node scripts/with-env.mjs vite build",
-    "build:staging": "vite build --mode staging",
-    "build:production": "vite build --mode production",
-    "build:extension": "node scripts/with-env.mjs vite build --config vite.extension.config.js",
-    "preview": "node scripts/with-env.mjs vite preview",
+    "dev": "node scripts/with-env.mjs next dev",
+    "dev:staging": "npm run env:sync && node scripts/with-env.mjs next dev",
+    "dev:production": "npm run env:sync && node scripts/with-env.mjs next dev",
+    "build": "node scripts/with-env.mjs next build",
+    "build:staging": "node scripts/with-env.mjs next build",
+    "build:production": "node scripts/with-env.mjs next build",
+    "build:extension": "node scripts/with-env.mjs extension-build",
+    "start": "node scripts/with-env.mjs next start",
+    "preview": "npm run start",
     "db:push": "npm run env:sync && supabase db push",
     "db:link": "npm run env:sync && node scripts/supabase-link.mjs"
   },
@@ -20,12 +21,12 @@
     "@supabase/supabase-js": "^2.45.0",
     "@tanstack/react-query": "^5.101.2",
     "firebase": "^12.16.0",
+    "next": "^15.5.28",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0"
+    "esbuild": "^0.25.12"
   }
 }

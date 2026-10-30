@@ -1,8 +1,13 @@
 /* Shared bug aggregation + aging. All bug KPIs derive from a single filtered
    dataset (filterBugs), never from a raw bugs array. */
 import { isActiveBug, isClosedBug, bugSlaLevel, SEVERITY_ORDER, BUG_STATUS_ORDER } from '@/constants.js';
+import { isDevBuild } from '@/env.public.js';
 
 export { isActiveBug, isClosedBug };
+
+function __devMetricsCheck() {
+  return isDevBuild();
+}
 
 // Totals + breakdowns for a filtered bug set. Invariant: active + closed = total.
 export function aggregateBugMetrics(bugsF) {
@@ -46,7 +51,7 @@ export function bugWorkflow(m) {
 // the same filterBugs() pipeline, identical filters yield identical datasets;
 // this guards the aggregation invariants (active + closed = total, status sum = total).
 export function assertBugReconcile(bugsF, label = '') {
-  if (typeof import.meta === 'undefined' || !import.meta.env?.DEV) return;
+  if (!__devMetricsCheck()) return;
   const m = aggregateBugMetrics(bugsF);
   const statusSum = Object.values(m.byStatus).reduce((s, n) => s + n, 0);
   if (m.active + m.closed !== m.total || statusSum !== m.total) {

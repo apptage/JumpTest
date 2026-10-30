@@ -1,4 +1,4 @@
-/* Public client dashboard (read-only, no login) — rendered from main.jsx via
+/* Public client dashboard (read-only, no login) — rendered at /?client=<token> via
    ?client=<token>. Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';

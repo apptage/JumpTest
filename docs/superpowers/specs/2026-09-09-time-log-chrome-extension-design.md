@@ -41,7 +41,7 @@ Draft for review. Do not implement until this spec is approved.
 
 ### 1. Architecture and boundaries
 
-New package at `extension/`, built with Vite, loaded unpacked from `extension/dist`. Same Supabase URL and anon key as the web app (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`). It does not import `ReleaseTracker.jsx`.
+New package at `extension/`, built with esbuild (`npm run build:extension`), loaded unpacked from `extension/dist`. Same Supabase URL and anon key as the web app (`NEXT_PUBLIC_SUPABASE_*`). It does not import `ReleaseTracker.jsx`.
 
 ```
 Popup (React)              Service worker                 Supabase
@@ -200,7 +200,7 @@ Manual inserts stay as table INSERT from the client (Hub + extension “+”), n
 - Add `startTimeLog` / `pauseTimeLog` / `resumeTimeLog` / `stopTimeLog` / `discardTimeLog` wrapping the RPCs. Snake_case in, camelCase out.
 - Update missing-table error to `fixes23`.
 
-**Extension client** — thin copy or shared module of those helpers only (projects, WBS, time logs, auth). Do not bundle the rest of `api.js` if it pulls the full app; prefer `extension/src/api.js` that duplicates the small surface, or a future `src/api/timeLogs.js` imported by both. Shared extract is preferred if Vite can alias it without pulling React into the worker.
+**Extension client** — thin copy or shared module of those helpers only (projects, WBS, time logs, auth). Do not bundle the rest of `api.js` if it pulls the full app; prefer `extension/src/api.js` that duplicates the small surface, or a future `src/api/timeLogs.js` imported by both. Shared extract is preferred if the extension bundler can import it without pulling React into the worker.
 
 **Request shapes**
 
@@ -257,7 +257,7 @@ Manual inserts stay as table INSERT from the client (Hub + extension “+”), n
 - Popup open: parallel `fetchProjects`, `fetchMyOpenTimeLog`, and if project selected `fetchWbsItems` + `fetchMyTimeLogsForProject`.
 - No N+1: one WBS query per project change.
 - Segments are not listed in the popup v1 (used for hours math server-side). Hub does not need to fetch segments v1.
-- Env: reuse existing Vite env files. Extension build reads the same `VITE_SUPABASE_*`. Document `npm run build:extension` (new script) and “Load unpacked” → `extension/dist`.
+- Env: reuse the same `.env.<mode>.local` as the Next app (`NEXT_PUBLIC_SUPABASE_*`). Document `npm run build:extension` and “Load unpacked” → `extension/dist`.
 - Host permission in the manifest: the Supabase origin only (`https://*.supabase.co/*` or the exact project URL from env at build time).
 - No new Storage buckets.
 - Vercel: unchanged. Extension is not deployed to Vercel; zip/`extension/dist` is the artifact (store privately / internal docs).

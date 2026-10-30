@@ -28,7 +28,7 @@ Function are platform-agnostic — a future Capacitor/React-Native wrapper only
 needs to register its native FCM token into `user_devices` and everything else
 works unchanged.
 
-**Fail-safe:** with no `VITE_FIREBASE_*` env set, the entire push layer no-ops.
+**Fail-safe:** with no `NEXT_PUBLIC_FIREBASE_*` env set, the entire push layer no-ops.
 The app builds and runs exactly as before.
 
 ## Events wired
@@ -54,8 +54,8 @@ and enriches `notifications`).
 
 ### 2. Create a Firebase project + Web app
 Firebase console → add project → add a **Web app**. Copy the config into `.env`
-(see [`.env.example`](.env.example) — `VITE_FIREBASE_*`). Then Cloud Messaging →
-**Web Push certificates** → generate a key pair → `VITE_FIREBASE_VAPID_KEY`.
+(see [`.env.example`](.env.example) — `NEXT_PUBLIC_FIREBASE_*`). Then Cloud Messaging →
+**Web Push certificates** → generate a key pair → `NEXT_PUBLIC_FIREBASE_VAPID_KEY`.
 
 ### 3. Fill the service worker config
 Edit [`public/firebase-messaging-sw.js`](public/firebase-messaging-sw.js) and

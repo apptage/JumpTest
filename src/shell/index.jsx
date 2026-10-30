@@ -236,7 +236,7 @@ export function AppHeader({
   );
 }
 
-/* HeaderThemeToggle — flips `.dark` on <html>, persisted (index.html applies it
+/* HeaderThemeToggle — flips `.dark` on <html>, persisted (root layout applies it
    before first paint so there is no flash). */
 function HeaderThemeToggle() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
