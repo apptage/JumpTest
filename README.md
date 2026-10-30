@@ -20,17 +20,11 @@
 3. **Backfill (only if you already had accounts before the tables existed)** —
    run [`backfill_existing_users.sql`](backfill_existing_users.sql).
 
-4. **Credentials** — branch maps to Supabase project:
-   - `main` → **GammaQuality** (production)
-   - `staging` → **GammaQuality-Staging**
+4. **Credentials** — copy [`.env.example`](.env.example) to **`.env.local`** or **`.env.production`**
+   and set `NEXT_PUBLIC_SUPABASE_*` from **Supabase Dashboard → Project Settings → API**.
+   Or run `npm run env:sync` once to bootstrap `.env.local` from `.env.example`.
 
-   ```bash
-   npm run env:sync   # creates .env.<mode>.local for your current branch
-   ```
-
-   Edit that file with keys from **Supabase Dashboard → Project Settings → API**
-   (`NEXT_PUBLIC_*`). Then `npm run dev` (auto-picks
-   staging on `staging` branch, production on `main`).
+   Production on **Vercel** uses dashboard / GitHub `VERCEL_ENV` secrets — not local files.
 
    Supabase CLI (migrations): `npm run db:link` then `npm run db:push`.
 

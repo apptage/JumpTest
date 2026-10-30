@@ -1,45 +1,33 @@
 #!/usr/bin/env node
 /**
- * Creates .env.<mode>.local from the branch-matched example if missing.
- *   main    → production → .env.production.local
- *   staging → staging    → .env.staging.local
+ * Local dev helper: bootstrap .env.local from .env / .env.production / .env.example.
+ * Skipped on CI and Vercel — those environments inject env vars directly.
  */
-import { execSync } from 'node:child_process';
 import { copyFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-function currentBranch() {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd: root,
-      encoding: 'utf8',
-    }).trim();
-  } catch {
-    return 'staging';
-  }
+if (process.env.CI || process.env.VERCEL) {
+  console.log('env:sync skipped (CI/Vercel — using platform environment variables)');
+  process.exit(0);
 }
 
-const branch = currentBranch();
-const mode = branch === 'main' ? 'production' : 'staging';
-const example = join(root, `.env.${mode}.example`);
-const target = join(root, `.env.${mode}.local`);
+const localPath = join(root, '.env.local');
 
-if (!existsSync(example)) {
-  console.error(`Missing template: .env.${mode}.example`);
-  process.exit(1);
+if (existsSync(localPath)) {
+  console.log('Using existing .env.local');
+  process.exit(0);
 }
 
-if (existsSync(target)) {
-  console.log(`Using existing .env.${mode}.local (${mode} / ${branch} branch)`);
-} else {
-  copyFileSync(example, target);
-  console.log(`Created .env.${mode}.local — add your Supabase keys from GammaQuality${mode === 'staging' ? '-Staging' : ''}`);
+const sources = ['.env', '.env.production', '.env.example'];
+for (const name of sources) {
+  const src = join(root, name);
+  if (!existsSync(src)) continue;
+  copyFileSync(src, localPath);
+  console.log(`Created .env.local from ${name} — add your Supabase keys if still placeholders`);
+  process.exit(0);
 }
 
-copyFileSync(target, join(root, '.env.local'));
-console.log(`Synced .env.local from .env.${mode}.local (Next.js dev/build)`);
-
-console.log(`Mode: ${mode} | Branch: ${branch}`);
-process.stdout.write(mode);
+console.warn('No .env.local, .env, .env.production, or .env.example found. Create .env.local with NEXT_PUBLIC_SUPABASE_*');

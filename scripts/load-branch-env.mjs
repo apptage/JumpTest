@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnvFile } from './env-file.mjs';
@@ -6,29 +5,17 @@ import { applyPublicEnvAliases } from './public-env.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-export function branchEnvMode() {
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd: root,
-      encoding: 'utf8',
-    }).trim();
-    return branch === 'main' ? 'production' : 'staging';
-  } catch {
-    return 'staging';
-  }
-}
-
-/** Load branch-matched `.env.<mode>.local` (+ `.env.local`) into process.env for Next.js. */
+/** Load local env files into process.env (no-op on Vercel when files are absent). */
 export function loadBranchEnvIntoProcess() {
-  const mode = branchEnvMode();
-  const branchFile = join(root, `.env.${mode}.local`);
-  const branchEnv = applyPublicEnvAliases(loadEnvFile(branchFile));
-  for (const [key, value] of Object.entries(branchEnv)) {
-    if (value !== undefined && value !== '') process.env[key] ??= value;
-  }
+  const isProd = process.env.NODE_ENV === 'production';
+  const ordered = isProd
+    ? ['.env', '.env.production', '.env.production.local', '.env.local']
+    : ['.env', '.env.local', '.env.production.local', '.env.staging.local', '.env.production'];
 
-  const dotLocal = applyPublicEnvAliases(loadEnvFile(join(root, '.env.local')));
-  for (const [key, value] of Object.entries(dotLocal)) {
-    if (value !== undefined && value !== '') process.env[key] = value;
+  for (const name of ordered) {
+    const fileEnv = applyPublicEnvAliases(loadEnvFile(join(root, name)));
+    for (const [key, value] of Object.entries(fileEnv)) {
+      if (value !== undefined && value !== '') process.env[key] ??= value;
+    }
   }
 }

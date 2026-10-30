@@ -1,37 +1,31 @@
 #!/usr/bin/env node
 /**
- * Links Supabase CLI to the project ref in .env.<mode>.local (SUPABASE_PROJECT_REF).
+ * Links Supabase CLI to SUPABASE_PROJECT_REF from local env files.
  */
 import { execSync, spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnvFile } from './env-file.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const setup = spawnSync(process.execPath, ['scripts/setup-env.mjs'], {
-  cwd: root,
-  encoding: 'utf8',
-});
-if (setup.status !== 0) process.exit(setup.status ?? 1);
+spawnSync(process.execPath, ['scripts/setup-env.mjs'], { cwd: root, stdio: 'inherit' });
 
-const mode = setup.stdout.trim().split('\n').pop();
-const envFile = join(root, `.env.${mode}.local`);
-
-if (!existsSync(envFile)) {
-  console.error(`Missing ${envFile}. Run: npm run env:sync`);
-  process.exit(1);
+const envPaths = ['.env.local', '.env.production', '.env', '.env.production.local'];
+let ref;
+for (const name of envPaths) {
+  const path = join(root, name);
+  if (!existsSync(path)) continue;
+  const env = loadEnvFile(path);
+  ref = env.SUPABASE_PROJECT_REF;
+  if (ref && !ref.startsWith('YOUR_')) break;
 }
-
-const content = readFileSync(envFile, 'utf8');
-const match = content.match(/^SUPABASE_PROJECT_REF=(.+)$/m);
-const ref = match?.[1]?.trim();
 
 if (!ref || ref.startsWith('YOUR_')) {
-  console.error(`Set SUPABASE_PROJECT_REF in .env.${mode}.local first.`);
-  console.error('Find it in Supabase Dashboard → Project Settings → General → Reference ID');
+  console.error('Set SUPABASE_PROJECT_REF in .env.local or .env.production');
   process.exit(1);
 }
 
-console.log(`Linking Supabase CLI to ${ref} (${mode})…`);
+console.log(`Linking Supabase project ref: ${ref}`);
 execSync(`supabase link --project-ref ${ref}`, { cwd: root, stdio: 'inherit' });

@@ -90,7 +90,7 @@ jobs:
               lower="${value,,}"
               if [[ "$lower" == *your_* || "$lower" == *placeholder* || "$value" == your-production-anon-key ]]; then
                 echo "::error::VERCEL_ENV secret still has template placeholders for $key." >&2
-                echo "Update GitHub → Settings → Secrets → VERCEL_ENV with real values from .env.production.local, then redeploy." >&2
+                echo "Update GitHub → Settings → Secrets → VERCEL_ENV with real NEXT_PUBLIC_* values, then redeploy." >&2
                 exit 1
               fi
             fi
