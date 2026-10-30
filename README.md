@@ -1,7 +1,7 @@
 # Miaro Verify
 
-A single-page React app for managing releases across **Developer**, **QA**, and
-**Admin** roles, backed entirely by **Supabase** (Auth, Postgres, Storage).
+**Next.js** (App Router) + **React** app for managing releases across **Developer**,
+**QA**, and **Admin** roles, backed by **Supabase** (Auth, Postgres, Storage).
 
 ## Setup
 
@@ -28,8 +28,9 @@ A single-page React app for managing releases across **Developer**, **QA**, and
    npm run env:sync   # creates .env.<mode>.local for your current branch
    ```
 
-   Edit that file with keys from **Supabase Dashboard → Project Settings → API**.
-   Then `npm run dev` (auto-picks staging on `staging` branch, production on `main`).
+   Edit that file with keys from **Supabase Dashboard → Project Settings → API**
+   (`NEXT_PUBLIC_*`). Then `npm run dev` (auto-picks
+   staging on `staging` branch, production on `main`).
 
    Supabase CLI (migrations): `npm run db:link` then `npm run db:push`.
 
@@ -41,6 +42,16 @@ A single-page React app for managing releases across **Developer**, **QA**, and
    ```bash
    npm run dev
    ```
+
+   Production build: `npm run build` then `npm run start`.
+
+## Routes
+
+| Path | Screen |
+|------|--------|
+| `/` | Dashboard |
+| `/projecthub`, `/releases`, `/bugs`, `/wbs`, … | Workspace sections |
+| `/?client=<token>` | Public client portal (read-only) |
 
 ## Roles
 
@@ -79,13 +90,11 @@ First account to sign up becomes **Admin**.
 - **History + changelog** — per-project timeline; export QA-complete releases as a
   Markdown changelog (copy or download).
 
-## Files
+## Project layout
 
-- `src/ReleaseTracker.jsx` — root component + all screens/modals
-- `src/api.js` — all Supabase queries, mutations, and Storage uploads + mappers
-- `src/constants.js` — enums, colors, org domain
-- `src/ui.jsx` — shared styles and presentational components
-- `src/supabaseClient.js` — client init
-- `supabase_setup.sql` — full schema, RLS, triggers, Storage
-- `backfill_existing_users.sql` — one-time profile backfill
-# Miaro Verify
+- `app/` — Next.js App Router (`layout`, `[[...section]]` routes, global CSS)
+- `src/ReleaseTracker.jsx` — authenticated shell + screens
+- `src/api.js` — Supabase queries, mutations, Storage
+- `src/supabaseClient.js` — Supabase client
+- `scripts/build-extension.mjs` — Chrome extension bundle (esbuild → `extension/dist`)
+- `supabase/` — migrations and edge functions

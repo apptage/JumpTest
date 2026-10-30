@@ -4,10 +4,13 @@
    never the service role. */
 import { createClient } from '@supabase/supabase-js';
 import { makeTimeLogApi } from '../../src/api/timeLogs.js';
+import { publicEnv } from '../../src/env.public.js';
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-if (!url || !key) throw new Error('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY at build time');
+const url = publicEnv('SUPABASE_URL');
+const key = publicEnv('SUPABASE_ANON_KEY');
+if (!url || !key) {
+  throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY at build time');
+}
 
 const storage = {
   getItem: async (k) => (await chrome.storage.local.get(k))[k] ?? null,

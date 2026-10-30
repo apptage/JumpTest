@@ -11,12 +11,12 @@ Reusable primitives live in **`src/shared/dashboard-kit.jsx`** — use them, don
 4. **Scannable tables.** Search + pagination (10/page) + sticky headers + segmented filters, with **pill-shaded cells** for outliers.
 5. **Feels alive.** Row hover shading and card lift-on-hover on anything clickable.
 
-## Tokens (already in `index.html` / CSS vars)
+## Tokens (already in `app/globals.css` / CSS vars)
 - Typography: IBM Plex Sans; metrics `font-weight:700` (display font var), muted helper labels in `--color-text-tertiary`.
 - Radii ~8–12px; faint borders (`--color-border-primary/tertiary`); soft ambient shadow on hover.
 - Palette via CSS vars: `--brand` (royal blue) · `--success` (emerald) · `--warning` (amber) · `--danger` (crimson).
 - **Soft-pill tones** (`TONES` in the kit): danger `#FEE2E2`/`#991B1B` · warning `#FEF3C7`/`#92400E` · success `#DCFCE7`/`#166534` · info `#DBEAFE`/`#1E40AF` · neutral `#F1F5F9`/`#475569`.
-- Hover classes in `index.html`: `.mgr-row:hover` (bg shade), `.mgr-card.clickable:hover` (lift + shadow).
+- Hover classes in `app/globals.css`: `.mgr-row:hover` (bg shade), `.mgr-card.clickable:hover` (lift + shadow).
 
 ## Kit components (`@shared/dashboard-kit.jsx`)
 - `SubTabs({ tabs, active, onChange })` — page-level tab bar (bottom-border active indicator).

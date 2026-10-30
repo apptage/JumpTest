@@ -3,7 +3,8 @@ node_modules/
 
 # Build / cache
 dist/
-.vite/
+.next/
+extension/dist/
 
 # Environment & secrets (never commit real keys)
 .env

@@ -8,5 +8,5 @@
     },
     "jsx": "react-jsx"
   },
-  "include": ["src"]
+  "include": ["src", "app"]
 }
