@@ -1,14 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 import { appEnvName, publicEnv } from './env.public.js';
 
-// Branch env: .env.staging.local (GammaQuality-Staging) or .env.production.local (GammaQuality).
-// See .env.example — run `npm run env:sync` then fill in Supabase Dashboard → API keys.
+// Keys from .env.local (local) or Vercel env (production). See .env.example.
 const SUPABASE_URL = publicEnv('SUPABASE_URL');
 const SUPABASE_ANON_KEY = publicEnv('SUPABASE_ANON_KEY');
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error(
-    'Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY. Run npm run env:sync and edit .env.<mode>.local'
+    'Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY. Copy .env.example to .env.local (or set in Vercel).'
   );
 }
 

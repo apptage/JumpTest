@@ -257,7 +257,7 @@ Manual inserts stay as table INSERT from the client (Hub + extension “+”), n
 - Popup open: parallel `fetchProjects`, `fetchMyOpenTimeLog`, and if project selected `fetchWbsItems` + `fetchMyTimeLogsForProject`.
 - No N+1: one WBS query per project change.
 - Segments are not listed in the popup v1 (used for hours math server-side). Hub does not need to fetch segments v1.
-- Env: reuse the same `.env.<mode>.local` as the Next app (`NEXT_PUBLIC_SUPABASE_*`). Document `npm run build:extension` and “Load unpacked” → `extension/dist`.
+- Env: reuse the same `.env.local` as the Next app (`NEXT_PUBLIC_SUPABASE_*`). Document `npm run build:extension` and “Load unpacked” → `extension/dist`.
 - Host permission in the manifest: the Supabase origin only (`https://*.supabase.co/*` or the exact project URL from env at build time).
 - No new Storage buckets.
 - Vercel: unchanged. Extension is not deployed to Vercel; zip/`extension/dist` is the artifact (store privately / internal docs).

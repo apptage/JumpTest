@@ -1,42 +1,46 @@
 #!/usr/bin/env node
 /**
- * Creates .env.<mode>.local from the branch-matched example if missing.
- *   main    → production → .env.production.local
- *   staging → staging    → .env.staging.local
+ * Ensures `.env.local` exists for local Next.js / extension / Supabase CLI.
+ * - Uses existing .env.local if present
+ * - Otherwise migrates from legacy .env.production.local or .env.staging.local
+ * - Otherwise copies from .env.example
+ * Skips work on CI / Vercel (those inject env vars).
  */
-import { execSync } from 'node:child_process';
 import { copyFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-function currentBranch() {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd: root,
-      encoding: 'utf8',
-    }).trim();
-  } catch {
-    return 'staging';
+if (process.env.CI || process.env.VERCEL) {
+  console.log('env:sync skipped (CI/Vercel — use platform environment variables)');
+  process.exit(0);
+}
+
+const localPath = join(root, '.env.local');
+
+if (existsSync(localPath)) {
+  console.log('Using .env.local');
+  process.exit(0);
+}
+
+const legacy = [
+  join(root, '.env.production.local'),
+  join(root, '.env.staging.local'),
+];
+for (const legacyPath of legacy) {
+  if (existsSync(legacyPath)) {
+    copyFileSync(legacyPath, localPath);
+    console.log(`Created .env.local from ${basename(legacyPath)} (migrate to a single local file)`);
+    process.exit(0);
   }
 }
 
-const branch = currentBranch();
-const mode = branch === 'main' ? 'production' : 'staging';
-const example = join(root, `.env.${mode}.example`);
-const target = join(root, `.env.${mode}.local`);
-
-if (!existsSync(example)) {
-  console.error(`Missing template: .env.${mode}.example`);
+const examplePath = join(root, '.env.example');
+if (!existsSync(examplePath)) {
+  console.error('Missing .env.example — add it to the repo or create .env.local manually');
   process.exit(1);
 }
 
-if (existsSync(target)) {
-  console.log(`Using existing .env.${mode}.local (${mode} / ${branch} branch)`);
-} else {
-  copyFileSync(example, target);
-  console.log(`Created .env.${mode}.local — add your Supabase keys from GammaQuality${mode === 'staging' ? '-Staging' : ''}`);
-}
-
-console.log(`Mode: ${mode} | Branch: ${branch}`);
-process.stdout.write(mode);
+copyFileSync(examplePath, localPath);
+console.log('Created .env.local from .env.example — add your Supabase keys');
