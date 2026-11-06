@@ -115,6 +115,7 @@ import { WbsPage } from '@features/wbs';
 import { HistoryModal } from '@features/analytics';
 import { Analytics } from '@features/analytics/Analytics.jsx';
 import { ProjectsTab, UsersTab, TeamsTab } from '@features/admin';
+import { BrandsTab } from '@features/brands';
 import { SubmitModal, EditReleaseModal, DetailModal } from '@features/releases';
 import { AuthScreen, SetPasswordScreen } from '@features/auth';
 import { BugsPage } from '@features/bugs';
@@ -276,6 +277,7 @@ export default function ReleaseTracker() {
     teams,
     projectMembers,
     checklistItems,
+    brands,
     notifications,
     loading,
     refetchReleases,
@@ -283,6 +285,7 @@ export default function ReleaseTracker() {
     refetchProjects,
     refetchProfiles,
     refetchChecklist,
+    refetchBrands,
     refetchTeams,
     refetchProjectMembers,
     refetchNotifications,
@@ -343,6 +346,8 @@ export default function ReleaseTracker() {
     if (myProjectIds.size === 0) return projects.filter((p) => p.teamId === myTeamId);
     return projects.filter((p) => myProjectIds.has(p.id));
   }, [projects, adminScope, myProjectIds, myTeamId]);
+  // CMS projects have no WBS (they use CMS tasks + journey in Project Hub)
+  const wbsProjects = useMemo(() => scopedProjects.filter((p) => p.type !== 'cms'), [scopedProjects]);
   const scopedProjectIds = useMemo(
     () => new Set(scopedProjects.map((p) => p.id)),
     [scopedProjects]
@@ -858,7 +863,9 @@ export default function ReleaseTracker() {
   // QA outcome is decided (release Approved/Sent Back, and after a bug is verified).
   // A task is evaluated on its OWN bugs, independent of the overall release status:
   //   • has ≥1 open BLOCKING bug (Major/Critical) → In Progress
-  //   • no open blocking bug                       → Completed  (minor bugs don't block)
+  //   • no open blocking bug, on a release QA ruled on → Completed (minor bugs don't block)
+  //   • no open blocking bug, never ruled on by QA     → left as it is. Verifying or
+  //     deleting a bug must not complete a task SQA hasn't reviewed.
   async function reconcileWbsItems(itemIds) {
     const ids = [...new Set((itemIds || []).filter(Boolean))];
     if (!ids.length) return;
@@ -866,7 +873,8 @@ export default function ReleaseTracker() {
     const active = await api.fetchBugsByTaskIds(ids);
     const blocked = new Set(active.filter((b) => isBlockingSeverity(b.severity)).map((b) => b.wbsTaskId));
     const toProgress = ids.filter((id) => blocked.has(id));
-    const toComplete = ids.filter((id) => !blocked.has(id));
+    const decided = await api.fetchQaDecidedTaskIds(ids);
+    const toComplete = ids.filter((id) => !blocked.has(id) && decided.has(id));
     if (toProgress.length) await api.setWbsItemStatus(toProgress, 'in_progress');
     if (toComplete.length) await api.setWbsItemStatus(toComplete, 'completed');
   }
@@ -1312,6 +1320,7 @@ export default function ReleaseTracker() {
             page={page}
             onNavigate={setPage}
             teamName={isAdmin ? null : myTeam?.name}
+            brand={brands.find((b) => b.isDefault) || null}
             canManage={canManage}
             isAdmin={isAdmin}
             collapsed={navCollapsed}
@@ -1389,6 +1398,7 @@ export default function ReleaseTracker() {
                 showToast={showToast}
                 projectId={hubProjectId}
                 onSelectProject={setHubProjectId}
+                onProjectsChanged={refetchProjects}
                 onOpenRelease={(id) => setSelectedId(id)}
                 onSubmit={() => setShowSubmit(true)}
                 onAddMember={handleAddMember}
@@ -1435,6 +1445,7 @@ export default function ReleaseTracker() {
                   releases={scopedReleases}
                   bugs={scopedBugs}
                   checklistItems={checklistItems}
+                  brands={brands}
                   profiles={profiles}
                   projectMembers={projectMembers}
                   isSubmitting={isSubmitting}
@@ -1474,7 +1485,7 @@ export default function ReleaseTracker() {
             )}
 
             {page === 'wbs' && (
-              <WbsPage user={user} projects={scopedProjects} profiles={profiles} showToast={showToast} />
+              <WbsPage user={user} projects={wbsProjects} releases={scopedReleases} bugs={scopedBugs} profiles={profiles} showToast={showToast} onProjectsChanged={refetchProjects} />
             )}
 
             {/* ONE Analytics page for every stakeholder, scoped by role:
@@ -1526,6 +1537,20 @@ export default function ReleaseTracker() {
                   isSubmitting={isSubmitting}
                   onCreateTeam={handleCreateTeam}
                   onDeleteTeam={handleDeleteTeam}
+                />
+              </>
+            )}
+
+            {page === 'brands' && isAdmin && (
+              <>
+                <PageHeader title="Brands" subtitle="Create brands and choose the default shown to clients" />
+                <BrandsTab
+                  brands={brands}
+                  projects={projects}
+                  userId={user.id}
+                  showToast={showToast}
+                  onChanged={refetchBrands}
+                  onProjectsChanged={refetchProjects}
                 />
               </>
             )}

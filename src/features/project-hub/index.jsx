@@ -12,10 +12,12 @@ import * as api from '@/api.js';
 import { card, ghostButton, primaryButton, Avatar, StatusBadge, SeverityBadge, TypeBadge, CountBadge, inputStyle } from '@/ui.jsx';
 import { SubTabs, DataTable, Pill, StatCard, TONES } from '@shared/dashboard-kit.jsx';
 import { relativeTime, StatusAge, PageHeader } from '@shared/ui-kit.jsx';
-import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel } from '@shared/wbsMetrics.js';
+import { ProjectInfoTab } from '@features/project-info';
+import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel, liveBugs } from '@shared/wbsMetrics.js';
 import { computeReleaseMetrics } from '@shared/releaseMetrics.js';
 import { filterBugs } from '@shared/filters.js';
-import { isActiveBug, isActiveStatus, isClosedStatus, formatVersion } from '@/constants.js';
+import { isActiveBug, isActiveStatus, isClosedStatus, formatVersion, isCmsProject, cmsKindLabel } from '@/constants.js';
+import { CmsOverview, CmsTasksTab, CmsJourneyTab, useCmsData } from '@features/cms';
 import { IconPackage, IconBug, IconTree, IconFolder } from '@/icons.jsx';
 import { WbsPage } from '@features/wbs';
 import { ReleaseHistory } from '@features/analytics/ReleaseHistory.jsx';
@@ -63,7 +65,7 @@ function ProjectPicker({ projects, releases, bugs, releaseById, onOpen }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ display: 'inline-flex', color: 'var(--brand)' }}><IconPackage size={18} /></span>
                 <span style={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                {p.type && <TypeBadge type={p.type} />}
+                {isCmsProject(p) ? <Pill label="CMS" tone="info" /> : p.type && <TypeBadge type={p.type} />}
               </div>
               <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
                 <span style={{ color: 'var(--color-text-secondary)' }}>{builds} build{builds === 1 ? '' : 's'}</span>
@@ -97,7 +99,7 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, openBugs, critical, 
 
       {/* KPI row */}
       <div className="dash-kpis" style={{ marginBottom: 16 }}>
-        <StatCard label="WBS Progress" value={wbsLoading ? '…' : wh.hasWbs ? `${wh.pct}%` : '—'} foot={wh.hasWbs ? `${wh.completed}/${wh.total} TASKS` : 'NO WBS YET'} />
+        <StatCard label="Project Completion" value={wbsLoading ? '…' : wh.hasWbs ? `${wh.pct}%` : '—'} foot={wh.hasWbs ? `${wh.completion.done}/${wh.completion.total} INCL. BUGS` : 'NO WBS YET'} />
         <StatCard label="Open Bugs" value={openBugs.length.toLocaleString()} foot={`${critical} CRITICAL`} />
         <StatCard label="Builds" value={rel.length.toLocaleString()} foot="ALL TIME" />
         <StatCard label="Pass Rate" value={passRate != null ? `${passRate}%` : '—'} foot="QA DECISIONS" />
@@ -207,7 +209,7 @@ function TeamTab({ project, members, profiles, profilesById, wbsItems, rel, pbug
     <div>
       <div style={{ ...card, padding: 18, marginBottom: 16 }}>
         <div style={panelHead}>Workload on this project</div>
-        <div style={panelSub}>WBS tasks assigned · active builds · open bugs raised</div>
+        <div style={panelSub}>{isCmsProject(project) ? 'CMS tasks' : 'WBS tasks'} assigned · active builds · open bugs raised</div>
         {memberRows.length === 0 ? (
           <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No members yet.</div>
         ) : (
@@ -219,7 +221,7 @@ function TeamTab({ project, members, profiles, profilesById, wbsItems, rel, pbug
                   <div style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prof?.name || 'Unknown'}</div>
                   <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{prof?.role || mem.projectRole}{mem.accessType === 'support' ? ' · support' : ''}</div>
                 </div>
-                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }} title="WBS tasks assigned"><IconTree size={13} /> {assigned}</span>
+                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }} title={isCmsProject(project) ? 'CMS tasks assigned' : 'WBS tasks assigned'}><IconTree size={13} /> {assigned}</span>
                 <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }} title="Active builds"><IconPackage size={13} /> {activeBuilds}</span>
                 <span style={{ fontSize: 11.5, color: openBugs ? 'var(--danger)' : 'var(--color-text-secondary)' }} title="Open bugs raised"><IconBug size={13} /> {openBugs}</span>
                 <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', minWidth: 40, textAlign: 'right' }} title="Hours logged">{logged ? `${logged}h` : '—'}</span>
@@ -325,7 +327,7 @@ function TimeTab({ projectId, user, wbsItems, logs, loading, profilesById, canMa
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ ...card, padding: 18 }}>
           <div style={panelHead}>Log time</div>
-          <div style={panelSub}>Record hours against this project — optionally against a WBS task</div>
+          <div style={panelSub}>Record hours against this project{taskItems.length > 0 ? ' — optionally against a WBS task' : ''}</div>
           <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 12 }}>
             <div>
               <label style={fieldLabel}>Hours</label>
@@ -335,13 +337,13 @@ function TimeTab({ projectId, user, wbsItems, logs, loading, profilesById, canMa
               <label style={fieldLabel}>Date</label>
               <input style={inputStyle} type="date" max={today} value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
-            <div style={{ gridColumn: '1 / -1' }}>
+            {taskItems.length > 0 && <div style={{ gridColumn: '1 / -1' }}>
               <label style={fieldLabel}>WBS task (optional)</label>
               <select style={inputStyle} value={wbsItemId} onChange={(e) => setWbsItemId(e.target.value)}>
                 <option value="">— No specific task —</option>
                 {taskItems.map((i) => <option key={i.id} value={i.id}>{(i.module ? i.module + ' · ' : '') + (i.title || 'Task')}</option>)}
               </select>
-            </div>
+            </div>}
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={fieldLabel}>Note (optional)</label>
               <input style={inputStyle} value={note} placeholder="What did you work on?" onChange={(e) => setNote(e.target.value)} />
@@ -423,7 +425,7 @@ export function ProjectHub({
   user, projects, releases, bugs, profiles, projectMembers,
   projectsById, profilesById, releaseById, canManage, isSubmitting,
   showToast, onOpenRelease, onSubmit, onAddMember, onUpdateMember, onRemoveMember,
-  projectId = null, onSelectProject,
+  projectId = null, onSelectProject, onProjectsChanged,
 }) {
   // Selection is controlled by the parent so other pages (e.g. Command Center)
   // can deep-link straight to a project. Falls back to local state if no
@@ -436,9 +438,11 @@ export function ProjectHub({
   const [timeLogs, setTimeLogs] = useState({ list: [], loading: false });
 
   const project = selId ? projectsById[selId] : null;
+  const isCms = isCmsProject(project);
+  const cms = useCmsData(isCms ? selId : null);
 
   useEffect(() => {
-    if (!selId) { setWbs({ items: [], targets: [], loading: false }); return; }
+    if (!selId || isCms) { setWbs({ items: [], targets: [], loading: false }); return; }
     let cancelled = false;
     setWbs((w) => ({ ...w, loading: true }));
     Promise.all([
@@ -448,7 +452,7 @@ export function ProjectHub({
       .then(([items, targets]) => { if (!cancelled) setWbs({ items, targets, loading: false }); })
       .catch(() => { if (!cancelled) setWbs({ items: [], targets: [], loading: false }); });
     return () => { cancelled = true; };
-  }, [selId]);
+  }, [selId, isCms]);
 
   useEffect(() => {
     if (!selId) { setTimeLogs({ list: [], loading: false }); return; }
@@ -471,7 +475,7 @@ export function ProjectHub({
   const nowMs = Date.now();
   const rel = releases.filter((r) => r.projectId === selId).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const pbugs = bugs.filter((b) => releaseById[b.releaseId]?.projectId === selId);
-  const wh = computeProjectWbsHealth(wbs.items, wbs.targets, nowMs);
+  const wh = computeProjectWbsHealth(wbs.items, wbs.targets, nowMs, liveBugs(pbugs, releaseById));
   const openBugs = pbugs.filter(isActiveBug);
   const critical = openBugs.filter((b) => b.severity === 'critical').length;
   const active = rel.find((r) => !isClosedStatus(r.status)) || null;
@@ -480,8 +484,22 @@ export function ProjectHub({
   const health = computeCompositeHealth({ wbsPct: wh.hasWbs ? wh.pct : null, openBugs: openBugs.length, critical, passRate, milestoneRisk: wh.milestoneRisk });
   const members = projectMembers.filter((mm) => mm.projectId === selId);
 
-  const tabs = [
+  const openCmsTasks = cms.tasks.filter((t) => t.status !== 'done').length;
+  // CMS work is assigned to the project's members, or its team when it has none
+  const memberIds = new Set(members.map((mm) => mm.userId));
+  const assignees = profiles
+    .filter((p) => (memberIds.size ? memberIds.has(p.id) : p.teamId && p.teamId === project.teamId))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const canEditCms = user.role !== 'Manager';
+
+  const tabs = isCms ? [
     ['overview', 'Overview'],
+    ['tasks', `Tasks${openCmsTasks ? ` (${openCmsTasks})` : ''}`],
+    ['journey', 'Journey'],
+    ['info', 'Project info'],
+  ] : [
+    ['overview', 'Overview'],
+    ['info', 'Project info'],
     ['plan', 'Plan (WBS)'],
     ['builds', 'Builds'],
     ['time', 'Time'],
@@ -497,9 +515,9 @@ export function ProjectHub({
         icon={<IconPackage size={18} />}
         title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {project.name}
-          {project.type && <TypeBadge type={project.type} />}
+          {isCms ? <Pill label={`CMS · ${cmsKindLabel(project.cmsKind)}`} tone="info" /> : project.type && <TypeBadge type={project.type} />}
         </span>}
-        subtitle={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        subtitle={isCms ? 'Website work, tracked as tasks and a development journey (no WBS)' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <HealthDot tone={health.tone} />
           {health.label}
         </span>}
@@ -508,15 +526,38 @@ export function ProjectHub({
 
       <SubTabs tabs={tabs} active={tab} onChange={setTab} />
 
-      {tab === 'overview' && (
+      {isCms && tab === 'overview' && (
+        <CmsOverview project={project} tasks={cms.tasks} stages={cms.stages} loading={cms.loading} missing={cms.missing} profilesById={profilesById} onTab={setTab} />
+      )}
+      {isCms && tab === 'tasks' && (
+        <CmsTasksTab
+          project={project} user={user} tasks={cms.tasks} missing={cms.missing} assignees={assignees} profilesById={profilesById}
+          canEdit={canEditCms} canManage={canManage} onReload={cms.reload} showToast={showToast}
+        />
+      )}
+      {isCms && tab === 'journey' && (
+        <CmsJourneyTab
+          project={project} stages={cms.stages} missing={cms.missing} assignees={assignees} profilesById={profilesById}
+          canEdit={canEditCms} onReload={cms.reload} showToast={showToast}
+        />
+      )}
+      {!isCms && tab === 'overview' && (
         <OverviewTab
           project={project} rel={rel} pbugs={pbugs} wh={wh} wbsLoading={wbs.loading}
           openBugs={openBugs} critical={critical} active={active} passRate={passRate}
           health={health} profilesById={profilesById} onOpenRelease={onOpenRelease} onTab={setTab}
         />
       )}
-      {tab === 'plan' && (
-        <WbsPage user={user} projects={[project]} profiles={profiles} showToast={showToast} />
+      {tab === 'info' && (
+        <ProjectInfoTab
+          project={project}
+          user={user}
+          isMember={members.some((mm) => mm.userId === user.id)}
+          showToast={showToast}
+        />
+      )}
+      {!isCms && tab === 'plan' && (
+        <WbsPage user={user} projects={[project]} releases={rel} bugs={pbugs} profiles={profiles} showToast={showToast} onProjectsChanged={onProjectsChanged} />
       )}
       {tab === 'builds' && (
         rel.length === 0 ? (
@@ -534,7 +575,7 @@ export function ProjectHub({
       {tab === 'team' && (
         <TeamTab
           project={project} members={members} profiles={profiles} profilesById={profilesById}
-          wbsItems={wbs.items} rel={rel} pbugs={pbugs} timeLogs={timeLogs.list} canManage={canManage} currentUser={user}
+          wbsItems={isCms ? cms.tasks : wbs.items} rel={rel} pbugs={pbugs} timeLogs={timeLogs.list} canManage={canManage} currentUser={user}
           isSubmitting={isSubmitting} onAddMember={onAddMember} onUpdateMember={onUpdateMember} onRemoveMember={onRemoveMember}
         />
       )}

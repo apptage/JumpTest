@@ -14,6 +14,13 @@ const nextConfig = {
       '@features': path.resolve(__dirname, './src/features'),
       '@config': path.resolve(__dirname, './src/config'),
     };
+    // `import x from './file.svg?raw'` gives the file's text (see src/brand.jsx).
+    // Next's image loader would otherwise turn it into an image object.
+    const imageRule = config.module.rules.find((r) => r.test?.test?.('.svg'));
+    if (imageRule) {
+      imageRule.resourceQuery = { not: [...(imageRule.resourceQuery?.not || []), /raw/] };
+    }
+    config.module.rules.push({ resourceQuery: /raw/, type: 'asset/source' });
     return config;
   },
 };

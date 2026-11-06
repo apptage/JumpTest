@@ -3,8 +3,6 @@
    on-ink inside the auth hero. Source: src/assets/brand/*.svg */
 import markSvg from './assets/brand/miaro-mark.svg?raw';
 import logoSvg from './assets/brand/miaro-verify.svg?raw';
-import apptageLogoSvg from './assets/brand/apptage-logo.svg?raw';
-import apptageMarkSvg from './assets/brand/apptage-mark.svg?raw';
 
 export const BRAND_NAME = 'Miaro Verify';
 
@@ -35,32 +33,34 @@ export function MiaroLogo({ size = 26, color = 'currentColor', style }) {
   );
 }
 
-/* ---- Apptage — the company running this workspace ----
-   The mark keeps its brand purple; the wordmark is currentColor so it reads on
-   light, dark and ink backgrounds. Source: Apptage Logo-01.svg (cropped). */
-export const COMPANY_NAME = 'Apptage';
-const APPTAGE_LOGO_RATIO = 749.5 / 182;
-
-/* Full Apptage lock-up (mark + wordmark). `size` is the height in px. */
-export function ApptageLogo({ size = 22, color = 'currentColor', style }) {
+/* ---- Client-facing brands (the `brands` table, managed on Admin → Brands) ----
+   A brand is { name, logoUrl, logoDarkUrl, markUrl }. logoUrl is for light
+   backgrounds, logoDarkUrl for dark ones; the theme class on <html> picks which
+   one shows (see .brand-img-* in globals.css). A brand without a dark logo gets
+   a white plate in dark mode so a dark wordmark never disappears. */
+export function BrandLogo({ brand, size = 24, style }) {
+  if (!brand?.logoUrl) return null;
+  const img = { display: 'block', height: size, width: 'auto', maxWidth: size * 8, objectFit: 'contain', flexShrink: 0, ...style };
+  if (!brand.logoDarkUrl) return <img className="brand-img-plate" src={brand.logoUrl} alt={brand.name} style={img} />;
   return (
-    <span
-      role="img"
-      aria-label={COMPANY_NAME}
-      style={{ display: 'inline-block', height: size, width: Math.round(size * APPTAGE_LOGO_RATIO), color, lineHeight: 0, flexShrink: 0, ...style }}
-      dangerouslySetInnerHTML={{ __html: apptageLogoSvg }}
-    />
+    <>
+      <img className="brand-img-light" src={brand.logoUrl} alt={brand.name} style={img} />
+      <img className="brand-img-dark" src={brand.logoDarkUrl} alt={brand.name} style={img} />
+    </>
   );
 }
 
-/* Apptage mark only (square). `size` is the height in px. */
-export function ApptageMark({ size = 22, style }) {
+/* Square icon for tight spots (collapsed sidebar): the mark, else the initial. */
+export function BrandMark({ brand, size = 22 }) {
+  if (!brand) return null;
+  if (brand.markUrl) return <img src={brand.markUrl} alt={brand.name} style={{ display: 'block', width: size, height: size, objectFit: 'contain', flexShrink: 0 }} />;
   return (
     <span
       role="img"
-      aria-label={COMPANY_NAME}
-      style={{ display: 'inline-block', height: size, width: size, lineHeight: 0, flexShrink: 0, ...style }}
-      dangerouslySetInnerHTML={{ __html: apptageMarkSvg }}
-    />
+      aria-label={brand.name}
+      style={{ width: size, height: size, borderRadius: 6, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.5, fontWeight: 700, color: 'var(--text)', background: 'var(--accent-soft)' }}
+    >
+      {brand.name.trim().charAt(0).toUpperCase()}
+    </span>
   );
 }

@@ -11,11 +11,11 @@ import { Pill } from '@shared/dashboard-kit.jsx';
 import { avgDaysBetween, statusSince } from '@shared/ui-kit.jsx';
 import { buildWorkbook, downloadWorkbook } from '@shared/exportXlsx.js';
 import { computeReleaseMetrics } from '@shared/releaseMetrics.js';
-import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel } from '@shared/wbsMetrics.js';
+import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel, liveBugs } from '@shared/wbsMetrics.js';
 import {
   STATUSES, BUG_STATUSES, SEVERITIES, BUG_RESOLUTIONS, WBS_STATUSES,
   isActiveBug, isActiveStatus, isClosedStatus, bugSlaLevel, slaLevel, projectTypeLabel, formatVersion,
-  STATUS_ORDER,
+  STATUS_ORDER, wbsTrackLabel,
 } from '@/constants.js';
 import { IconChart } from '@/icons.jsx';
 
@@ -550,7 +550,7 @@ export const REPORTS = [
         const pb = ctx.bugsAll.filter((b) => ids.has(b.releaseId));
         const m = computeReleaseMetrics(rel, pb, { releaseById: ctx.releaseById });
         const open = pb.filter(isActiveBug); const critical = open.filter((b) => b.severity === 'critical').length;
-        const wh = computeProjectWbsHealth(items.filter((i) => i.projectId === p.id), targets.filter((t) => t.projectId === p.id), ctx.now);
+        const wh = computeProjectWbsHealth(items.filter((i) => i.projectId === p.id), targets.filter((t) => t.projectId === p.id), ctx.now, liveBugs(pb, ctx.releaseById));
         const pass = m.decided ? m.passRate : null;
         const h = computeCompositeHealth({ wbsPct: wh.hasWbs ? wh.pct : null, openBugs: open.length, critical, passRate: pass, milestoneRisk: wh.milestoneRisk });
         const active = rel.filter((r) => !isClosedStatus(r.status)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
@@ -622,16 +622,16 @@ export const REPORTS = [
         const groups = {};
         its.filter((i) => i.type !== 'milestone').forEach((i) => { const k = `${i.platformType || 'General'}||${i.module || 'General'}`; (groups[k] = groups[k] || []).push(i); });
         Object.entries(groups).forEach(([k, arr]) => { const [platform, module] = k.split('||'); const c = (s) => arr.filter((i) => i.status === s).length; byModule.push({ project: p.name, platform, module, total: arr.length, notStarted: c('not_started'), inProgress: c('in_progress'), inQa: c('in_qa'), completed: c('completed'), blocked: c('blocked'), pct: `${pctOf(c('completed'), arr.length)}%`, est: arr.map((i) => i.estimatedCompletionDate).filter(Boolean).sort().pop() || '' }); });
-        its.forEach((i) => tasks.push({ project: p.name, platform: i.platformType || '', module: i.module || '', task: i.title, type: i.type || 'task', status: WBS_STATUSES[i.status]?.label || i.status, priority: i.priority || '', assignee: ctx.name(i.assignedTo), est: i.estimatedCompletionDate || '', actual: d(i.actualCompletionDate), notes: (i.devComments || '').replace(/\s+/g, ' ').trim() }));
+        its.forEach((i) => tasks.push({ project: p.name, track: wbsTrackLabel(i.track), platform: i.platformType || '', module: i.module || '', task: i.title, type: i.type || 'task', status: WBS_STATUSES[i.status]?.label || i.status, priority: i.priority || '', assignee: ctx.name(i.assignedTo), est: i.estimatedCompletionDate || '', actual: d(i.actualCompletionDate), notes: (i.devComments || '').replace(/\s+/g, ' ').trim() }));
         const wh = computeProjectWbsHealth(its, targets.filter((t) => t.projectId === p.id), ctx.now);
         wh.byPlatform.forEach((pl) => milestones.push({ project: p.name, platform: pl.platform, pct: `${pl.pct}%`, done: `${pl.completed}/${pl.total}`, completion: pl.target?.completionDate || '', deployment: pl.target?.deploymentDate || '', risk: milestoneLabel(pl.risk).label }));
       });
       return {
         title: 'WBS progress report', source: 'wbs_items + wbs_platform_targets', scope: 'Every WBS-enabled project in scope.',
-        legend: [['Progress', 'Completed ÷ all non-milestone tasks'], ['Milestone risk', 'On track / At risk / Overdue against the platform completion date']],
+        legend: [['Progress', 'Completed ÷ all non-milestone tasks on every track (scope, improvements, upsell, design, marketing, support)'], ['Milestone risk', 'On track / At risk / Overdue against the platform completion date']],
         sheets: [
           { name: 'By Module', rows: byModule, columns: [col('Project', 'project', 22), col('Platform', 'platform', 14), col('Module', 'module', 24), col('Tasks', 'total'), col('Not started', 'notStarted'), col('In progress', 'inProgress'), col('In QA', 'inQa'), col('Completed', 'completed'), col('Blocked', 'blocked'), col('Progress', 'pct'), col('Latest target date', 'est', 16)] },
-          { name: 'Tasks', rows: tasks, columns: [col('Project', 'project', 22), col('Platform', 'platform', 14), col('Module', 'module', 24), col('Task', 'task', 40), col('Type', 'type', 10), col('Status', 'status', 14), col('Priority', 'priority', 10), col('Assignee', 'assignee', 20), col('Target date', 'est', 12), col('Completed on', 'actual', 12), col('Developer notes', 'notes', 40)] },
+          { name: 'Tasks', rows: tasks, columns: [col('Project', 'project', 22), col('Track', 'track', 22), col('Platform', 'platform', 14), col('Module', 'module', 24), col('Task', 'task', 40), col('Type', 'type', 10), col('Status', 'status', 14), col('Priority', 'priority', 10), col('Assignee', 'assignee', 20), col('Target date', 'est', 12), col('Completed on', 'actual', 12), col('Developer notes', 'notes', 40)] },
           { name: 'Milestones', rows: milestones, columns: [col('Project', 'project', 22), col('Platform', 'platform', 14), col('Progress', 'pct'), col('Done / total', 'done'), col('Completion date', 'completion', 14), col('Deployment date', 'deployment', 14), col('Risk', 'risk', 14)] },
         ],
       };

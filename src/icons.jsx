@@ -136,6 +136,13 @@ export const IconGrid = (p) => (
     <rect x="14" y="14" width="7" height="7" rx="1.5" />
   </I>
 );
+export const IconTag = (p) => (
+  <I {...p}>
+    <path d="M12.6 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.2c0 .5.2 1 .6 1.4l8.8 8.8a2 2 0 0 0 2.8 0l7.2-7.2a2 2 0 0 0 0-2.8Z" />
+    <circle cx="7.5" cy="7.5" r="1.25" />
+  </I>
+);
+
 export const IconLayers = (p) => (
   <I {...p}>
     <path d="M12 2 2 7l10 5 10-5-10-5Z" />

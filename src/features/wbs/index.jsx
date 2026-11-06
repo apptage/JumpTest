@@ -2,16 +2,23 @@
    rows; platform_type + module are free-text grouping tags shown as a visual
    Platform → Module → item tree. One status per item. Import (field-mapping) is
    a bulk-migration path only; the Builder is primary. */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as api from '@/api.js';
 import { parseWbsFile, parseWbsBulk } from '@/wbs.js';
 import { card, inputStyle, ghostButton, primaryButton, ModalShell } from '@/ui.jsx';
 import { PageHeader, Empty, sideHead } from '@shared/ui-kit.jsx';
-import { StatSmall } from '@shared/dashboard-kit.jsx';
+import { StatSmall, SubTabs, Pill } from '@shared/dashboard-kit.jsx';
+import { capPct, computeWorkCompletion, liveBugs, wbsQaStatus } from '@shared/wbsMetrics.js';
 import {
   WBS_STATUSES,
   WBS_STATUS_ORDER,
-  WBS_DEV_STATUSES,
+  WBS_QA_STATUSES,
+  WBS_QA_STATUS_ORDER,
+  WBS_TRACKS,
+  WBS_TRACK_ORDER,
+  wbsTrackLabel,
+  isSqaTrack,
+  wbsStatusChoices,
   WBS_PLATFORM_TYPES,
   WBS_PRIORITIES,
   WBS_PRESETS,
@@ -58,9 +65,65 @@ export function latestEst(items) {
 
 const pctDone = (items) => {
   const work = items.filter((i) => i.type !== 'milestone');
-  if (!work.length) return 0;
-  return Math.round((work.filter((i) => i.status === 'completed').length / work.length) * 100);
+  return capPct(work.filter((i) => i.status === 'completed').length, work.length);
 };
+
+function ProgressRow({ label, done, total, pct, strong }) {
+  const complete = pct === 100;
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: strong ? 8 : 6 }}>
+        <span style={{ fontSize: 13, fontWeight: strong ? 700 : 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span className="tnum" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{done}/{total}</span>
+        <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: strong ? 20 : 14, fontWeight: 700, color: complete ? 'var(--success)' : 'var(--brand)' }}>{pct}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={label}
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        style={{ height: strong ? 10 : 6, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}
+      >
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: complete ? 'var(--success)' : 'var(--brand)' }} />
+      </div>
+    </div>
+  );
+}
+
+/* One bar per interface (Mobile App, Web App, …), reported bugs, then the
+   overall bar they add up to. Also used by the client portal. */
+export function ProjectProgress({ interfaces, bugs, overall }) {
+  const parts = [...interfaces];
+  if (bugs && bugs.total > 0) parts.push({ key: 'bugs', label: 'Reported bugs', done: bugs.resolved, total: bugs.total, pct: capPct(bugs.resolved, bugs.total) });
+  return (
+    <>
+      {parts.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '14px 24px', paddingBottom: 14, marginBottom: 14, borderBottom: '1px solid var(--color-border-primary)' }}>
+          {parts.map((r) => <ProgressRow key={r.key} label={r.label} done={r.done} total={r.total} pct={r.pct} />)}
+        </div>
+      )}
+      <ProgressRow label="Overall project progress" done={overall.done} total={overall.total} pct={overall.pct} strong />
+    </>
+  );
+}
+
+/* Where the completion number comes from: one line per track with work in it,
+   plus reported bugs. Also used by the client portal. */
+export function TrackBreakdown({ byTrack, bugs }) {
+  const rows = byTrack.filter((t) => t.total > 0);
+  const item = (key, label, value) => (
+    <span key={key} style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+      {label} <strong className="tnum" style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{value}</strong>
+    </span>
+  );
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 10 }}>
+      {rows.map((t) => item(t.track, wbsTrackLabel(t.track), `${t.done}/${t.total}`))}
+      {bugs && bugs.total > 0 && item('bugs', 'Bugs resolved', `${bugs.resolved}/${bugs.total}`)}
+    </div>
+  );
+}
 
 // tiny control button
 function Ctl({ label, title, onClick, disabled, danger }) {
@@ -557,7 +620,31 @@ function WbsShareModal({ project, onClose, showToast }) {
 }
 
 /* One editable item row (inline edit form when opened). */
-function WbsItemRow({ item, canManage, canEdit, profiles, bugs = [], onSave, onDelete, onReorder }) {
+const QA_COL_WIDTH = 122;
+const fmtQaDate = (iso) => new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+
+/* The story point's QA status; hover for how it got there. SQA can approve an item
+   that's already Completed but has nothing on record. */
+function WbsQaCell({ qa, role, profiles, onApprove }) {
+  if (!qa) return <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>—</span>;
+  const s = WBS_QA_STATUSES[qa.key];
+  const who = qa.by && profiles.find((p) => p.id === qa.by)?.name;
+  const title = [qa.detail, who && `By ${who}.`, qa.at && `On ${fmtQaDate(qa.at)}.`].filter(Boolean).join(' ');
+  if (qa.key === 'no_record' && role === 'QA') {
+    return (
+      <button
+        title={`${title} Approve it to record your sign-off.`}
+        onClick={onApprove}
+        style={{ ...ghostButton, width: '100%', padding: '3px 8px', minHeight: 0, fontSize: 11.5 }}
+      >
+        Approve
+      </button>
+    );
+  }
+  return <span title={title} aria-label={`QA status: ${s.label}. ${title}`}><Pill label={s.label} tone={s.tone} /></span>;
+}
+
+function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], onSave, onDelete, onReorder, onApproveQa }) {
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState(item);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -565,9 +652,7 @@ function WbsItemRow({ item, canManage, canEdit, profiles, bugs = [], onSave, onD
   const [noteOpen, setNoteOpen] = useState(false);
   const [hover, setHover] = useState(false);
 
-  // developers can't override QA-driven statuses (in_qa / completed)
-  const statusLocked = (item.status === 'in_qa' || item.status === 'completed') && !canManage;
-  const statusOptions = canManage ? WBS_STATUS_ORDER : WBS_DEV_STATUSES;
+  const statusOptions = wbsStatusChoices({ track: item.track, status: item.status, role, canManage });
 
   if (editing) {
     // task-level fields only — platform / target date / assignee are module-level
@@ -619,7 +704,7 @@ function WbsItemRow({ item, canManage, canEdit, profiles, bugs = [], onSave, onD
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ padding: '6px 12px', borderTop: '1px solid var(--color-border-primary)', background: hover ? 'var(--color-background-secondary)' : 'transparent', transition: 'background 0.12s' }}
+      style={{ position: 'relative', padding: '6px 12px', borderTop: '1px solid var(--color-border-primary)', background: hover ? 'var(--color-background-secondary)' : 'transparent', transition: 'background 0.12s' }}
     >
       {/* compact primary row (~34px) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -635,7 +720,7 @@ function WbsItemRow({ item, canManage, canEdit, profiles, bugs = [], onSave, onD
         </span>
         <span style={{ flex: '0 0 auto' }}><PriorityTag value={item.priority} /></span>
         <div style={{ flex: '0 0 auto', width: 124 }}>
-          {statusLocked || !canEdit ? (
+          {statusOptions.length === 0 ? (
             <WbsBadge status={item.status} />
           ) : (
             <select
@@ -647,8 +732,11 @@ function WbsItemRow({ item, canManage, canEdit, profiles, bugs = [], onSave, onD
             </select>
           )}
         </div>
-        {/* actions: reveal on hover; keep space reserved so the row doesn't shift */}
-        <span style={{ flex: '0 0 auto', display: 'inline-flex', gap: 3, opacity: actionsVisible ? 1 : 0, transition: 'opacity 0.12s', pointerEvents: actionsVisible ? 'auto' : 'none' }}>
+        <div style={{ flex: '0 0 auto', width: QA_COL_WIDTH, whiteSpace: 'nowrap' }}>
+          <WbsQaCell qa={qa} role={role} profiles={profiles} onApprove={() => onApproveQa([item.id])} />
+        </div>
+        {/* actions: float over the row's right edge on hover, so the QA column stays visible at rest */}
+        <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', gap: 3, padding: '2px 4px', borderRadius: 8, background: 'var(--color-background-secondary)', opacity: actionsVisible ? 1 : 0, transition: 'opacity 0.12s', pointerEvents: actionsVisible ? 'auto' : 'none' }}>
           {canEdit && <Ctl label="✎" title="Add / edit note" onClick={() => { setNote(item.devComments); setNoteOpen(true); }} />}
           {canManage && (
             <>
@@ -686,7 +774,7 @@ function fmtDate(d) {
 
 /* Platform section header — shows the platform's milestone dates (Completion /
    Deployment). These are platform-level, independent of modules and tasks. */
-function PlatformHeader({ platform, items, target, canManage, open, onToggle, onSaveTarget, onDelete }) {
+function PlatformHeader({ platform, track, items, target, canManage, open, onToggle, onSaveTarget, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [comp, setComp] = useState(target?.completionDate || '');
   const [dep, setDep] = useState(target?.deploymentDate || '');
@@ -697,8 +785,9 @@ function PlatformHeader({ platform, items, target, canManage, open, onToggle, on
     }
   }, [target, editing]);
 
-  const label = platform || 'Ungrouped';
+  const label = platform || (track === 'scope' ? 'Ungrouped' : wbsTrackLabel(track));
   const done = pctDone(items);
+  const showDates = track === 'scope'; // milestone dates belong to the original scope
   const dateInput = { ...inputStyle, width: 'auto', padding: '5px 8px', fontSize: 12 };
   const meta = { fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
 
@@ -729,9 +818,9 @@ function PlatformHeader({ platform, items, target, canManage, open, onToggle, on
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <span style={meta}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.completionDate)}</strong></span>
-            <span style={meta}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.deploymentDate)}</strong></span>
-            {canManage && (
+            {showDates && <span style={meta}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.completionDate)}</strong></span>}
+            {showDates && <span style={meta}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.deploymentDate)}</strong></span>}
+            {showDates && canManage && (
               <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
                 Edit dates
               </button>
@@ -751,9 +840,13 @@ function PlatformHeader({ platform, items, target, canManage, open, onToggle, on
 /* One module = one (platform, module) group. Holds the shared metadata (target
    date, assignee) once in its header; tasks below only carry title/status/priority.
    A fast inline adder appends tasks that inherit the module's metadata. */
-function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll }) {
+function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll, profiles, bugsByItem, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll, onApproveQa }) {
   const { platform, module, items } = group;
-  const allDone = items.length > 0 && items.every((i) => i.status === 'completed');
+  // SQA's button approves what's only waiting on sign-off, not everything
+  const sqaSignsOff = role === 'QA';
+  const allDone = sqaSignsOff
+    ? !items.some((i) => qaByItem[i.id]?.canBulkApprove)
+    : items.length > 0 && items.every((i) => i.status === 'completed');
   const [text, setText] = useState('');
   const [adding, setAdding] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
@@ -789,6 +882,9 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
           <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', background: 'var(--color-background-primary, #fff)', border: '1px solid var(--color-border-primary)', borderRadius: 999, padding: '1px 8px' }}>{items.length}</span>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: done === 100 ? 'var(--success)' : 'var(--brand)' }}>{done}%</span>
         </div>
+        <div style={{ height: 4, margin: '0 14px 8px 34px', borderRadius: 999, background: 'var(--color-border-primary)', overflow: 'hidden' }}>
+          <div style={{ width: `${done}%`, height: '100%', borderRadius: 999, background: done === 100 ? 'var(--success)' : 'var(--brand)' }} />
+        </div>
         {metaOpen ? (
           <div style={{ padding: '4px 14px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <input style={inputStyle} value={meta.module} placeholder="Module name" onChange={(e) => setMeta((m) => ({ ...m, module: e.target.value }))} />
@@ -819,19 +915,21 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
         ) : (
           !collapsed && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 14px 10px 26px', flexWrap: 'wrap' }}>
-              <span style={chip}>{platformLabel}</span>
+              {(platform || items[0]?.track === 'scope') && <span style={chip}>{platformLabel}</span>}
               <span style={metaItem}>Target: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{est || '—'}</strong></span>
               <span style={metaItem}>Lead: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{assigneeLabel}</strong></span>
-              {canManage && (
+              {(canManage || canCompleteAll) && (
                 <span style={{ display: 'inline-flex', gap: 14, marginLeft: 'auto' }}>
-                  {!allDone && (
+                  {canCompleteAll && !allDone && (
                     <button onClick={() => onCompleteAll(group)} style={{ background: 'none', border: 'none', color: 'var(--success)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit', padding: 0 }}>
-                      ✓ Mark all complete
+                      {sqaSignsOff ? '✓ Approve all' : '✓ Mark all complete'}
                     </button>
                   )}
-                  <button onClick={openMeta} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
-                    Edit module
-                  </button>
+                  {canManage && (
+                    <button onClick={openMeta} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+                      Edit module
+                    </button>
+                  )}
                 </span>
               )}
             </div>
@@ -863,10 +961,19 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
             {items.length === 0 ? (
               <div style={{ padding: '14px', fontSize: 12.5, color: 'var(--color-text-tertiary)', textAlign: 'center' }}>No tasks yet.</div>
             ) : (
-              items.map((it) => (
+              <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+                <span style={{ flex: 1 }}>Story point</span>
+                <span style={{ width: 124 }}>Status</span>
+                <span style={{ width: QA_COL_WIDTH }}>QA status</span>
+              </div>
+              {items.map((it) => (
                 <WbsItemRow
                   key={it.id}
                   item={it}
+                  qa={qaByItem[it.id]}
+                  onApproveQa={onApproveQa}
+                  role={role}
                   canManage={canManage}
                   canEdit={canEdit}
                   profiles={profiles}
@@ -875,7 +982,8 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
                   onDelete={onDeleteItem}
                   onReorder={onReorderItem}
                 />
-              ))
+              ))}
+              </>
             )}
           </div>
         </>
@@ -884,13 +992,16 @@ function ModuleCard({ group, canManage, canEdit, profiles, bugsByItem, collapsed
   );
 }
 
-export function WbsPage({ user, projects, profiles = [], showToast }) {
+export function WbsPage({ user, projects, profiles = [], showToast, releases = [], bugs = [], onProjectsChanged }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [items, setItems] = useState([]);
   const [bugsByItem, setBugsByItem] = useState({});
+  const [qaLinks, setQaLinks] = useState(null); // taskId → releases; null = couldn't load
+  const [qaF, setQaF] = useState('all');
   const [platformTargets, setPlatformTargets] = useState({}); // platformType -> {completionDate, deploymentDate}
   const [loading, setLoading] = useState(false);
   const [statusF, setStatusF] = useState('all');
+  const [track, setTrack] = useState('scope');
   const [q, setQ] = useState('');
   const [importData, setImportData] = useState(null); // {headers, rows}
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -915,6 +1026,24 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
   const project = projects.find((p) => p.id === projectId) || null;
   const canManage = user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
   const canEdit = user.role === 'Developer' || canManage;
+  // Mark-all-complete follows the same sign-off rule as a single item's status
+  const canCompleteAll = isSqaTrack(track) ? user.role === 'QA' : canManage;
+  const supportOff = track === 'support' && !project?.ongoingSupport;
+  const canAdd = canManage && !supportOff;
+
+  // whole-project completion: every track + this project's live bugs
+  const completion = useMemo(() => {
+    const releaseById = {};
+    releases.forEach((r) => { if (r.projectId === projectId) releaseById[r.id] = r; });
+    const projectBugs = bugs.filter((b) => releaseById[b.releaseId]);
+    return computeWorkCompletion(items, liveBugs(projectBugs, releaseById));
+  }, [items, bugs, releases, projectId]);
+  const trackItems = items.filter((i) => i.track === track);
+  const qaByItem = useMemo(() => {
+    const out = {};
+    if (qaLinks) items.forEach((i) => { out[i.id] = wbsQaStatus(i, qaLinks[i.id], bugsByItem[i.id]); });
+    return out;
+  }, [items, qaLinks, bugsByItem]);
 
   // silent data pull — no `spinner` flag flip, so callers can refresh without
   // blanking the whole board to "Loading…". Only the initial/project-switch load
@@ -932,6 +1061,11 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
         setBugsByItem(m);
       } catch {
         setBugsByItem({});
+      }
+      try {
+        setQaLinks(await api.fetchWbsQaLinks(projectId));
+      } catch {
+        setQaLinks(null);
       }
       try {
         const targets = await api.fetchWbsPlatformTargets(projectId);
@@ -972,6 +1106,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...local } : i)));
     try {
       await api.updateWbsItem(item.id, patch);
+      if (patch.status) refresh(); // the database may have stamped SQA's sign-off
     } catch (e) {
       showToast(e.message, 'error');
       refresh(); // resync from server on failure
@@ -982,7 +1117,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
   };
   // reorder within the flat position order (swap with the adjacent item)
   const reorder = (item, dir) => {
-    const ordered = items.slice().sort((a, b) => a.position - b.position);
+    const ordered = items.filter((x) => x.track === item.track).sort((a, b) => a.position - b.position);
     const idx = ordered.findIndex((x) => x.id === item.id);
     const j = idx + dir;
     if (j < 0 || j >= ordered.length) return;
@@ -995,7 +1130,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     run(
       () => api.createWbsItem(projectId, {
         title: form.title.trim(), platformType: form.platformType, module: form.module,
-        estimatedCompletionDate: form.est, priority: form.priority || null, position: items.length,
+        estimatedCompletionDate: form.est, priority: form.priority || null, position: items.length, track,
       }),
       'Item added'
     );
@@ -1012,6 +1147,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
       estimatedCompletionDate: est || '',
       assignedTo: assigneeIds.length === 1 ? assigneeIds[0] : null,
       position: items.length,
+      track,
     }));
   };
   // edit module-level metadata → apply to every item in the group at once
@@ -1019,19 +1155,27 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     run(() => api.updateWbsItems(group.items.map((i) => i.id), patch), 'Module updated');
   // mark every task in a module completed — optimistic + background bulk update
   const completeModule = async (group) => {
-    const ids = group.items.map((i) => i.id);
-    if (!ids.length) return;
-    const n = ids.length;
-    if (!window.confirm(`Mark all ${n} task${n === 1 ? '' : 's'} in "${group.module || 'General'}" as Completed?`)) return;
-    const idSet = new Set(ids);
+    const isQa = user.role === 'QA';
+    const eligible = isQa ? group.items.filter((i) => qaByItem[i.id]?.canBulkApprove) : group.items;
+    const open = eligible.filter((i) => i.status !== 'completed').map((i) => i.id);
+    const unsigned = isQa ? eligible.filter((i) => i.status === 'completed').map((i) => i.id) : [];
+    const n = open.length + unsigned.length;
+    if (!n) return;
+    const verb = isQa ? 'Approve' : 'Mark';
+    const end = isQa ? ' that are waiting for sign-off' : ' as Completed';
+    if (!window.confirm(`${verb} ${n} task${n === 1 ? '' : 's'} in "${group.module || 'General'}"${end}?`)) return;
+    const idSet = new Set(open);
     setItems((prev) => prev.map((i) => (idSet.has(i.id) ? { ...i, status: 'completed' } : i)));
     try {
-      await api.setWbsItemStatus(ids, 'completed');
+      await api.setWbsItemStatus(open, 'completed');
+      await api.approveWbsItemsQa(unsigned);
+      refresh();
     } catch (e) {
       showToast(e.message, 'error');
       refresh();
     }
   };
+  const approveQa = (ids) => run(() => api.approveWbsItemsQa(ids), 'QA approval recorded');
   // platform-level milestone dates — optimistic local update + background upsert
   const saveTarget = async (platform, patch) => {
     setPlatformTargets((prev) => ({ ...prev, [platform]: { ...(prev[platform] || {}), ...patch } }));
@@ -1044,14 +1188,14 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     }
   };
   const deleteWholeWbs = () => {
-    if (window.confirm('Delete the ENTIRE WBS for this project? Release history is preserved. This cannot be undone.'))
+    if (window.confirm('Delete the ENTIRE WBS for this project, across every tab (scope, improvements, upsell, design, marketing and support)? Release history is preserved. This cannot be undone.'))
       run(() => api.deleteWbs(projectId), 'WBS deleted');
   };
   // delete just ONE platform group (e.g. only "Admin Panel"), not the whole WBS
   const deletePlatform = (platform, count) => {
-    const label = platform || 'Ungrouped';
+    const label = platform || (track === 'scope' ? 'Ungrouped' : wbsTrackLabel(track));
     if (window.confirm(`Delete the entire "${label}" WBS (${count} item${count === 1 ? '' : 's'})? Release history is preserved. This cannot be undone.`))
-      run(() => api.deleteWbsPlatform(projectId, platform), `${label} WBS deleted`);
+      run(() => api.deleteWbsPlatform(projectId, platform, track), `${label} WBS deleted`);
   };
 
   async function onFile(e) {
@@ -1066,26 +1210,40 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
       showToast(err.message || 'Could not read the file', 'error');
     }
   }
+  // Rows land on the open tab. A sheet can't claim SQA's sign-off: items it marks
+  // Completed on an SQA-tracked tab arrive In QA, ready for SQA to approve.
+  const importRows = async (rows, verb) => {
+    const holdForSqa = isSqaTrack(track) && user.role !== 'QA';
+    let held = 0;
+    const prepared = rows.map((r) => {
+      if (holdForSqa && normalizeWbsStatus(r.status) === 'completed') {
+        held += 1;
+        return { ...r, track, status: 'in_qa' };
+      }
+      return { ...r, track };
+    });
+    const res = await api.importWbs(projectId, prepared);
+    showToast(`${verb} ${res.added} item${res.added === 1 ? '' : 's'}${held ? ` · ${held} marked Completed are In QA until SQA approves them` : ''}`);
+  };
   const confirmImport = async (mapped) => {
     setImportData(null);
-    await run(async () => {
-      const r = await api.importWbs(projectId, mapped);
-      showToast(`Imported ${r.added} item${r.added === 1 ? '' : 's'}`);
-    });
+    await run(() => importRows(mapped, 'Imported'));
   };
   // bulk add reuses the additive importer (fresh import_keys → all inserted, appended)
   const confirmBulk = async (parsed) => {
     setBulkOpen(false);
-    await run(async () => {
-      const r = await api.importWbs(projectId, parsed);
-      showToast(`Added ${r.added} item${r.added === 1 ? '' : 's'}`);
-    });
+    await run(() => importRows(parsed, 'Added'));
   };
+  const setOngoingSupport = (on) =>
+    run(async () => {
+      await api.updateProject(projectId, { ongoing_support: on });
+      onProjectsChanged?.();
+    }, on ? 'Ongoing support turned on' : 'Ongoing support turned off');
 
   // filter + group into a flat list of module cards (one per platform+module),
   // preserving the REAL platform/module values so new tasks inherit them.
-  const filtered = items.filter(
-    (i) => (statusF === 'all' || i.status === statusF) && (!q.trim() || i.title.toLowerCase().includes(q.trim().toLowerCase()))
+  const filtered = trackItems.filter(
+    (i) => (statusF === 'all' || i.status === statusF) && (qaF === 'all' || qaByItem[i.id]?.key === qaF) && (!q.trim() || i.title.toLowerCase().includes(q.trim().toLowerCase()))
   );
   const groupMap = new Map();
   const groupList = [];
@@ -1108,8 +1266,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
     platformMap.get(g.platform).push(g);
   });
 
-  const overall = pctDone(items);
-  const byStatus = (s) => items.filter((i) => i.status === s).length;
+  const byStatus = (s) => trackItems.filter((i) => i.status === s).length;
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
 
   // collapse-all operates on the platform sections
@@ -1131,6 +1288,12 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
           <option value="all">All statuses</option>
           {WBS_STATUS_ORDER.map((s) => <option key={s} value={s}>{WBS_STATUSES[s].label}</option>)}
         </select>
+        {qaLinks && (
+          <select style={fSel} value={qaF} aria-label="QA status" onChange={(e) => setQaF(e.target.value)}>
+            <option value="all">All QA statuses</option>
+            {WBS_QA_STATUS_ORDER.map((s) => <option key={s} value={s}>{WBS_QA_STATUSES[s].label}</option>)}
+          </select>
+        )}
         <input style={{ ...fSel, flex: '1 1 160px' }} value={q} placeholder="Search items…" onChange={(e) => setQ(e.target.value)} />
         {allGroupKeys.length > 1 && (
           <button style={ghostButton} onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(allGroupKeys))}>
@@ -1139,10 +1302,14 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
         )}
         {canManage && (
           <>
-            <button style={ghostButton} onClick={() => setAdding((v) => !v)}>{adding ? 'Close' : '+ New module'}</button>
-            <button style={primaryButton(false)} onClick={() => setBulkOpen(true)}>Bulk add</button>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} />
-            <button style={ghostButton} onClick={() => fileRef.current?.click()}>Import</button>
+            {canAdd && (
+              <>
+                <button style={ghostButton} onClick={() => setAdding((v) => !v)}>{adding ? 'Close' : '+ New module'}</button>
+                <button style={primaryButton(false)} onClick={() => setBulkOpen(true)}>Bulk add</button>
+                <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} />
+                <button style={ghostButton} onClick={() => fileRef.current?.click()}>Import</button>
+              </>
+            )}
             {project && <button style={ghostButton} onClick={() => setShareOpen(true)}>Share</button>}
             {items.length > 0 && (
               <button style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644' }} onClick={deleteWholeWbs}>Delete WBS</button>
@@ -1151,7 +1318,44 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
         )}
       </div>
 
-      {adding && canManage && (
+      {completion.total > 0 && (
+        <div style={{ ...card, padding: 16, marginBottom: 14 }}>
+          {project?.ongoingSupport && (
+            <div style={{ marginBottom: 12 }}><Pill label="Ongoing support" tone="info" /></div>
+          )}
+          <ProjectProgress interfaces={completion.byInterface} bugs={completion.bugs} overall={completion} />
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>
+            {completion.open > 0
+              ? `${completion.open} still open of ${completion.total}, across every tab below and reported bugs.`
+              : project?.ongoingSupport
+                ? 'All current work is complete. Ongoing support stays active for new client requests.'
+                : `All ${completion.total} items and bugs are complete.`}
+          </div>
+          <TrackBreakdown byTrack={completion.byTrack} bugs={completion.bugs} />
+        </div>
+      )}
+
+      <SubTabs
+        tabs={WBS_TRACK_ORDER.map((t) => {
+          const n = items.filter((i) => i.track === t && i.type !== 'milestone').length;
+          return [t, n ? `${wbsTrackLabel(t)} (${n})` : wbsTrackLabel(t)];
+        })}
+        active={track}
+        onChange={(t) => { setTrack(t); setAdding(false); setStatusF('all'); setQaF('all'); }}
+      />
+      {(WBS_TRACKS[track].hint || track === 'support') && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+            {WBS_TRACKS[track].hint}
+            {isSqaTrack(track) && track !== 'scope' ? ' Completed only after SQA approval.' : ''}
+          </span>
+          {track === 'support' && canManage && project?.ongoingSupport && (
+            <button style={ghostButton} onClick={() => setOngoingSupport(false)}>Turn off ongoing support</button>
+          )}
+        </div>
+      )}
+
+      {adding && canAdd && (
         <div style={{ ...card, padding: 12, marginBottom: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8, alignItems: 'end' }}>
           <input style={inputStyle} value={form.module} placeholder="Module name *" onChange={(e) => setForm((f) => ({ ...f, module: e.target.value }))} />
           <input style={inputStyle} list="wbs-platforms" value={form.platformType} placeholder="Platform" onChange={(e) => setForm((f) => ({ ...f, platformType: e.target.value }))} />
@@ -1161,32 +1365,30 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
         </div>
       )}
 
-      {items.length > 0 && (
+      {trackItems.length > 0 && (
         <>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-            <StatSmall label="Total Items" value={items.length} />
+            <StatSmall label="Total Items" value={trackItems.length} />
             <StatSmall label="Not Started" value={byStatus('not_started')} />
             <StatSmall label="In Progress" value={byStatus('in_progress')} color={byStatus('in_progress') ? 'var(--brand)' : undefined} />
             <StatSmall label="In QA" value={byStatus('in_qa')} color={byStatus('in_qa') ? 'var(--warning)' : undefined} />
             <StatSmall label="Completed" value={byStatus('completed')} color="var(--success)" />
             {byStatus('blocked') > 0 && <StatSmall label="Blocked" value={byStatus('blocked')} color="var(--danger)" />}
           </div>
-          <div style={{ ...card, padding: 16, marginBottom: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>Overall project completion</span>
-              <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{overall}%</span>
-            </div>
-            <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
-              <div style={{ width: `${overall}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
-            </div>
-          </div>
         </>
       )}
 
       {loading ? (
         <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
-      ) : items.length === 0 ? (
-        <Empty>{canManage ? 'No WBS yet — create a module above, use Bulk add, or Import a spreadsheet.' : 'This project has no WBS yet.'}</Empty>
+      ) : supportOff && trackItems.length === 0 ? (
+        <Empty>
+          <div>Ongoing support is off for this project.</div>
+          {canManage && (
+            <button style={{ ...primaryButton(false), marginTop: 12 }} onClick={() => setOngoingSupport(true)}>Turn on ongoing support</button>
+          )}
+        </Empty>
+      ) : trackItems.length === 0 ? (
+        <Empty>{canManage ? `Nothing under ${wbsTrackLabel(track)} yet — create a module above, use Bulk add, or Import a spreadsheet.` : `Nothing under ${wbsTrackLabel(track)} yet.`}</Empty>
       ) : filtered.length === 0 ? (
         <Empty>No items match the filter.</Empty>
       ) : (
@@ -1202,6 +1404,7 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
               <div key={platform}>
                 <PlatformHeader
                   platform={platform}
+                  track={track}
                   items={platItems}
                   target={platformTargets[platform]}
                   canManage={canManage}
@@ -1219,8 +1422,10 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
                       >
                         <ModuleCard
                           group={g}
+                          role={user.role}
                           canManage={canManage}
                           canEdit={canEdit}
+                          canCompleteAll={canCompleteAll}
                           profiles={profiles}
                           bugsByItem={bugsByItem}
                           collapsed={isCol(g.key)}
@@ -1231,6 +1436,8 @@ export function WbsPage({ user, projects, profiles = [], showToast }) {
                           onReorderItem={reorder}
                           onSaveMeta={saveModuleMeta}
                           onCompleteAll={completeModule}
+                          qaByItem={qaByItem}
+                          onApproveQa={approveQa}
                         />
                       </div>
                     ))}

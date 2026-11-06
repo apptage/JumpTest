@@ -9,6 +9,7 @@ export const APP_PAGES = [
   'analytics',
   'users',
   'teams',
+  'brands',
   'settings',
 ];
 

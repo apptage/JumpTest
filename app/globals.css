@@ -231,6 +231,29 @@ a:hover { text-decoration: underline; }
 }
 @media (max-width: 680px) { .auth-brand { display: none !important; } }
 
+/* ===== Brand logos — .dark on <html> picks the variant (see BrandLogo) ===== */
+.brand-img-dark { display: none !important; }
+.dark .brand-img-dark { display: block !important; }
+.dark .brand-img-light { display: none !important; }
+.dark .brand-img-plate { background: #fff; border-radius: 6px; padding: 3px 6px; box-sizing: content-box; }
+
+/* ===== Client portal — fills the screen like the main app, on a single spacing
+   rhythm: 24px between sections, 16px between cards. ===== */
+.portal-wrap { max-width: 1500px; margin: 0 auto; padding-left: clamp(16px, 3vw, 40px); padding-right: clamp(16px, 3vw, 40px); }
+.portal-body { padding-top: 28px; padding-bottom: 40px; display: flex; flex-direction: column; gap: 24px; }
+.portal-stack { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.portal-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 16px; }
+/* masonry: feature-area cards fill the width without gaps under short cards */
+.portal-cols { columns: 3 400px; column-gap: 16px; margin-bottom: -16px; }
+.portal-cols.wide { columns: 2 560px; }
+.portal-cols > * { break-inside: avoid; margin-bottom: 16px; }
+/* row lists: two columns on wide screens. Each row draws its own divider; the
+   -1px + overflow clip hides the dividers under the final row. */
+.portal-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); column-gap: 40px; overflow: hidden; }
+.portal-rows > * { border-bottom: 1px solid var(--color-border-primary); margin-bottom: -1px; }
+.portal-duo { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 560px) { .portal-header-note { display: none; } }
+
 /* ===== Auth — full-viewport split (brand panel | form). On wide screens both
    panels are locked to the viewport height so the page never scrolls; the
    illustration shrinks to fit. Stacked (scrollable) under 900px. ===== */

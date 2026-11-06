@@ -6,6 +6,7 @@ import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, Modal
 import { Field } from '@shared/ui-kit.jsx';
 import { StatSmall, Pill, passColor } from '@shared/dashboard-kit.jsx';
 import { computeProjectSummaries, computeUserSummaries } from '@shared/releaseMetrics.js';
+import { computeWorkCompletion, liveBugs } from '@shared/wbsMetrics.js';
 import {
   ALLOWED_EMAIL_DOMAIN,
   PROJECT_TYPES,
@@ -15,8 +16,24 @@ import {
   formatVersion,
   projectTypeLabel,
   emailDomainOk,
+  CMS_KINDS,
+  CMS_KIND_ORDER,
+  cmsKindLabel,
 } from '@/constants.js';
-import { IconGlobe, IconPlus, IconSmartphone } from '@/icons.jsx';
+import { IconGlobe, IconPlus, IconSmartphone, IconLayers } from '@/icons.jsx';
+
+/* the CMS kind picker shown next to Type when the project is a CMS project */
+function CmsKindSelect({ value, onChange }) {
+  return (
+    <select style={inputStyle} value={value || 'website'} onChange={(e) => onChange(e.target.value)}>
+      {CMS_KIND_ORDER.map((k) => (
+        <option key={k} value={k}>
+          {CMS_KINDS[k].label}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 function AdminPanel({
   currentUser,
@@ -616,6 +633,7 @@ export function ProjectsTab({
   releases,
   bugs = [],
   checklistItems,
+  brands = [],
   profiles,
   projectMembers,
   isSubmitting,
@@ -632,12 +650,37 @@ export function ProjectsTab({
   const [form, setForm] = useState({
     name: '',
     type: 'mobile',
+    cmsKind: 'website',
     team: isAdmin ? teams[0]?.id || '' : myTeamId || '',
+    brand: '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const needsTeam = isAdmin && teams.length > 0;
   const invalid = !form.name.trim() || (needsTeam && !form.team);
   const summaries = useMemo(() => computeProjectSummaries(releases, bugs), [releases, bugs]);
+  // whole-project completion for each tile (every WBS track + live bugs)
+  const [wbsItems, setWbsItems] = useState([]);
+  const projectIdsKey = projects.map((p) => p.id).sort().join(',');
+  useEffect(() => {
+    let cancelled = false;
+    api.fetchWbsItemsForProjects(projectIdsKey ? projectIdsKey.split(',') : [])
+      .then((list) => { if (!cancelled) setWbsItems(list); })
+      .catch(() => { if (!cancelled) setWbsItems([]); });
+    return () => { cancelled = true; };
+  }, [projectIdsKey]);
+  const completions = useMemo(() => {
+    const releaseById = Object.fromEntries(releases.map((r) => [r.id, r]));
+    const itemsBy = {};
+    wbsItems.forEach((i) => (itemsBy[i.projectId] = itemsBy[i.projectId] || []).push(i));
+    const bugsBy = {};
+    liveBugs(bugs, releaseById).forEach((b) => {
+      const pid = releaseById[b.releaseId]?.projectId;
+      if (pid) (bugsBy[pid] = bugsBy[pid] || []).push(b);
+    });
+    const out = {};
+    Object.keys(itemsBy).forEach((pid) => { out[pid] = computeWorkCompletion(itemsBy[pid], bugsBy[pid]); });
+    return out;
+  }, [wbsItems, bugs, releases]);
 
   const [q, setQ] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
@@ -661,8 +704,10 @@ export function ProjectsTab({
       type: form.type,
       platform: projectTypeLabel(form.type),
       team_id: isAdmin ? form.team || null : myTeamId || null,
+      brand_id: form.brand || null,
+      ...(form.type === 'cms' ? { cms_kind: form.cmsKind || 'website' } : {}),
     });
-    setForm({ name: '', type: 'mobile', team: isAdmin ? teams[0]?.id || '' : myTeamId || '' });
+    setForm({ name: '', type: 'mobile', cmsKind: 'website', team: isAdmin ? teams[0]?.id || '' : myTeamId || '', brand: '' });
     setCreating(false);
   }
 
@@ -676,6 +721,7 @@ export function ProjectsTab({
         <StatSmall label="Mobile" value={typeCount('mobile')} color="var(--brand)" />
         <StatSmall label="Web" value={typeCount('web')} color="var(--success)" />
         <StatSmall label="Both" value={typeCount('both')} color="var(--warning)" />
+        <StatSmall label="CMS" value={typeCount('cms')} color="var(--info, var(--brand))" />
         <StatSmall label="Releases" value={releases.length} />
       </div>
 
@@ -769,6 +815,12 @@ export function ProjectsTab({
               ))}
             </select>
           </div>
+          {form.type === 'cms' && (
+            <div style={{ flex: '1 1 190px' }}>
+              <label style={labelStyle}>CMS project type</label>
+              <CmsKindSelect value={form.cmsKind} onChange={(v) => set('cmsKind', v)} />
+            </div>
+          )}
           {isAdmin && (
             <div style={{ flex: '1 1 150px' }}>
               <label style={labelStyle}>Team</label>
@@ -780,6 +832,12 @@ export function ProjectsTab({
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+          {brands.length > 0 && (
+            <div style={{ flex: '1 1 150px' }}>
+              <label style={labelStyle}>Brand</label>
+              <BrandSelect brands={brands} value={form.brand} onChange={(v) => set('brand', v)} />
             </div>
           )}
           <button
@@ -815,7 +873,9 @@ export function ProjectsTab({
               user={user}
               teams={teams}
               teamName={p.teamId ? teamsById[p.teamId]?.name : null}
+              brands={brands}
               summary={summaries[p.id]}
+              completion={completions[p.id]}
               items={checklistItems.filter((c) => c.projectId === p.id)}
               profiles={profiles}
               members={projectMembers.filter((m) => m.projectId === p.id)}
@@ -840,6 +900,21 @@ export function ProjectsTab({
         </div>
       )}
     </div>
+  );
+}
+
+/* Brand picker for a project. Empty = follow the workspace's default brand. */
+function BrandSelect({ brands, value, onChange }) {
+  const fallback = brands.find((b) => b.isDefault);
+  return (
+    <select style={inputStyle} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{fallback ? `Default (${fallback.name})` : 'Default'}</option>
+      {brands.map((b) => (
+        <option key={b.id} value={b.id}>
+          {b.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -888,7 +963,7 @@ const EMPTY_SUMMARY = { builds: 0, latest: null, openBugs: 0, resolvedBugs: 0, s
 
 /* Bird's-eye strip on each project tile: builds / open / resolved bugs + the
    latest build's QA status. */
-function ProjectSummary({ s }) {
+function ProjectSummary({ s, completion }) {
   const qa = s.latest ? STATUSES[s.latest.status] : null;
   const cell = (label, value, color) => (
     <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 10, background: 'var(--color-background-secondary)' }}>
@@ -903,6 +978,13 @@ function ProjectSummary({ s }) {
         {cell('Open bugs', s.openBugs, 'var(--danger)')}
         {cell('Resolved bugs', s.resolvedBugs, 'var(--success)')}
       </div>
+      {completion && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+          <span style={{ fontWeight: 600 }}>Completion</span>
+          <span className="tnum" style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{completion.pct}%</span>
+          {completion.open > 0 && <span style={{ color: 'var(--color-text-tertiary)' }}>· {completion.open} still open</span>}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--color-text-secondary)', minWidth: 0 }}>
         <span style={{ fontWeight: 600 }}>QA status</span>
         {qa ? (
@@ -927,7 +1009,9 @@ function ProjectRow({
   user,
   teams,
   teamName,
+  brands,
   summary,
+  completion,
   items,
   profiles,
   members,
@@ -946,17 +1030,23 @@ function ProjectRow({
     name: project.name,
     type: project.type,
     team: project.teamId || '',
+    brand: project.brandId || '',
   });
   const [label, setLabel] = useState('');
 
   const s = summary || EMPTY_SUMMARY;
-  const status = s.status || EMPTY_SUMMARY.status;
+  const projectBrand = brands.find((b) => b.id === project.brandId);
+  // an approved build isn't "on track" for the project while tracked work is open
+  const status = s.status?.label === 'On track' && completion?.open > 0
+    ? { label: 'Work ongoing', tone: 'info' }
+    : s.status || EMPTY_SUMMARY.status;
   const isWeb = project.type === 'web';
+  const isCms = project.type === 'cms';
   const typeColor = isWeb ? '#f59e0b' : '#10b981';
 
   function startEdit(e) {
     e.stopPropagation();
-    setEdit({ name: project.name, type: project.type, team: project.teamId || '' });
+    setEdit({ name: project.name, type: project.type, cmsKind: project.cmsKind || 'website', team: project.teamId || '', brand: project.brandId || '' });
     setEditing(true);
     setOpen(true);
   }
@@ -967,7 +1057,11 @@ function ProjectRow({
       type: edit.type,
       platform: projectTypeLabel(edit.type),
     };
+    if (edit.type === 'cms') patch.cms_kind = edit.cmsKind || 'website';
+    if (edit.type === 'cms' && project.type !== 'cms' && project.wbsEnabled &&
+      !window.confirm('CMS projects have no WBS. This project’s WBS will be hidden (its items are kept). Continue?')) return;
     if (isAdmin) patch.team_id = edit.team || null;
+    if (brands.length) patch.brand_id = edit.brand || null;
     const ok = await onUpdate(project.id, patch);
     if (ok) setEditing(false);
   }
@@ -993,18 +1087,20 @@ function ProjectRow({
       <div onClick={() => setOpen((o) => !o)} style={{ padding: 16, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <span style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)', background: 'var(--accent-soft)' }}>
-            {isWeb ? <IconGlobe size={18} /> : <IconSmartphone size={18} />}
+            {isCms ? <IconLayers size={18} /> : isWeb ? <IconGlobe size={18} /> : <IconSmartphone size={18} />}
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{projectTypeLabel(project.type)}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{isCms ? `CMS · ${cmsKindLabel(project.cmsKind)}` : projectTypeLabel(project.type)}</div>
           </div>
           <Pill label={status.label} tone={status.tone} />
           <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{open ? '▾' : '▸'}</span>
         </div>
-        <ProjectSummary s={s} />
+        <ProjectSummary s={s} completion={completion} />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <Pill label={teamName || 'No team'} tone={teamName ? 'info' : 'neutral'} />
+          {projectBrand && <Pill label={projectBrand.name} tone="neutral" />}
+          {project.ongoingSupport && <Pill label="Ongoing support" tone="info" />}
           <Pill label={`${items.length} checklist item${items.length === 1 ? '' : 's'}`} tone="neutral" />
           {members.length > 0 && <Pill label={`${members.length} member${members.length === 1 ? '' : 's'}`} tone="neutral" />}
         </div>
@@ -1060,6 +1156,12 @@ function ProjectRow({
                   ))}
                 </select>
               </div>
+              {edit.type === 'cms' && (
+                <div style={{ flex: '1 1 170px' }}>
+                  <label style={labelStyle}>CMS project type</label>
+                  <CmsKindSelect value={edit.cmsKind} onChange={(v) => setEdit((s) => ({ ...s, cmsKind: v }))} />
+                </div>
+              )}
               {isAdmin && (
                 <div style={{ flex: '1 1 140px' }}>
                   <label style={labelStyle}>Team</label>
@@ -1075,6 +1177,12 @@ function ProjectRow({
                       </option>
                     ))}
                   </select>
+                </div>
+              )}
+              {brands.length > 0 && (
+                <div style={{ flex: '1 1 140px' }}>
+                  <label style={labelStyle}>Brand</label>
+                  <BrandSelect brands={brands} value={edit.brand} onChange={(v) => setEdit((s) => ({ ...s, brand: v }))} />
                 </div>
               )}
               <button style={ghostButton} onClick={() => setEditing(false)}>

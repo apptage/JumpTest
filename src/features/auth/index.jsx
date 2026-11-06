@@ -1,12 +1,13 @@
 /* Auth feature — sign in / sign up / reset, and the post-recovery set-password
    screen. Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { card, inputStyle, primaryButton, Logo, Wordmark } from '@/ui.jsx';
 import { Field, authLink } from '@shared/ui-kit.jsx';
 import { ALLOWED_EMAIL_DOMAIN, emailDomainOk } from '@/constants.js';
 import { IconCode, IconShieldCheck } from '@/illustrations.jsx';
 import { IconBug } from '@/icons.jsx';
-import { ApptageLogo } from '@/brand.jsx';
+import * as api from '@/api.js';
+import { BrandLogo } from '@/brand.jsx';
 
 export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest }) {
   const [mode, setMode] = useState('signin');
@@ -14,6 +15,12 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('Developer');
+  const [brand, setBrand] = useState(null); // workspace's default brand
+  useEffect(() => {
+    let cancelled = false;
+    api.fetchPublicDefaultBrand().then((b) => { if (!cancelled) setBrand(b); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const isSignup = mode === 'signup';
   const isReset = mode === 'reset';
@@ -105,13 +112,15 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
               ))}
             </div>
 
-            {/* customer proof — Apptage runs its project tracking + client reviews here */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 26, paddingTop: 20, borderTop: '1px solid var(--ink-border)' }}>
-              <ApptageLogo size={26} color="var(--on-ink)" />
-              <span style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--on-ink-dim)', flex: '1 1 240px' }}>
-                Apptage uses Miaro Verify for live project tracking and client status reviews.
-              </span>
-            </div>
+            {/* customer proof — the default brand runs its project tracking + client reviews here */}
+            {brand && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 26, paddingTop: 20, borderTop: '1px solid var(--ink-border)' }}>
+                <BrandLogo brand={brand} size={26} />
+                <span style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--on-ink-dim)', flex: '1 1 240px' }}>
+                  {brand.name} uses Miaro Verify for live project tracking and client status reviews.
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

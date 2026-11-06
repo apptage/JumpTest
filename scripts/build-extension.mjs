@@ -19,6 +19,16 @@ const define = {
   'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(url),
   'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY': JSON.stringify(key),
   'process.env.NODE_ENV': JSON.stringify('production'),
+  // the rest of src/env.public.js — the extension doesn't use these, but they
+  // must be defined or `process` throws in the service worker
+  'process.env.NEXT_PUBLIC_APP_ENV': JSON.stringify(process.env.NEXT_PUBLIC_APP_ENV ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_API_KEY': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_APP_ID': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? ''),
+  'process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY': JSON.stringify(process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ?? ''),
 };
 
 rmSync(dist, { recursive: true, force: true });
