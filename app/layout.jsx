@@ -28,15 +28,14 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" className={`${lexend.variable} ${lexendDeca.variable}`} suppressHydrationWarning>
       <head>
-        <meta name="color-scheme" content="light dark" />
+        <meta name="color-scheme" content="light" />
       </head>
       <body>
         <Script id="gq-theme" strategy="beforeInteractive">
           {`(function () {
   try {
-    var t = localStorage.getItem('gq-theme');
-    var dark = t ? t === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (dark) document.documentElement.classList.add('dark');
+    // light by default; dark only when the user picked it with the header toggle
+    if (localStorage.getItem('gq-theme') === 'dark') document.documentElement.classList.add('dark');
   } catch (e) {}
 })();`}
         </Script>
