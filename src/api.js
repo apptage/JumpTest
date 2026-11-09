@@ -1536,6 +1536,16 @@ export async function fetchCmsTasks(projectId) {
   }
   return data.map(mapCmsTask);
 }
+// every CMS project's tasks at once (dashboard); [] until the CMS migration is deployed
+export async function fetchCmsTasksForProjects(projectIds) {
+  if (!projectIds || !projectIds.length) return [];
+  try {
+    return (await selectAllByProjects('cms_tasks', projectIds)).map(mapCmsTask);
+  } catch (error) {
+    if (isMissingProjectInfo(error)) return [];
+    throw error;
+  }
+}
 export async function createCmsTask(row) {
   const { error } = await supabase.from('cms_tasks').insert(row);
   if (error) throw error;

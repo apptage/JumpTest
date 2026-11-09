@@ -1367,14 +1367,16 @@ export default function ReleaseTracker() {
               bugs={scopedBugs}
               projects={scopedProjects}
               profiles={profiles}
-              projectsById={projectsById}
-              counts={counts}
-              openBugTotal={openBugTotal}
+              teams={teams}
               user={user}
               teamName={isAdmin ? null : myTeam?.name}
               canSubmit={canSubmit}
               onSubmit={() => setShowSubmit(true)}
               onOpenRelease={(id) => setSelectedId(id)}
+              onOpenProject={(id) => {
+                setHubProjectId(id);
+                setPage('projecthub');
+              }}
               onNavigate={setPage}
             />
           </div>
