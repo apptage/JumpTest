@@ -788,7 +788,11 @@ export function ReportsSection(props) {
     }
     setBusy(rep.key);
     try {
-      const ctx = makeCtx(props, f);
+      // load this export's releases and bugs now, for its date range (blank From =
+      // all time), with full bug details. Before the metrics_dataset migration is
+      // applied, fetchMetricsData returns null and the loaded lists are used.
+      const data = await api.fetchMetricsData({ projectIds: props.scopeProjectIds ?? null, since: f.from || null, slim: false });
+      const ctx = makeCtx(data ? { ...props, ...data } : props, f);
       const spec = await rep.build(ctx);
       const person = f.resource !== 'all' ? profilesById[f.resource]?.name : null;
       const fileBase = person ? `${rep.file}_${fileSlug(person)}` : rep.file;

@@ -1,9 +1,12 @@
 /* Bugs feature — the standalone Bugs page: cross-project bug list with filters,
    an aging-issues panel, and readable per-bug cards (full detail: description,
    project, platform, release version, reporter). Filtering is the shared layer. */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import * as api from '@/api.js';
 import { card, inputStyle, ghostButton, BugStatusBadge, SeverityBadge } from '@/ui.jsx';
-import { Empty, PageHeader, SlaBadge, TagChip, sideHead } from '@shared/ui-kit.jsx';
+import { Empty, PageHeader, SlaBadge, TagChip, sideHead, Pager, useDebounced } from '@shared/ui-kit.jsx';
+import { useMetricsData } from '@shared/useMetricsData.js';
 import { StatSmall } from '@shared/dashboard-kit.jsx';
 import { filterBugs, filterReleases } from '@shared/filters.js';
 import { computeBottlenecks } from '@shared/releaseMetrics.js';
@@ -55,9 +58,17 @@ const sectionTitle = (t, sub, dot) => (
   </div>
 );
 
+const BUGS_PAGE_SIZE = 20;
+const NONE = [];
+
+/* The list, chip counts and overdue panel come from the database one page at a
+   time (list_bugs). Until that migration is applied, fetchBugsPage returns null
+   and the page filters the bugs the app already loaded, as before.
+   scopeProjectIds: the caller's projects, or null for Admins. */
 export function BugsPage({
-  bugs,
-  releases,
+  scopeProjectIds = null,
+  bugs: bugsProp,       // the loaded lists in legacy mode; undefined otherwise
+  releases: releasesProp,
   projects,
   projectsById,
   profilesById,
@@ -72,7 +83,9 @@ export function BugsPage({
   onBugCloseReview,
   onDeleteBug,
 }) {
-  const relById = useMemo(() => {
+  const bugs = bugsProp || NONE;
+  const releases = releasesProp || NONE;
+  const globalRelById = useMemo(() => {
     const m = {};
     releases.forEach((r) => (m[r.id] = r));
     return m;
@@ -90,7 +103,7 @@ export function BugsPage({
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sort, setSort] = useState('newest');
-  const [visible, setVisible] = useState(20);
+  const [page, setPage] = useState(0);
   const [quick, setQuick] = useState('all'); // status chip: all | needsDev | awaitingQa | verified | carried | aging
   const [more, setMore] = useState(false);   // secondary filters row
   const [showAging, setShowAging] = useState(false);       // attention panels are capped at 4 rows
@@ -102,20 +115,42 @@ export function BugsPage({
   const qas = (profiles || []).filter((p) => p.role === 'QA');
 
   // single shared filter pipeline (same functions Analytics uses)
-  const bugFilter = { search: q, status, severity: sev, platform, tag, feature, project, team, developer, qa, from, to };
-  const filtered = filterBugs(bugs, bugFilter, { releaseById: relById, projectById: projectsById }).sort((a, b) =>
+  const search = useDebounced(q, 300);
+  const bugFilter = { search, status, severity: sev, platform, tag, feature, project, team, developer, qa, from, to };
+  const filterKey = JSON.stringify(bugFilter);
+  const scopeKey = scopeProjectIds ? [...scopeProjectIds].sort().join(',') : 'all';
+  useEffect(() => { setPage(0); }, [filterKey, quick, sort, scopeKey]);
+
+  const serverQ = useQuery({
+    queryKey: ['bugs', 'page', scopeKey, filterKey, quick, sort, page],
+    queryFn: () => api.fetchBugsPage({ filters: bugFilter, projectIds: scopeProjectIds, quick, sort, offset: page * BUGS_PAGE_SIZE, limit: BUGS_PAGE_SIZE }),
+    placeholderData: keepPreviousData,
+  });
+  const server = serverQ.data || null;          // null = list_bugs not deployed, or still loading
+  const local = serverQ.data === null;          // fall back to filtering the loaded bugs
+  const relById = useMemo(() => {
+    if (!server) return globalRelById;
+    const m = { ...globalRelById };
+    server.releases.forEach((r) => (m[r.id] = r));
+    return m;
+  }, [globalRelById, server]);
+
+  const filtered = filterBugs(bugs, bugFilter, { releaseById: globalRelById, projectById: projectsById }).sort((a, b) =>
     sort === 'oldest'
       ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
   const metrics = aggregateBugMetrics(filtered);
   // aging = active bugs from the SAME filtered dataset, at/over SLA, oldest first
-  const aging = agingBugs(filtered, 6);
-  const agingAll = agingBugs(filtered);
-  const agingIds = new Set(agingAll.map((b) => b.id));
+  const localAging = agingBugs(filtered);
+  const agingIds = new Set(localAging.map((b) => b.id));
+  const localWf = bugWorkflow(metrics);
+  // server mode: the database's counts; the overdue panel lists its 50 oldest
+  const wf = server ? { total: server.total, ...server.counts } : localWf;
   // Each bug is a single row now — carried is a plain per-bug flag.
-  const carried = filtered.filter((b) => b.carriedForward).length;
-  const wf = bugWorkflow(metrics);
+  const carried = server ? server.counts.carried : filtered.filter((b) => b.carriedForward).length;
+  const agingAll = server ? server.aging : localAging;
+  const agingCount = server ? server.agingTotal : localAging.length;
   // The status chips narrow the list ON TOP of the dropdown filters; chip counts
   // stay on `filtered` so they don't change while you click between them.
   const QUICK = {
@@ -125,14 +160,28 @@ export function BugsPage({
     carried: (b) => !!b.carriedForward,
     aging: (b) => agingIds.has(b.id),
   };
-  const listed = quick === 'all' ? filtered : filtered.filter(QUICK[quick] || (() => true));
-  const pageBugs = listed.slice(0, visible);
+  const localListed = quick === 'all' ? filtered : filtered.filter(QUICK[quick] || (() => true));
+  const listedCount = server ? server.listed : localListed.length;
+  const pageBugs = server ? server.rows : local ? localListed.slice(page * BUGS_PAGE_SIZE, (page + 1) * BUGS_PAGE_SIZE) : [];
+  const loadingFirst = serverQ.isPending;
+  // a page past the end (e.g. after the last bug on it was verified): step back
+  useEffect(() => {
+    if (!loadingFirst && !serverQ.isPlaceholderData && page > 0 && pageBugs.length === 0 && listedCount > 0) {
+      setPage(Math.ceil(listedCount / BUGS_PAGE_SIZE) - 1);
+    }
+  }, [loadingFirst, serverQ.isPlaceholderData, page, pageBugs.length, listedCount]);
 
   // Delays & Attention Needed — operational bottlenecks (over-SLA releases,
   // developer/reviewer overload). Lives here on the live board, not Analytics.
   // Uses the live releases in the same scope + the current filtered live bugs.
-  const relScoped = filterReleases(releases || [], bugFilter, { projectById: projectsById });
-  const bottlenecks = computeBottlenecks(relScoped, filtered, {
+  // live work only (releases not closed + their bugs), loaded for this panel;
+  // the lists loaded at sign-in until it's back or if the migration isn't applied
+  const liveFallback = useMemo(() => (releasesProp ? { releases: releasesProp, bugs: bugsProp || NONE } : null), [releasesProp, bugsProp]);
+  const live = useMetricsData({ scopeProjectIds, liveOnly: true, fallback: liveFallback });
+  const liveRelById = useMemo(() => Object.fromEntries(live.releases.map((r) => [r.id, r])), [live.releases]);
+  const liveFiltered = live.source === 'db' ? filterBugs(live.bugs, bugFilter, { releaseById: liveRelById, projectById: projectsById }) : filtered;
+  const relScoped = filterReleases(live.releases, bugFilter, { projectById: projectsById });
+  const bottlenecks = computeBottlenecks(relScoped, liveFiltered, {
     projectsById,
     profilesById,
     profiles,
@@ -141,9 +190,9 @@ export function BugsPage({
   });
 
   // whole-scope denominator (this page's data, no filters) for "X of Y"
-  const scopeOpen = aggregateBugMetrics(
-    filterBugs(bugs, {}, { releaseById: relById, projectById: projectsById })
-  ).active;
+  const scopeOpen = server
+    ? server.scopeActive
+    : aggregateBugMetrics(filterBugs(bugs, {}, { releaseById: globalRelById, projectById: projectsById })).active;
 
   // human-readable active-filter breadcrumb
   const pName = (id) => profiles.find((p) => p.id === id)?.name || id;
@@ -171,7 +220,7 @@ export function BugsPage({
   const anyFilter = crumbs.length > 0 || quick !== 'all';
   const resetAll = () => {
     setQ(''); setStatus('all'); setSev('all'); setPlatform('all'); setTag('all'); setFeature('all'); setProject('all');
-    setTeam('all'); setDeveloper('all'); setQa('all'); setFrom(''); setTo(''); setSort('newest'); setQuick('all'); setMore(false); setVisible(20);
+    setTeam('all'); setDeveloper('all'); setQa('all'); setFrom(''); setTo(''); setSort('newest'); setQuick('all'); setMore(false); setPage(0);
   };
 
   return (
@@ -186,9 +235,9 @@ export function BugsPage({
           ['awaitingQa', 'Fixed, awaiting QA', wf.awaitingQa, 'var(--warning)'],
           ['verified', 'Confirmed fixed', wf.verified, 'var(--success)'],
           ['carried', 'Left over from a previous build', carried, 'var(--warning)'],
-          ['aging', 'Overdue', agingIds.size, 'var(--danger)'],
+          ['aging', 'Overdue', agingCount, 'var(--danger)'],
         ].map(([k, label, value, color]) => (
-          <QuickChip key={k} label={label} value={value} color={color} active={quick === k} onClick={() => { setQuick(k); setVisible(20); }} />
+          <QuickChip key={k} label={label} value={loadingFirst ? '…' : value} color={color} active={quick === k} onClick={() => setQuick(k)} />
         ))}
       </div>
 
@@ -199,7 +248,8 @@ export function BugsPage({
             style={{ ...inputStyle, flex: '1 1 220px', width: 'auto', minHeight: 36 }}
             value={q}
             placeholder="Search bugs or projects…"
-            onChange={(e) => { setQ(e.target.value); setVisible(20); }}
+            aria-label="Search bugs"
+            onChange={(e) => setQ(e.target.value)}
           />
           <select style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="all">All statuses</option>
@@ -255,18 +305,18 @@ export function BugsPage({
           </div>
         )}
         <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-          Showing <b style={{ color: 'var(--color-text-secondary)' }}>{listed.length}</b> of {scopeOpen} active bugs
+          Showing <b style={{ color: 'var(--color-text-secondary)' }}>{loadingFirst ? '…' : listedCount.toLocaleString()}</b> of {loadingFirst ? '…' : scopeOpen.toLocaleString()} active bugs
           {crumbs.length ? ` · ${crumbs.join(' · ')}` : ''} · active releases only — full history lives in Analytics
         </div>
       </div>
 
       {/* attention — two compact side-by-side panels, capped at 4 rows each so the
           bug list (the actual work) stays near the top */}
-      {(agingAll.length > 0 || bottlenecks.length > 0) && (
+      {(agingCount > 0 || bottlenecks.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16, marginBottom: 16, alignItems: 'stretch' }}>
-          {agingAll.length > 0 && (
+          {agingCount > 0 && (
             <div style={{ ...card, padding: 16 }}>
-              {sectionTitle('Oldest open problems', `${agingAll.length} open longer than the agreed limit · click one to open its build`, 'var(--danger)')}
+              {sectionTitle('Oldest open problems', `${agingCount} open longer than the agreed limit · click one to open its build`, 'var(--danger)')}
               {(showAging ? agingAll : agingAll.slice(0, 4)).map((b) => (
                 <div
                   key={b.id}
@@ -287,7 +337,7 @@ export function BugsPage({
               ))}
               {agingAll.length > 4 && (
                 <button onClick={() => setShowAging((v) => !v)} style={{ ...tbBtn, minHeight: 30, fontSize: 12, marginTop: 8 }}>
-                  {showAging ? 'Show fewer' : `Show all ${agingAll.length}`}
+                  {showAging ? 'Show fewer' : agingAll.length < agingCount ? `Show the ${agingAll.length} oldest` : `Show all ${agingAll.length}`}
                 </button>
               )}
             </div>
@@ -312,11 +362,19 @@ export function BugsPage({
       )}
 
       {/* list */}
-      {listed.length === 0 ? (
+      {serverQ.isError ? (
+        <div style={{ ...card, padding: 40, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Couldn’t load bugs</div>
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>{serverQ.error?.message}</div>
+          <button style={ghostButton} onClick={() => serverQ.refetch()}>Try again</button>
+        </div>
+      ) : loadingFirst ? (
+        <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading bugs…</div>
+      ) : listedCount === 0 ? (
         <Empty>No bugs match your filters.</Empty>
       ) : (
         <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: serverQ.isPlaceholderData ? 0.6 : 1, transition: 'opacity .15s' }}>
             {pageBugs.map((b) => (
               <BugCard
                 key={b.id}
@@ -336,11 +394,7 @@ export function BugsPage({
               />
             ))}
           </div>
-          {visible < listed.length && (
-            <button style={{ ...ghostButton, width: '100%', marginTop: 12 }} onClick={() => setVisible((v) => v + 20)}>
-              Load more ({listed.length - visible} left)
-            </button>
-          )}
+          <Pager page={page} pageSize={BUGS_PAGE_SIZE} total={listedCount} onPage={setPage} busy={serverQ.isFetching} noun={listedCount === 1 ? 'bug' : 'bugs'} />
         </>
       )}
     </>

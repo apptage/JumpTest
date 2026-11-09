@@ -14,7 +14,7 @@ import XLSX from 'xlsx';
 import { createClient } from '@supabase/supabase-js';
 import {
   SHEETS, KINDS, REQUESTERS, CHANNELS, CATEGORIES, PRIORITIES, TASK_STATUSES,
-  STAGES, STAGE_STATUSES, MEMBER_ROLES, LINK_CATEGORIES,
+  STAGES, STAGE_STATUSES, MEMBER_ROLES, LINK_CATEGORIES, KIND_ALIASES, categoryForNewDevelopment, DEFAULT_REQUESTER, REQUESTER_ALIASES, categorySuitsKind,
 } from './schema.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -141,6 +141,7 @@ export function readWorkbook(wb) {
   const errors = [];
   const warnings = [];
   const data = {};
+  const converted = { kinds: 0, landing: 0, major: 0 };
 
   for (const s of SHEETS) {
     data[s.name] = [];
@@ -174,14 +175,21 @@ export function readWorkbook(wb) {
 
       text('project_name');
       if (s.name === 'Projects') {
-        take('cms_kind', choice(raw.cms_kind, KINDS));
+        const kindAlias = KIND_ALIASES[fold(raw.cms_kind)];
+        if (kindAlias) converted.kinds += 1;
+        take('cms_kind', choice(kindAlias ?? raw.cms_kind, KINDS));
         text('team');
         text('brand');
       } else if (s.name === 'Tasks') {
-        take('category', choice(raw.category, CATEGORIES));
+        let category = raw.category;
+        if (foldKey(category) === 'new_development') {
+          category = categoryForNewDevelopment(raw.title);
+          converted[category === 'app_landing' ? 'landing' : 'major'] += 1;
+        }
+        take('category', choice(category, CATEGORIES));
         text('title');
         out.details = norm(raw.details);
-        take('requested_by', choice(raw.requested_by, REQUESTERS));
+        take('requested_by', choice(norm(raw.requested_by) === '' ? DEFAULT_REQUESTER : REQUESTER_ALIASES[fold(raw.requested_by)] ?? raw.requested_by, REQUESTERS));
         take('channel', choice(raw.channel, CHANNELS));
         take('reference_url', urlCell(raw.reference_url));
         take('assignee_email', emailCell(raw.assignee_email));
@@ -213,6 +221,11 @@ export function readWorkbook(wb) {
       if (rowErrors.length) rowErrors.forEach((e) => errors.push(`${where}: ${e}`));
       else data[s.name].push(out);
     });
+  }
+
+  if (converted.kinds) warnings.push(`Projects: ${converted.kinds} App Landing Page row(s) stored as website`);
+  if (converted.landing + converted.major) {
+    warnings.push(`Tasks: ${converted.landing + converted.major} new_development row(s) stored as app_landing (${converted.landing}) or major_functionality (${converted.major})`);
   }
 
   // duplicates inside the file
@@ -330,6 +343,21 @@ export async function plan(db, data) {
       target.set(fold(r.project_name), ref);
     }
   }
+  // A name on another sheet that's on neither Projects nor the app gets a new project.
+  // It takes the team when the Projects sheet uses just one, and is flagged in case it's a typo.
+  const sheetTeams = [...new Set(data.Projects.map((r) => fold(r.team)).filter(Boolean))];
+  const defaultTeam = sheetTeams.length === 1 ? teamByName.get(sheetTeams[0]) : null;
+  const createMissingProject = (r) => {
+    const tasks = data.Tasks.filter((t) => fold(t.project_name) === fold(r.project_name));
+    const kind = tasks.length && tasks.every((t) => t.category === 'api_integration') ? 'api_integration' : 'website';
+    const team = defaultTeam && defaultTeam !== 'ambiguous' ? defaultTeam : null;
+    const row = { name: r.project_name, type: 'cms', platform: 'CMS', cms_kind: kind, team_id: team?.id ?? null };
+    const ref = { id: null, name: r.project_name, kind, team_id: row.team_id };
+    projectOps.push({ op: 'create', name: r.project_name, row, ref, where: r._where });
+    target.set(fold(r.project_name), ref);
+    warnings.push(`${r._where}: "${r.project_name}" isn't on the Projects sheet or in the app, so it will be created (${kind}, team ${team?.name || 'none'}). Check it isn't a typo`);
+    return ref;
+  };
   // rows on other sheets may also point at CMS projects already in the app
   const resolveProject = (r) => {
     const k = fold(r.project_name);
@@ -342,7 +370,7 @@ export async function plan(db, data) {
     }
     if (existing === 'ambiguous') errors.push(`${r._where}: more than one project in the app is named "${r.project_name}"`);
     else if (existing) errors.push(`${r._where}: "${r.project_name}" is a ${existing.type} project, not CMS`);
-    else errors.push(`${r._where}: project "${r.project_name}" is not on the Projects sheet and not in the app`);
+    else return createMissingProject(r);
     return null;
   };
 
@@ -358,7 +386,7 @@ export async function plan(db, data) {
     ])
     : [[], [], [], []];
   const has = (list, keyFn) => new Set(list.map(keyFn));
-  const taskKeys = has(tasks, (t) => [t.project_id, t.category, fold(t.title)].join('|'));
+  const taskByKey = new Map(tasks.map((t) => [[t.project_id, t.category, fold(t.title)].join('|'), t]));
   const stageByKey = new Map(stages.map((s) => [`${s.project_id}|${s.stage}`, s]));
   const memberKeys = has(members, (m) => `${m.project_id}|${m.user_id}`);
   const linkKeys = has(links, (l) => [l.project_id, l.category, fold(l.title)].join('|'));
@@ -369,12 +397,23 @@ export async function plan(db, data) {
     const p = r._project;
     const assignee = person(r.assignee_email, r._where, 'assignee');
     if (!p || assignee === undefined) continue;
-    if (CATEGORIES[r.category].kind !== p.kind) {
+    if (!categorySuitsKind(r.category, p.kind)) {
       errors.push(`${r._where}: category ${r.category} does not suit ${p.name} (${KINDS[p.kind]})`);
       continue;
     }
-    if (p.id && taskKeys.has([p.id, r.category, fold(r.title)].join('|'))) {
-      taskOps.push({ op: 'skip', project: p, title: r.title, where: r._where });
+    const existingTask = p.id ? taskByKey.get([p.id, r.category, fold(r.title)].join('|')) : null;
+    if (existingTask) {
+      // the same task worked on by someone else: keep their details on it, once
+      const block = assignee && r.details ? `${assignee.name || assignee.email}: ${r.details}` : '';
+      const current = existingTask.details || '';
+      if (block && assignee.id !== existingTask.assigned_to && !current.includes(block)) {
+        taskOps.push({
+          op: 'append', id: existingTask.id, project: p, title: r.title, where: r._where,
+          by: assignee.name || assignee.email, details: current ? `${current}\n\n${block}` : block,
+        });
+      } else {
+        taskOps.push({ op: 'skip', project: p, title: r.title, where: r._where });
+      }
       continue;
     }
     taskOps.push({
@@ -448,7 +487,7 @@ export function summarize(p) {
   const n = (ops, op) => ops.filter((o) => o.op === op).length;
   const lines = [
     `Projects: ${n(p.projectOps, 'create')} to create, ${n(p.projectOps, 'update')} to update, ${n(p.projectOps, 'keep')} unchanged`,
-    `Tasks:    ${n(p.taskOps, 'create')} to create, ${n(p.taskOps, 'skip')} already there`,
+    `Tasks:    ${n(p.taskOps, 'create')} to create, ${n(p.taskOps, 'append')} to add details to, ${n(p.taskOps, 'skip')} already there`,
     `Journey:  ${n(p.journeyOps, 'start')} journey(s) to start, ${n(p.journeyOps, 'update')} stage(s) to update`,
     `Members:  ${n(p.memberOps, 'create')} to add, ${n(p.memberOps, 'skip')} already there`,
     `Links:    ${n(p.linkOps, 'create')} to create, ${n(p.linkOps, 'skip')} already there`,
@@ -456,6 +495,7 @@ export function summarize(p) {
   const detail = [];
   for (const o of p.projectOps) if (o.op !== 'keep') detail.push(`  ${o.op === 'create' ? '+' : '~'} project  ${o.name}${o.op === 'update' ? `  (${Object.keys(o.patch).join(', ')})` : ''}`);
   for (const o of p.taskOps) if (o.op === 'create') detail.push(`  + task     ${o.project.name}: ${o.title}`);
+  for (const o of p.taskOps) if (o.op === 'append') detail.push(`  ~ task     ${o.project.name}: ${o.title} (adds details from ${o.by})`);
   for (const o of p.journeyOps) detail.push(o.op === 'start' ? `  + journey  ${o.project.name} (${o.stages.length} stages)` : `  ~ stage    ${o.project.name}: ${o.stage} (${Object.keys(o.patch).join(', ')})`);
   for (const o of p.memberOps) if (o.op === 'create') detail.push(`  + member   ${o.project.name}: ${o.email} (${o.row.project_role}, ${o.row.access_type})`);
   for (const o of p.linkOps) if (o.op === 'create') detail.push(`  + link     ${o.project.name}: ${o.title}`);
@@ -488,6 +528,9 @@ export async function apply(db, p, log = () => {}) {
     if (rows.length) log(`added ${rows.length} ${label}`);
   };
   await insertMany('cms_tasks', p.taskOps, 'task(s)');
+  const appends = p.taskOps.filter((o) => o.op === 'append');
+  for (const o of appends) must(await db.from('cms_tasks').update({ details: o.details }).eq('id', o.id), `Adding details to ${o.title} on ${o.project.name}`);
+  if (appends.length) log(`added details to ${appends.length} task(s)`);
   for (const o of p.journeyOps.filter((x) => x.op === 'start')) {
     must(await db.from('cms_stages').upsert(o.stages.map((stage) => ({ project_id: o.project.id, stage })), { onConflict: 'project_id,stage', ignoreDuplicates: true }), `Starting the journey for ${o.project.name}`);
   }
@@ -579,7 +622,7 @@ async function main(argv) {
     console.log('\nCheck only. Nothing was written. Run "apply" to import.');
     return 0;
   }
-  const nothing = [p.taskOps, p.memberOps, p.linkOps].every((ops) => !ops.some((o) => o.op === 'create'))
+  const nothing = [p.taskOps, p.memberOps, p.linkOps].every((ops) => !ops.some((o) => o.op === 'create' || o.op === 'append'))
     && !p.projectOps.some((o) => o.op !== 'keep') && !p.journeyOps.length;
   if (nothing) { console.log('\nNothing to import.'); return 0; }
 

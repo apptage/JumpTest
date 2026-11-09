@@ -1,10 +1,25 @@
 import { supabase } from './supabaseClient.js';
 import { normalizeWbsStatus } from './constants.js';
-import { makeTimeLogApi } from './api/timeLogs.js';
+import { makeTimeLogApi, mapTimeLog as mapTimeLogRow } from './api/timeLogs.js';
 
 /* ------------------------------------------------------------------ */
 /* Mappers (snake_case -> camelCase)                                  */
 /* ------------------------------------------------------------------ */
+
+/* Every row a query matches. Supabase returns at most 1000 rows per request and
+   silently drops the rest, so this pages until a short page comes back. `build`
+   returns a fresh query each time; it must have a stable order (end with a unique
+   column like id) so no row is skipped or repeated between pages. */
+const ALL_PAGE = 1000;
+async function selectEvery(build) {
+  const out = [];
+  for (let from = 0; ; from += ALL_PAGE) {
+    const { data, error } = await build().range(from, from + ALL_PAGE - 1);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < ALL_PAGE) return out;
+  }
+}
 
 export function mapProfile(p) {
   return {
@@ -179,8 +194,7 @@ export function membershipActive(m) {
 }
 
 export async function fetchProjectMembers() {
-  const { data, error } = await supabase.from('project_members').select('*');
-  if (error) throw error;
+  const data = await selectEvery(() => supabase.from('project_members').select('*').order('id'));
   return data.map(mapProjectMember);
 }
 
@@ -265,11 +279,11 @@ export async function adminCreateUser(payload) {
 }
 
 export async function fetchProfiles() {
-  const { data, error } = await supabase
+  const data = await selectEvery(() => supabase
     .from('profiles')
     .select('*')
-    .order('created_at', { ascending: true });
-  if (error) throw error;
+    .order('created_at', { ascending: true })
+    .order('id'));
   return data.map(mapProfile);
 }
 
@@ -508,14 +522,15 @@ export async function fetchWbsPlatformTargets(projectId) {
    non-unique column (position) drops the high-position (usually incomplete)
    items, which over-reports completion % in the Command Center. Paging by the
    unique `id` keeps page boundaries stable. */
-async function selectAllByProjects(table, projectIds) {
+// `narrow` optionally adds filters, e.g. (q) => q.in('status', [...])
+async function selectAllByProjects(table, projectIds, narrow = (q) => q) {
   const PAGE = 1000;
   const out = [];
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
+    const { data, error } = await narrow(supabase
       .from(table)
       .select('*')
-      .in('project_id', projectIds)
+      .in('project_id', projectIds))
       .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw error;
@@ -809,11 +824,11 @@ export async function deleteTeam(id) {
 /* ------------------------------------------------------------------ */
 
 export async function fetchProjects() {
-  const { data, error } = await supabase
+  const data = await selectEvery(() => supabase
     .from('projects')
     .select('*')
-    .order('created_at', { ascending: true });
-  if (error) throw error;
+    .order('created_at', { ascending: true })
+    .order('id'));
   return data.map(mapProject);
 }
 
@@ -863,12 +878,12 @@ export async function deleteProject(id) {
 /* ------------------------------------------------------------------ */
 
 export async function fetchReleases() {
-  const { data, error } = await supabase
+  const data = await selectEvery(() => supabase
     .from('releases')
     .select('*')
     .order('date', { ascending: false })
-    .order('created_at', { ascending: false });
-  if (error) throw error;
+    .order('created_at', { ascending: false })
+    .order('id'));
   return data.map(mapRelease);
 }
 
@@ -1021,11 +1036,11 @@ export async function fetchSentBackReleases(projectId, submitterId, platform, co
 /* ------------------------------------------------------------------ */
 
 export async function fetchBugs() {
-  const { data, error } = await supabase
+  const data = await selectEvery(() => supabase
     .from('bugs')
     .select('*')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
+    .order('created_at', { ascending: false })
+    .order('id'));
   return data.map(mapBug);
 }
 
@@ -1289,11 +1304,11 @@ export async function markAllNotificationsRead(userId) {
 /* ------------------------------------------------------------------ */
 
 export async function fetchChecklistItems() {
-  const { data, error } = await supabase
+  const data = await selectEvery(() => supabase
     .from('checklist_items')
     .select('*')
-    .order('position', { ascending: true });
-  if (error) throw error;
+    .order('position', { ascending: true })
+    .order('id'));
   return data.map(mapChecklistItem);
 }
 
@@ -1591,4 +1606,343 @@ export async function startCmsJourney(projectId, stageKeys) {
 export async function updateCmsStage(id, patch) {
   const { error } = await supabase.from('cms_stages').update(patch).eq('id', id);
   if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ */
+/* Paged lists (stage 1): the Releases and Bugs pages load one page    */
+/* at a time, filtered and counted by the database.                    */
+/* ------------------------------------------------------------------ */
+const isMissingFunction = (e) => e?.code === 'PGRST202' || e?.code === '42883';
+// PostgREST's or() syntax breaks on these, and * / % are wildcards
+const cleanTerm = (s) => String(s || '').replace(/[,()"'*%\\:]/g, ' ').trim();
+
+// releases in the caller's scope + the page's project / platform / type filters
+function releasesQuery(select, opts, { projectIds, project, platform, type }) {
+  let q = supabase.from('releases').select(select, opts);
+  if (projectIds) q = q.in('project_id', projectIds.length ? projectIds : ['00000000-0000-0000-0000-000000000000']);
+  if (project && project !== 'all') q = q.eq('project_id', project);
+  if (platform && platform !== 'all') q = q.eq('platform', platform);
+  if (type && type !== 'all') q = q.eq('release_type', type);
+  return q;
+}
+
+/* One page of releases, newest first. status 'all' hides closed ones, as the
+   Releases page always has. searchProjectIds = projects whose name matches the
+   search, worked out by the caller from the project list it already has. */
+export async function fetchReleasesPage({ projectIds = null, project, platform, type, status = 'all', search = '', searchProjectIds = [], offset = 0, limit = 20 }) {
+  let q = releasesQuery('*', { count: 'exact' }, { projectIds, project, platform, type });
+  q = status === 'all' ? q.neq('status', 'closed') : q.eq('status', status);
+  const term = cleanTerm(search).replace(/^v+\s*/i, '');
+  if (term) {
+    const parts = [`version.ilike.*${term}*`, `release_notes.ilike.*${term}*`];
+    if (searchProjectIds.length) parts.push(`project_id.in.(${searchProjectIds.join(',')})`);
+    q = q.or(parts.join(','));
+  }
+  const { data, error, count } = await q
+    .order('date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .order('id')
+    .range(offset, offset + limit - 1);
+  if (error) throw error;
+  return { rows: data.map(mapRelease), total: count ?? data.length };
+}
+
+// count per release status for the chips, plus every release in scope (closed included)
+export async function fetchReleaseStatusCounts({ projectIds = null, project, platform, type, statuses }) {
+  const head = { count: 'exact', head: true };
+  const [all, ...each] = await Promise.all([
+    releasesQuery('id', head, { projectIds }),
+    ...statuses.map((s) => releasesQuery('id', head, { projectIds, project, platform, type }).eq('status', s)),
+  ]);
+  const failed = [all, ...each].find((r) => r.error);
+  if (failed) throw failed.error;
+  return { scopeTotal: all.count ?? 0, byStatus: Object.fromEntries(statuses.map((s, i) => [s, each[i].count ?? 0])) };
+}
+
+// open bugs on each of these releases (a page's worth)
+export async function fetchOpenBugCountsByRelease(releaseIds) {
+  if (!releaseIds.length) return {};
+  const data = await selectEvery(() => supabase
+    .from('bugs')
+    .select('id, release_id')
+    .in('release_id', releaseIds)
+    .eq('status', 'open')
+    .order('id'));
+  const out = {};
+  data.forEach((b) => { out[b.release_id] = (out[b.release_id] || 0) + 1; });
+  return out;
+}
+
+/* One page of the live bug board (see list_bugs in 202611100001_paged_lists.sql).
+   Returns null when that migration isn't applied yet, so the page can fall back. */
+export async function fetchBugsPage({ filters = {}, projectIds = null, quick = 'all', sort = 'newest', offset = 0, limit = 20 }) {
+  const { data, error } = await supabase.rpc('list_bugs', {
+    p_filters: filters,
+    p_project_ids: projectIds,
+    p_quick: quick,
+    p_sort: sort,
+    p_offset: offset,
+    p_limit: limit,
+  });
+  if (error) {
+    if (isMissingFunction(error)) return null;
+    throw error;
+  }
+  return {
+    total: data.total,
+    counts: data.counts,
+    listed: data.listed,
+    scopeActive: data.scopeActive,
+    rows: (data.rows || []).map(mapBug),
+    aging: (data.aging || []).map(mapBug),
+    agingTotal: data.agingTotal,
+    releases: (data.releases || []).map(mapRelease),
+  };
+}
+
+/* ---- stage 2: Project Hub loads one project's data ---- */
+// every release of one project, newest first (same order as fetchReleases)
+export async function fetchProjectReleases(projectId) {
+  const data = await selectEvery(() => supabase
+    .from('releases')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .order('id'));
+  return data.map(mapRelease);
+}
+// every bug on one project's releases, newest first
+export async function fetchProjectBugs(projectId) {
+  const data = await selectEvery(() => supabase
+    .from('bugs')
+    .select('*, releases!inner(project_id)')
+    .eq('releases.project_id', projectId)
+    .order('created_at', { ascending: false })
+    .order('id'));
+  return data.map(mapBug);
+}
+/* Builds, open bugs, latest build date and active build per project, for the
+   Project Hub cards (project_summaries in 202611100002_project_summaries.sql).
+   Returns null when that migration isn't applied yet, so the cards can fall back. */
+export async function fetchProjectSummaries(projectIds) {
+  const { data, error } = await supabase.rpc('project_summaries', { p_project_ids: projectIds });
+  if (error) {
+    if (isMissingFunction(error)) return null;
+    throw error;
+  }
+  return data || {};
+}
+
+/* ---- stage 3: the releases and bugs a dashboard or report needs ----
+   See metrics_dataset in 202611100003_metrics_dataset.sql for what's included.
+   since: 'YYYY-MM-DD' (or an ISO time); null = all time. slim drops bug
+   descriptions, screenshots and resolution notes. Returns null when the
+   migration isn't applied yet, so the page can fall back. */
+export async function fetchMetricsData({ projectIds = null, since = null, liveOnly = false, slim = true } = {}) {
+  const { data, error } = await supabase.rpc('metrics_dataset', {
+    p_project_ids: projectIds,
+    p_since: since,
+    p_live_only: liveOnly,
+    p_slim: slim,
+  });
+  if (error) {
+    if (isMissingFunction(error)) return null;
+    throw error;
+  }
+  return { releases: (data?.releases || []).map(mapRelease), bugs: (data?.bugs || []).map(mapBug) };
+}
+
+/* ---- stage 4: no lists at sign-in; each view asks for what it shows ---- */
+
+/* True once every paged-lists migration is applied (user_summaries is the last
+   one). Until then the app keeps loading every release and bug at sign-in, so
+   nothing breaks before `npm run db:push`. */
+export async function pagedListsReady() {
+  const { error } = await supabase.rpc('user_summaries', { p_project_ids: [] });
+  if (!error) return true;
+  if (isMissingFunction(error)) return false;
+  throw error;
+}
+
+// per person: builds, openBugsOnBuilds, passRate, reviewed, pendingReviews, bugsFiled
+export async function fetchUserSummaries(projectIds) {
+  const { data, error } = await supabase.rpc('user_summaries', { p_project_ids: projectIds });
+  if (error) {
+    if (isMissingFunction(error)) return null;
+    throw error;
+  }
+  return data || {};
+}
+
+// one release with its bugs and the builds it replaced / was replaced by
+export async function fetchReleaseDetail(id) {
+  const one = async (q) => {
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  };
+  const [rel, bugs, after] = await Promise.all([
+    one(supabase.from('releases').select('*').eq('id', id).maybeSingle()),
+    selectEvery(() => supabase.from('bugs').select('*').eq('release_id', id).order('created_at', { ascending: false }).order('id')),
+    one(supabase.from('releases').select('*').eq('supersedes_release_id', id).order('created_at', { ascending: false }).limit(1)),
+  ]);
+  if (!rel) return null;
+  const before = rel.supersedes_release_id
+    ? await one(supabase.from('releases').select('*').eq('id', rel.supersedes_release_id).maybeSingle())
+    : null;
+  return {
+    release: mapRelease(rel),
+    bugs: bugs.map(mapBug),
+    supersedes: before ? mapRelease(before) : null,
+    supersededBy: after?.[0] ? mapRelease(after[0]) : null,
+  };
+}
+
+// my builds that QA sent back, and the bugs on them (the Submit window shows these)
+export async function fetchMySentBack(userId) {
+  const releases = await selectEvery(() => supabase
+    .from('releases')
+    .select('*')
+    .eq('status', 'sent_back')
+    .eq('submitted_by_id', userId)
+    .order('created_at', { ascending: false })
+    .order('id'));
+  const ids = releases.map((r) => r.id);
+  const bugs = ids.length
+    ? await selectEvery(() => supabase.from('bugs').select('*').in('release_id', ids).order('id'))
+    : [];
+  return { releases: releases.map(mapRelease), bugs: bugs.map(mapBug) };
+}
+
+// the versions already used in one release stream (duplicate-version check)
+export async function fetchStreamVersions(projectId, platform, component) {
+  const data = await selectEvery(() => {
+    let q = supabase.from('releases').select('id, version, component').eq('project_id', projectId).eq('platform', platform);
+    return q.order('id');
+  });
+  return data
+    .filter((r) => platform !== 'Web' || (r.component || '') === (component || ''))
+    .map((r) => r.version);
+}
+
+// bugs with this status on releases that aren't closed, in these projects (null = all)
+export async function countLiveBugs({ projectIds = null, status }) {
+  let q = supabase
+    .from('bugs')
+    .select('id, releases!inner(status, project_id)', { count: 'exact', head: true })
+    .eq('status', status)
+    .neq('releases.status', 'closed');
+  if (projectIds) q = q.in('releases.project_id', projectIds.length ? projectIds : ['00000000-0000-0000-0000-000000000000']);
+  const { count, error } = await q;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/* Top-bar search: up to 5 releases (version, or a matching project's name) and 5
+   bugs (title). projectNameIds = projects whose name matches, worked out by the
+   caller. projectIds = the caller's scope, null = all. */
+export async function searchReleasesAndBugs({ term, projectIds = null, projectNameIds = [] }) {
+  const tt = cleanTerm(term).replace(/^v+\s*/i, '');
+  if (!tt && !projectNameIds.length) return { releases: [], bugs: [] };
+  const scope = (q, col) => (projectIds ? q.in(col, projectIds.length ? projectIds : ['00000000-0000-0000-0000-000000000000']) : q);
+  const relOr = [tt && `version.ilike.*${tt}*`, projectNameIds.length && `project_id.in.(${projectNameIds.join(',')})`].filter(Boolean).join(',');
+  const [rel, bug] = await Promise.all([
+    scope(supabase.from('releases').select('*'), 'project_id').or(relOr).order('created_at', { ascending: false }).limit(5),
+    tt
+      ? scope(supabase.from('bugs').select('*, releases!inner(project_id)'), 'releases.project_id').ilike('title', `%${tt}%`).order('created_at', { ascending: false }).limit(5)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (rel.error) throw rel.error;
+  if (bug.error) throw bug.error;
+  return { releases: rel.data.map(mapRelease), bugs: bug.data.map(mapBug) };
+}
+
+/* Open / done / total CMS tasks per project, for the cards on screen
+   (cms_task_counts in 202611100005_cms_task_counts.sql). Until that migration
+   is applied it counts the tasks of just these projects in the browser. */
+export async function fetchCmsTaskCounts(projectIds) {
+  if (!projectIds?.length) return {};
+  const { data, error } = await supabase.rpc('cms_task_counts', { p_project_ids: projectIds });
+  if (!error) return data || {};
+  if (!isMissingFunction(error)) throw error;
+  const out = {};
+  for (const t of await fetchCmsTasksForProjects(projectIds)) {
+    const c = (out[t.projectId] = out[t.projectId] || { open: 0, done: 0, total: 0 });
+    c.total += 1;
+    if (t.status === 'done') c.done += 1; else c.open += 1;
+  }
+  return out;
+}
+
+/* ---- totals instead of downloads ---- */
+const WBS_OPEN = ['not_started', 'in_progress', 'in_qa', 'blocked'];
+const CMS_OPEN = ['todo', 'in_progress', 'in_review', 'on_hold'];
+// unfinished WBS items / CMS tasks only (the Dashboard's task lists)
+export async function fetchOpenWbsItemsForProjects(projectIds) {
+  if (!projectIds?.length) return [];
+  return (await selectAllByProjects('wbs_items', projectIds, (q) => q.in('status', WBS_OPEN))).map(mapWbsItem);
+}
+export async function fetchOpenCmsTasksForProjects(projectIds) {
+  if (!projectIds?.length) return [];
+  try {
+    return (await selectAllByProjects('cms_tasks', projectIds, (q) => q.in('status', CMS_OPEN))).map(mapCmsTask);
+  } catch (error) {
+    if (isMissingProjectInfo(error)) return [];
+    throw error;
+  }
+}
+
+/* { "<user id>": { hours, hoursWeek, projectIds } }, or null when
+   202611100006_time_and_wbs_totals.sql isn't applied (the caller falls back). */
+export async function fetchUserTimeTotals(userIds) {
+  if (!userIds?.length) return {};
+  const { data, error } = await supabase.rpc('user_time_totals', { p_user_ids: userIds });
+  if (error) {
+    if (isMissingFunction(error) || error.code === '42P01') return null;
+    throw error;
+  }
+  return data || {};
+}
+// { total, entries, byUser } for one project's completed time, or null (not applied)
+export async function fetchProjectTimeTotals(projectId) {
+  const { data, error } = await supabase.rpc('project_time_totals', { p_project: projectId });
+  if (error) {
+    if (isMissingFunction(error) || error.code === '42P01') return null;
+    throw error;
+  }
+  return data;
+}
+// one page of a project's time entries, newest first, with the total count
+export async function fetchTimeLogsPage(projectId, { offset = 0, limit = 20 } = {}) {
+  const { data, error, count } = await supabase
+    .from('time_logs')
+    .select('*', { count: 'exact' })
+    .eq('project_id', projectId)
+    .order('log_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .order('id')
+    .range(offset, offset + limit - 1);
+  if (error) {
+    if (error.code === '42P01' || error.code === 'PGRST205') return { rows: [], total: 0 };
+    throw error;
+  }
+  return { rows: data.map(mapTimeLogRow), total: count ?? data.length };
+}
+// [{ projectId, status, n }], or null when the function isn't applied
+export async function fetchWbsStatusCounts(projectIds) {
+  if (!projectIds?.length) return [];
+  const { data, error } = await supabase.rpc('wbs_status_counts', { p_project_ids: projectIds });
+  if (error) {
+    if (isMissingFunction(error)) return null;
+    throw error;
+  }
+  return data || [];
+}
+// how many releases these projects have (head count, no rows)
+export async function countReleases(projectIds) {
+  if (!projectIds?.length) return 0;
+  const { count, error } = await supabase.from('releases').select('id', { count: 'exact', head: true }).in('project_id', projectIds);
+  if (error) throw error;
+  return count ?? 0;
 }

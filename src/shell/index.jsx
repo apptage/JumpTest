@@ -8,8 +8,10 @@
                       theme toggle · account menu.
    Page titles/filters stay on the page (PageHeaderBar in ui-kit), never here. */
 import { useState, useEffect } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import * as api from '@/api.js';
 import { card, inputStyle, ghostButton, primaryButton, Logo, Wordmark, Avatar, CountBadge } from '@/ui.jsx';
-import { PageHeader, sideHead } from '@shared/ui-kit.jsx';
+import { PageHeader, sideHead, useDebounced } from '@shared/ui-kit.jsx';
 import { BrandLogo, BrandMark } from '@/brand.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
 import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
@@ -137,7 +139,7 @@ export function NavRail({ page, onNavigate, teamName, brand, canManage, isAdmin,
 /* ================================================================== */
 export function AppHeader({
   user, page, canSubmit, canManage, isAdmin, collapsed, onToggleCollapsed,
-  unread, notifOpen, notifications, projects, releases, bugs, projectsById,
+  unread, notifOpen, notifications, projects, releases, bugs, searchScopeIds = null, projectsById,
   onToggleNotif, onNotifClick, onMarkAllRead,
   onSubmitClick, onNewProject, onInviteUser, onOpenRelease, onNavigate, onSettings, onSignOut,
 }) {
@@ -168,7 +170,7 @@ export function AppHeader({
 
       {/* global search */}
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 120, padding: '0 12px' }}>
-        <GlobalSearch projects={projects} releases={releases} bugs={bugs} projectsById={projectsById} onNavigate={onNavigate} onOpenRelease={onOpenRelease} />
+        <GlobalSearch projects={projects} releases={releases} bugs={bugs} scopeIds={searchScopeIds} projectsById={projectsById} onNavigate={onNavigate} onOpenRelease={onOpenRelease} />
       </div>
 
       {/* QuickActionMenu — dark fill */}
@@ -326,19 +328,33 @@ export function SettingsPage({ user, team, onSignOut, reports }) {
 /* ================================================================== */
 /* Global search (header) + notifications dropdown                    */
 /* ================================================================== */
-function GlobalSearch({ projects, releases, bugs, projectsById, onNavigate, onOpenRelease }) {
+/* releases / bugs: the loaded lists (legacy mode). When they're not given, the
+   search asks the database instead, a moment after you stop typing. */
+function GlobalSearch({ projects, releases, bugs, scopeIds = null, projectsById, onNavigate, onOpenRelease }) {
   const [q, setQ] = useState('');
   const [focused, setFocused] = useState(false);
   const term = q.trim().toLowerCase();
+  const remote = !releases || !bugs;
+  const remoteTerm = useDebounced(term, 250);
+  const nameIds = remoteTerm.length >= 2 ? projects.filter((p) => p.name.toLowerCase().includes(remoteTerm)).map((p) => p.id) : [];
+  const searchQ = useQuery({
+    queryKey: ['search', scopeIds ? [...scopeIds].sort().join(',') : 'all', remoteTerm],
+    queryFn: () => api.searchReleasesAndBugs({ term: remoteTerm, projectIds: scopeIds, projectNameIds: nameIds }),
+    enabled: remote && remoteTerm.length >= 2,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+  const relList = remote ? (remoteTerm === term ? searchQ.data?.releases || [] : []) : releases;
+  const bugList = remote ? (remoteTerm === term ? searchQ.data?.bugs || [] : []) : bugs;
 
   const results =
     term.length >= 2
       ? [
-          ...releases
+          ...relList
             .filter((r) => `v${r.version}`.toLowerCase().includes(term) || (projectsById[r.projectId]?.name || '').toLowerCase().includes(term))
             .slice(0, 5)
             .map((r) => ({ key: 'r' + r.id, type: 'release', id: r.id, label: `v${r.version} · ${projectsById[r.projectId]?.name || ''}`, sub: `${r.platform} release` })),
-          ...bugs
+          ...bugList
             .filter((b) => b.title.toLowerCase().includes(term))
             .slice(0, 5)
             .map((b) => ({ key: 'b' + b.id, type: 'bug', id: b.releaseId, label: b.title, sub: 'Bug' })),

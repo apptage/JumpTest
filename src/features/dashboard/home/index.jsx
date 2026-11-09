@@ -4,6 +4,7 @@
      Team Lead  → the team's progress, each member's load, decisions waiting on them
      Developer  → my bugs, my tasks, my builds
      QA         → my test queue and re-tests */
+import { useMetricsData, daysAgo } from '@shared/useMetricsData.js';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as api from '@/api.js';
@@ -244,25 +245,31 @@ function QaView({ header, ctx, me, go, onOpenRelease, onNavigate }) {
 }
 
 /* ---------- page ---------- */
+/* The 30-day rates compare with the 30 days before, and the trend covers 8
+   weeks, so the page loads 63 days of releases and bugs plus all live work.
+   releases / bugs: the lists loaded at sign-in, used until that load is back. */
+const HOME_WINDOW_DAYS = 63;
 export function DashboardHome({
-  releases, bugs, projects, profiles, teams = [], user, teamName, canSubmit,
+  scopeProjectIds = null, releases, bugs, projects, profiles, teams = [], user, teamName, canSubmit,
   onSubmit, onOpenRelease, onOpenProject, onNavigate,
 }) {
+  const fallback = useMemo(() => (releases || bugs ? { releases: releases || [], bugs: bugs || [] } : null), [releases, bugs]);
+  const data = useMetricsData({ scopeProjectIds, since: daysAgo(HOME_WINDOW_DAYS), fallback });
   const role = user?.role === 'Manager' ? 'Admin' : user?.role || 'Developer';
   const projectIds = useMemo(() => projects.map((p) => p.id).sort(), [projects]);
   const wantsTasks = role !== 'QA' && projectIds.length > 0;
   const idsKey = projectIds.join(',');
-  const wbsQ = useQuery({ queryKey: ['dashboardWbs', user?.id, idsKey], queryFn: () => api.fetchWbsItemsForProjects(projectIds.filter((id) => projects.find((p) => p.id === id)?.type !== 'cms')), enabled: wantsTasks, staleTime: 60_000 });
-  const cmsQ = useQuery({ queryKey: ['dashboardCms', user?.id, idsKey], queryFn: () => api.fetchCmsTasksForProjects(projectIds.filter((id) => projects.find((p) => p.id === id)?.type === 'cms')), enabled: wantsTasks, staleTime: 60_000 });
+  const wbsQ = useQuery({ queryKey: ['dashboardWbs', 'open', user?.id, idsKey], queryFn: () => api.fetchOpenWbsItemsForProjects(projectIds.filter((id) => projects.find((p) => p.id === id)?.type !== 'cms')), enabled: wantsTasks, staleTime: 60_000 });
+  const cmsQ = useQuery({ queryKey: ['dashboardCms', 'open', user?.id, idsKey], queryFn: () => api.fetchOpenCmsTasksForProjects(projectIds.filter((id) => projects.find((p) => p.id === id)?.type === 'cms')), enabled: wantsTasks, staleTime: 60_000 });
   const tasks = useMemo(() => normaliseTasks(wbsQ.data || [], cmsQ.data || []), [wbsQ.data, cmsQ.data]);
-  const ctx = useMemo(() => buildContext({ releases, bugs, projects, profiles, tasks }), [releases, bugs, projects, profiles, tasks]);
+  const ctx = useMemo(() => buildContext({ releases: data.releases, bugs: data.bugs, projects, profiles, tasks }), [data.releases, data.bugs, projects, profiles, tasks]);
 
   const go = (action) => {
     if (action.release) onOpenRelease(action.release);
     else if (action.page) onNavigate(action.page);
   };
   const props = { ctx, me: user, teams, go, onOpenRelease, onOpenProject, onNavigate };
-  const tasksLoading = wantsTasks && (wbsQ.isLoading || cmsQ.isLoading);
+  const tasksLoading = data.loading || (wantsTasks && (wbsQ.isLoading || cmsQ.isLoading));
   const header = (attention) => (
     <HomeHeader user={user} teamName={teamName} canSubmit={canSubmit} onSubmit={onSubmit} onNavigate={onNavigate} attention={attention} loading={tasksLoading} />
   );
@@ -296,7 +303,7 @@ function HomeHeader({ user, teamName, canSubmit, onSubmit, onNavigate, attention
             </span>
           </div>
           <p style={{ fontSize: 13, margin: '4px 0 0', color: urgent ? 'var(--danger)' : 'var(--color-text-secondary)', fontWeight: urgent ? 600 : 400 }}>
-            {summary}{loading ? <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}> Loading tasks…</span> : null}
+            {summary}{loading ? <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}> Loading…</span> : null}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

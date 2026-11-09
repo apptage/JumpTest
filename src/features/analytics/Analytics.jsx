@@ -27,6 +27,20 @@ import {
 } from '@/constants.js';
 import { IconChart } from '@/icons.jsx';
 import { ReleaseHistory } from './ReleaseHistory.jsx';
+import { useMetricsData, daysAgo } from '@shared/useMetricsData.js';
+
+/* The period the page covers. Only that window (plus live work) is loaded, so
+   "All time" is the one choice that reads every release and bug. The default
+   matches the 6-month trend chart. */
+const PERIODS = [
+  ['30d', 'Last 30 days', 30],
+  ['90d', 'Last 90 days', 90],
+  ['6m', 'Last 6 months', 183],
+  ['12m', 'Last 12 months', 365],
+  ['all', 'All time', null],
+  ['custom', 'Custom dates', null],
+];
+const DEFAULT_PERIOD = '6m';
 
 /* ---------- plain-English vocabulary (one place, used everywhere on the page) ---------- */
 const WORDS = {
@@ -86,9 +100,10 @@ const sectionTitle = (t, sub) => (
 const num = (v, d = 0) => (v == null || Number.isNaN(v) ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d }));
 
 /* ================================================================== */
-export function Analytics({ projects, releases, bugs, profiles, teams, projectsById, profilesById, isAdmin, onOpenRelease, onOpenHistory }) {
+export function Analytics({ scopeProjectIds = null, projects, releases, bugs, profiles, teams, projectsById, profilesById, isAdmin, onOpenRelease, onOpenHistory }) {
   const [tab, setTab] = useState('overview');
   const [mode, setMode] = useState('historical'); // 'historical' = all builds · 'current' = active only
+  const [period, setPeriod] = useState(DEFAULT_PERIOD);
   const [f, setF] = useState({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const reset = () => setF({ team: 'all', project: 'all', platform: 'all', environment: 'all', developer: 'all', qa: 'all', version: '', from: '', to: '' });
@@ -96,38 +111,60 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
   const [glossary, setGlossary] = useState(false);
   const [peopleTab, setPeopleTab] = useState('developers'); // one list at a time, never four stacked
 
-  // WBS story points (one WBS work item = one point) across every project in scope
-  const [wbsItems, setWbsItems] = useState({ list: [], loading: true });
+  // WBS story points (one WBS work item = one point) across every project in scope:
+  // counted by the database per project and status (wbs_status_counts); until that
+  // migration is applied, the items are downloaded and counted here as before
+  const [wbsCounts, setWbsCounts] = useState({ rows: [], loading: true });
   const projectIdsKey = projects.map((p) => p.id).sort().join(',');
   useEffect(() => {
     let cancelled = false;
-    setWbsItems((w) => ({ ...w, loading: true }));
-    api.fetchWbsItemsForProjects(projectIdsKey ? projectIdsKey.split(',') : [])
-      .then((list) => { if (!cancelled) setWbsItems({ list, loading: false }); })
-      .catch(() => { if (!cancelled) setWbsItems({ list: [], loading: false }); });
+    const ids = projectIdsKey ? projectIdsKey.split(',') : [];
+    setWbsCounts((w) => ({ ...w, loading: true }));
+    api.fetchWbsStatusCounts(ids)
+      .then(async (rows) => {
+        if (rows === null) {
+          const items = await api.fetchWbsItemsForProjects(ids);
+          const by = {};
+          items.filter((i) => i.type !== 'milestone').forEach((i) => {
+            const k = `${i.projectId}|${i.status}`;
+            by[k] = (by[k] || 0) + 1;
+          });
+          rows = Object.entries(by).map(([k, n]) => { const [projectId, status] = k.split('|'); return { projectId, status, n }; });
+        }
+        if (!cancelled) setWbsCounts({ rows, loading: false });
+      })
+      .catch(() => { if (!cancelled) setWbsCounts({ rows: [], loading: false }); });
     return () => { cancelled = true; };
   }, [projectIdsKey]);
   const wbs = useMemo(() => {
-    const work = wbsItems.list.filter(
-      (i) =>
-        i.type !== 'milestone' &&
-        (f.project === 'all' || i.projectId === f.project) &&
-        (f.team === 'all' || projectsById[i.projectId]?.teamId === f.team)
+    const work = wbsCounts.rows.filter(
+      (r) =>
+        (f.project === 'all' || r.projectId === f.project) &&
+        (f.team === 'all' || projectsById[r.projectId]?.teamId === f.team)
     );
     const by = {};
     WBS_STATUS_ORDER.forEach((k) => (by[k] = 0));
-    work.forEach((i) => (by[i.status] = (by[i.status] || 0) + 1));
-    const pct = (n) => capPct(n, work.length);
-    return { total: work.length, projects: new Set(work.map((i) => i.projectId)).size, by, pct };
-  }, [wbsItems.list, f.project, f.team, projectsById]);
+    work.forEach((r) => (by[r.status] = (by[r.status] || 0) + r.n));
+    const total = work.reduce((n, r) => n + r.n, 0);
+    const pct = (n) => capPct(n, total);
+    return { total, projects: new Set(work.filter((r) => r.n > 0).map((r) => r.projectId)).size, by, pct };
+  }, [wbsCounts.rows, f.project, f.team, projectsById]);
 
-  const releaseById = Object.fromEntries(releases.map((r) => [r.id, r]));
+  // the window: a preset counts back from today; Custom uses the two date fields.
+  // "Active only" is live work whenever it started, so presets don't date-limit it.
+  const days = PERIODS.find(([k]) => k === period)?.[2] ?? null;
+  const range = period === 'custom' ? { from: f.from, to: f.to } : { from: days ? daysAgo(days) : '', to: '' };
+  const fx = mode === 'current' && period !== 'custom' ? { ...f, from: '', to: '' } : { ...f, ...range };
+  const fallback = useMemo(() => (releases ? { releases, bugs: bugs || [] } : null), [releases, bugs]);
+  const data = useMetricsData({ scopeProjectIds, since: range.from || null, fallback });
+
+  const releaseById = useMemo(() => Object.fromEntries(data.releases.map((r) => [r.id, r])), [data.releases]);
   const name = (id) => profilesById[id]?.name || '—';
 
   // ---- datasets (shared filter layer; the scope toggle decides all-history vs active) ----
-  const relRaw = filterReleases(releases, f, { projectById: projectsById });
+  const relRaw = filterReleases(data.releases, fx, { projectById: projectsById });
   const relF = mode === 'current' ? relRaw.filter((r) => !isClosedStatus(r.status)) : relRaw;
-  const bugsF = (mode === 'current' ? filterBugs : historicalBugs)(bugs, f, { releaseById, projectById: projectsById });
+  const bugsF = (mode === 'current' ? filterBugs : historicalBugs)(data.bugs, fx, { releaseById, projectById: projectsById });
 
   // ---- shared metrics ----
   const m = computeReleaseMetrics(relF, bugsF, { releaseById });
@@ -201,7 +238,8 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
   const qas = profiles.filter((p) => p.role === 'QA' && inTeam(p));
   const memberValue = f.developer !== 'all' ? `dev:${f.developer}` : f.qa !== 'all' ? `qa:${f.qa}` : 'all';
   const onMember = (v) => { const [kind, id] = v.split(':'); setF((s) => ({ ...s, developer: kind === 'dev' ? id : 'all', qa: kind === 'qa' ? id : 'all' })); };
-  const scopeWords = [f.team !== 'all' && teams.find((t) => t.id === f.team)?.name, f.project !== 'all' && projectsById[f.project]?.name, f.platform !== 'all' && f.platform, f.environment !== 'all' && f.environment, f.developer !== 'all' && name(f.developer), f.qa !== 'all' && name(f.qa), f.version && `v${f.version}`, (f.from || f.to) && `${f.from || '…'} → ${f.to || '…'}`].filter(Boolean);
+  const scopeWords = [f.team !== 'all' && teams.find((t) => t.id === f.team)?.name, f.project !== 'all' && projectsById[f.project]?.name, f.platform !== 'all' && f.platform, f.environment !== 'all' && f.environment, f.developer !== 'all' && name(f.developer), f.qa !== 'all' && name(f.qa), f.version && `v${f.version}`, period === 'custom' && (f.from || f.to) && `${f.from || '…'} → ${f.to || '…'}`].filter(Boolean);
+  const periodLabel = period === 'custom' ? 'custom dates' : PERIODS.find(([k]) => k === period)?.[1].toLowerCase();
 
   const tabs = [['overview', 'Overview'], ['delivery', 'Delivery'], ['quality', 'Quality'], ['speed', 'Speed'], ['people', 'People'], ['projects', 'Projects']];
 
@@ -235,11 +273,21 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
               <optgroup label="QA">{qas.map((p) => <option key={p.id} value={`qa:${p.id}`}>{p.name}</option>)}</optgroup>
             </select>
             <input style={{ ...fSel, width: 110 }} value={f.version} placeholder="Version…" onChange={(e) => set('version', e.target.value)} />
-            <input style={fSel} type="date" value={f.from} onChange={(e) => set('from', e.target.value)} title="From" />
-            <input style={fSel} type="date" value={f.to} onChange={(e) => set('to', e.target.value)} title="To" />
-            {(scopeWords.length > 0 || mode === 'current') && <button style={{ ...ghostButton, minHeight: 36, padding: '0 12px' }} onClick={() => { reset(); setMode('historical'); }}>Reset</button>}
+            {mode !== 'current' || period === 'custom' ? (
+              <select style={fSel} aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
+                {PERIODS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            ) : null}
+            {period === 'custom' && (
+              <>
+                <input style={fSel} type="date" value={f.from} onChange={(e) => set('from', e.target.value)} title="From" aria-label="From" />
+                <input style={fSel} type="date" value={f.to} onChange={(e) => set('to', e.target.value)} title="To" aria-label="To" />
+              </>
+            )}
+            {(scopeWords.length > 0 || mode === 'current' || period !== DEFAULT_PERIOD) && <button style={{ ...ghostButton, minHeight: 36, padding: '0 12px' }} onClick={() => { reset(); setMode('historical'); setPeriod(DEFAULT_PERIOD); }}>Reset</button>}
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>
-              Showing {mode === 'current' ? 'active builds' : 'all builds'}{scopeWords.length ? ` · ${scopeWords.join(' · ')}` : ''} · {relF.length} builds · {bugsF.length} bugs
+              Showing {mode === 'current' ? 'active builds' : `builds from ${periodLabel}`}{scopeWords.length ? ` · ${scopeWords.join(' · ')}` : ''} · {data.loading ? '…' : `${relF.length} builds · ${bugsF.length} bugs`}
+              {data.fetching && !data.loading ? ' · updating…' : ''}
             </span>
           </div>
         }
@@ -290,20 +338,20 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
           <div style={{ ...card, padding: 18, marginBottom: 16 }}>
             {sectionTitle(
               'Story points across all projects',
-              wbsItems.loading ? 'Loading work breakdowns…' : `${wbs.total} story points across ${wbs.projects} project${wbs.projects === 1 ? '' : 's'} with a work breakdown`
+              wbsCounts.loading ? 'Loading work breakdowns…' : `${wbs.total} story points across ${wbs.projects} project${wbs.projects === 1 ? '' : 's'} with a work breakdown`
             )}
-            {!wbsItems.loading && wbs.total === 0 ? (
+            {!wbsCounts.loading && wbs.total === 0 ? (
               <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No work breakdown items in this scope yet.</div>
             ) : (
               <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
                 {[['completed', 'Completed'], ['not_started', 'Not started']].map(([k, label]) => (
                   <div key={k} style={{ minWidth: 130 }}>
                     <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 700, color: WBS_STATUSES[k].color }}>
-                      {wbsItems.loading ? '…' : `${wbs.pct(wbs.by[k])}%`}
+                      {wbsCounts.loading ? '…' : `${wbs.pct(wbs.by[k])}%`}
                     </div>
                     <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</div>
                     <div className="tnum" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
-                      {wbsItems.loading ? '' : `${wbs.by[k]} of ${wbs.total} points`}
+                      {wbsCounts.loading ? '' : `${wbs.by[k]} of ${wbs.total} points`}
                     </div>
                   </div>
                 ))}

@@ -1551,12 +1551,12 @@ function BugsTab({
                     {label} <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}>· {list.length}</span>
                     {hint && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', fontWeight: 400 }}>{hint}</span>}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{list.map(renderBug)}</div>
+                  <BugList list={list} render={renderBug} />
                 </div>
               );
             // if nothing was carried, keep the original flat list
             if (!pendingVerify.length && !carried.length)
-              return <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{fresh.map(renderBug)}</div>;
+              return <BugList list={fresh} render={renderBug} />;
             return (
               <>
                 {group('Pending verification', pendingVerify, 'fixed on a prior build — verify on this release')}
@@ -1568,6 +1568,23 @@ function BugsTab({
         </>
       )}
     </>
+  );
+}
+
+/* A build can carry dozens of bugs; show them 20 at a time. */
+const BUG_STEP = 20;
+function BugList({ list, render }) {
+  const [shown, setShown] = useState(BUG_STEP);
+  const left = list.length - shown;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {list.slice(0, shown).map(render)}
+      {left > 0 && (
+        <button style={{ ...ghostButton, width: '100%' }} onClick={() => setShown((n) => n + BUG_STEP)}>
+          Show {Math.min(BUG_STEP, left)} more ({left} left)
+        </button>
+      )}
+    </div>
   );
 }
 

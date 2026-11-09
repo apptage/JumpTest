@@ -1,11 +1,13 @@
 /* Admin feature — Users / Teams / Projects management (+ project members,
    client links). Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
 import { useState, useEffect, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import * as api from '@/api.js';
+import { useMetricsData } from '@shared/useMetricsData.js';
 import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, ModalShell } from '@/ui.jsx';
 import { Field } from '@shared/ui-kit.jsx';
 import { StatSmall, Pill, passColor } from '@shared/dashboard-kit.jsx';
-import { computeProjectSummaries, computeUserSummaries } from '@shared/releaseMetrics.js';
+import { computeProjectSummaries, computeUserSummaries, projectSummaryFromCounts } from '@shared/releaseMetrics.js';
 import { computeWorkCompletion, liveBugs } from '@shared/wbsMetrics.js';
 import {
   ALLOWED_EMAIL_DOMAIN,
@@ -393,8 +395,9 @@ export function UsersTab({
   profiles,
   teams,
   teamsById,
-  releases = [],
-  bugs = [],
+  scopeProjectIds = null,
+  releases,              // the loaded lists in legacy mode; undefined otherwise
+  bugs,
   projectMembers = [],
   isSubmitting,
   showToast,
@@ -402,21 +405,47 @@ export function UsersTab({
   onCreateUser,
   refetchProfiles,
 }) {
+  const statsQ = useQuery({
+    queryKey: ['summaries', 'users', scopeProjectIds ? [...scopeProjectIds].sort().join(',') : 'all'],
+    queryFn: () => api.fetchUserSummaries(scopeProjectIds),
+    enabled: !releases,
+  });
   const [busyId, setBusyId] = useState(null);
-  const [timeLogs, setTimeLogs] = useState({ list: [], loading: true });
+  // hours per person come from the database (user_time_totals); until that
+  // migration is applied, every log is downloaded and summed as before
+  const [timeLogs, setTimeLogs] = useState({ list: [], totals: null, loading: true });
   const userIdsKey = profiles.map((p) => p.id).sort().join(',');
   useEffect(() => {
     let cancelled = false;
+    const ids = userIdsKey ? userIdsKey.split(',') : [];
     setTimeLogs((t) => ({ ...t, loading: true }));
-    api.fetchTimeLogsForUsers(userIdsKey ? userIdsKey.split(',') : [])
-      .then((list) => { if (!cancelled) setTimeLogs({ list, loading: false }); })
-      .catch(() => { if (!cancelled) setTimeLogs({ list: [], loading: false }); });
+    api.fetchUserTimeTotals(ids)
+      .then(async (totals) => {
+        const list = totals === null ? await api.fetchTimeLogsForUsers(ids) : [];
+        if (!cancelled) setTimeLogs({ list, totals, loading: false });
+      })
+      .catch(() => { if (!cancelled) setTimeLogs({ list: [], totals: null, loading: false }); });
     return () => { cancelled = true; };
   }, [userIdsKey]);
-  const summaries = useMemo(
-    () => computeUserSummaries(profiles, { releases, bugs, projectMembers, timeLogs: timeLogs.list }),
-    [profiles, releases, bugs, projectMembers, timeLogs.list]
-  );
+  // projects + hours from memberships and time; build and bug numbers from the
+  // loaded lists (legacy) or the database's per-person counts
+  const summaries = useMemo(() => {
+    const out = computeUserSummaries(profiles, { releases: releases || [], bugs: bugs || [], projectMembers, timeLogs: timeLogs.list });
+    if (timeLogs.totals) {
+      Object.entries(out).forEach(([uid, s]) => {
+        const tt = timeLogs.totals[uid];
+        if (!tt) return;
+        (tt.projectIds || []).forEach((pid) => s.projects.add(pid));
+        s.projectCount = s.projects.size;
+        s.hours = Math.round(Number(tt.hours || 0) * 10) / 10;
+        s.hoursWeek = Math.round(Number(tt.hoursWeek || 0) * 10) / 10;
+      });
+    }
+    if (!releases && statsQ.data) {
+      Object.entries(out).forEach(([uid, s]) => Object.assign(s, statsQ.data[uid] || {}));
+    }
+    return out;
+  }, [profiles, releases, bugs, projectMembers, timeLogs.list, timeLogs.totals, statsQ.data]);
   const roleOptions = isAdmin ? ROLES : TEAM_ASSIGNABLE_ROLES;
 
   async function patch(id, p) {
@@ -657,31 +686,6 @@ export function ProjectsTab({
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const needsTeam = isAdmin && teams.length > 0;
   const invalid = !form.name.trim() || (needsTeam && !form.team);
-  const summaries = useMemo(() => computeProjectSummaries(releases, bugs), [releases, bugs]);
-  // whole-project completion for each tile (every WBS track + live bugs)
-  const [wbsItems, setWbsItems] = useState([]);
-  const projectIdsKey = projects.map((p) => p.id).sort().join(',');
-  useEffect(() => {
-    let cancelled = false;
-    api.fetchWbsItemsForProjects(projectIdsKey ? projectIdsKey.split(',') : [])
-      .then((list) => { if (!cancelled) setWbsItems(list); })
-      .catch(() => { if (!cancelled) setWbsItems([]); });
-    return () => { cancelled = true; };
-  }, [projectIdsKey]);
-  const completions = useMemo(() => {
-    const releaseById = Object.fromEntries(releases.map((r) => [r.id, r]));
-    const itemsBy = {};
-    wbsItems.forEach((i) => (itemsBy[i.projectId] = itemsBy[i.projectId] || []).push(i));
-    const bugsBy = {};
-    liveBugs(bugs, releaseById).forEach((b) => {
-      const pid = releaseById[b.releaseId]?.projectId;
-      if (pid) (bugsBy[pid] = bugsBy[pid] || []).push(b);
-    });
-    const out = {};
-    Object.keys(itemsBy).forEach((pid) => { out[pid] = computeWorkCompletion(itemsBy[pid], bugsBy[pid]); });
-    return out;
-  }, [wbsItems, bugs, releases]);
-
   const [q, setQ] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -695,6 +699,53 @@ export function ProjectsTab({
       (typeFilter === 'all' || p.type === typeFilter)
   );
   const pageProjects = filteredProjects.slice(0, visible);
+  // releases / bugs: the loaded lists in legacy mode; otherwise undefined, and the
+  // tiles use the database's per-project counts plus the live work
+  // only the tiles on screen (Load more adds 12) get counts, WBS items and live bugs
+  const projectIdsKey = pageProjects.map((p) => p.id).sort().join(',');
+  const allIdsKey = projects.map((p) => p.id).sort().join(',');
+  const buildsQ = useQuery({
+    queryKey: ['summaries', 'releaseCount', allIdsKey],
+    queryFn: () => api.countReleases(allIdsKey ? allIdsKey.split(',') : []),
+    enabled: !releases,
+  });
+  const countsQ = useQuery({
+    queryKey: ['summaries', 'projects', projectIdsKey],
+    queryFn: () => api.fetchProjectSummaries(projectIdsKey ? projectIdsKey.split(',') : []),
+    enabled: !releases,
+  });
+  const summaries = useMemo(() => {
+    if (releases) return computeProjectSummaries(releases, bugs || []);
+    const out = {};
+    Object.entries(countsQ.data || {}).forEach(([pid, c]) => { if (c.builds) out[pid] = projectSummaryFromCounts(c); });
+    return out;
+  }, [releases, bugs, countsQ.data]);
+  const totalBuilds = releases ? releases.length : buildsQ.data ?? '…';
+  const liveFallback = useMemo(() => (releases ? { releases, bugs: bugs || [] } : null), [releases, bugs]);
+  const live = useMetricsData({ scopeProjectIds: projectIdsKey ? projectIdsKey.split(',') : [], liveOnly: true, fallback: liveFallback });
+  // whole-project completion for each tile (every WBS track + live bugs)
+  const [wbsItems, setWbsItems] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.fetchWbsItemsForProjects(projectIdsKey ? projectIdsKey.split(',') : [])
+      .then((list) => { if (!cancelled) setWbsItems(list); })
+      .catch(() => { if (!cancelled) setWbsItems([]); });
+    return () => { cancelled = true; };
+  }, [projectIdsKey]);
+  const completions = useMemo(() => {
+    const releaseById = Object.fromEntries(live.releases.map((r) => [r.id, r]));
+    const itemsBy = {};
+    wbsItems.forEach((i) => (itemsBy[i.projectId] = itemsBy[i.projectId] || []).push(i));
+    const bugsBy = {};
+    liveBugs(live.bugs, releaseById).forEach((b) => {
+      const pid = releaseById[b.releaseId]?.projectId;
+      if (pid) (bugsBy[pid] = bugsBy[pid] || []).push(b);
+    });
+    const out = {};
+    Object.keys(itemsBy).forEach((pid) => { out[pid] = computeWorkCompletion(itemsBy[pid], bugsBy[pid]); });
+    return out;
+  }, [wbsItems, live.bugs, live.releases]);
+
   const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
 
   function create() {
@@ -722,7 +773,7 @@ export function ProjectsTab({
         <StatSmall label="Web" value={typeCount('web')} color="var(--success)" />
         <StatSmall label="Both" value={typeCount('both')} color="var(--warning)" />
         <StatSmall label="CMS" value={typeCount('cms')} color="var(--info, var(--brand))" />
-        <StatSmall label="Releases" value={releases.length} />
+        <StatSmall label="Releases" value={totalBuilds} />
       </div>
 
       {/* header */}

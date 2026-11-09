@@ -22,8 +22,14 @@ export function useAppData(session, user, onError) {
     useQuery({ queryKey: [key, user?.id], queryFn: () => fn(), enabled, ...extra });
 
   const projectsQ = q('projects', api.fetchProjects);
-  const releasesQ = q('releases', api.fetchReleases);
-  const bugsQ = q('bugs', api.fetchBugs);
+  // Every page now loads its own releases and bugs. The full lists are only
+  // loaded when the paged-lists migrations aren't applied yet ('legacy'), so the
+  // app keeps working before `npm run db:push`.
+  const readyQ = useQuery({ queryKey: ['pagedListsReady', user?.id], queryFn: api.pagedListsReady, enabled, staleTime: Infinity, retry: 1 });
+  const listsMode = !enabled || readyQ.isPending ? 'checking' : readyQ.data === true ? 'paged' : 'legacy';
+  const legacy = listsMode === 'legacy';
+  const releasesQ = useQuery({ queryKey: ['releases', 'all', user?.id], queryFn: api.fetchReleases, enabled: enabled && legacy });
+  const bugsQ = useQuery({ queryKey: ['bugs', 'all', user?.id], queryFn: api.fetchBugs, enabled: enabled && legacy });
   const profilesQ = q('profiles', api.fetchProfiles);
   const teamsQ = q('teams', api.fetchTeams);
   const membersQ = q('projectMembers', api.fetchProjectMembers);
@@ -66,9 +72,20 @@ export function useAppData(session, user, onError) {
     // initial-load spinner: isPending stays true until the first successful
     // fetch resolves, so we keep showing the spinner (not an empty UI) through
     // the whole post-login bootstrap rather than only while actively fetching.
-    loading: enabled && (projectsQ.isPending || releasesQ.isPending || bugsQ.isPending),
-    refetchReleases: useCallback(() => inv('releases'), [inv]),
-    refetchBugs: useCallback(() => inv('bugs'), [inv]),
+    loading: enabled && (projectsQ.isPending || listsMode === 'checking' || (legacy && (releasesQ.isPending || bugsQ.isPending))),
+    listsMode,
+    // the paged pages and dashboards (keys 'metrics', 'releases', 'bugs') count
+    // both releases and bugs, so a change to either refreshes them
+    refetchReleases: useCallback(() => { inv('releases'); inv('metrics'); inv('summaries'); }, [inv]),
+    refetchBugs: useCallback(() => {
+      inv('bugs');
+      inv('metrics');
+      qc.invalidateQueries({ queryKey: ['releases', 'projectSummaries'] });
+      qc.invalidateQueries({ queryKey: ['releases', 'statusCounts'] });
+      qc.invalidateQueries({ queryKey: ['releases', 'detail'] });
+      qc.invalidateQueries({ queryKey: ['releases', 'mySentBack'] });
+      qc.invalidateQueries({ queryKey: ['summaries'] });
+    }, [inv, qc]),
     refetchProjects: useCallback(() => inv('projects'), [inv]),
     refetchProfiles: useCallback(() => inv('profiles'), [inv]),
     refetchChecklist: useCallback(() => inv('checklistItems'), [inv]),
