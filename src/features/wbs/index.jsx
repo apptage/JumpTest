@@ -3,6 +3,7 @@
    Platform → Module → item tree. One status per item. Import (field-mapping) is
    a bulk-migration path only; the Builder is primary. */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import * as api from '@/api.js';
 import { parseWbsFile, parseWbsBulk } from '@/wbs.js';
 import { card, inputStyle, ghostButton, primaryButton, ModalShell } from '@/ui.jsx';
@@ -992,8 +993,16 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
   );
 }
 
-export function WbsPage({ user, projects, profiles = [], showToast, releases = [], bugs = [], onProjectsChanged }) {
+/* releases / bugs: given by Project Hub (that project's) or, in legacy mode, the
+   loaded lists. When they're not given, the selected project's are loaded here. */
+const NO_ROWS = [];
+export function WbsPage({ user, projects, profiles = [], showToast, releases: releasesProp, bugs: bugsProp, onProjectsChanged }) {
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
+  const own = !releasesProp || !bugsProp;
+  const relQ = useQuery({ queryKey: ['releases', 'project', projectId], queryFn: () => api.fetchProjectReleases(projectId), enabled: own && !!projectId });
+  const bugQ = useQuery({ queryKey: ['bugs', 'project', projectId], queryFn: () => api.fetchProjectBugs(projectId), enabled: own && !!projectId });
+  const releases = (own ? relQ.data : releasesProp) || NO_ROWS;
+  const bugs = (own ? bugQ.data : bugsProp) || NO_ROWS;
   const [items, setItems] = useState([]);
   const [bugsByItem, setBugsByItem] = useState({});
   const [qaLinks, setQaLinks] = useState(null); // taskId → releases; null = couldn't load

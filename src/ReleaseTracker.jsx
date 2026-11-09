@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
 import { pageFromPathname, pathForPage } from './navigation.js';
 import { supabase } from './supabaseClient.js';
@@ -280,6 +281,7 @@ export default function ReleaseTracker() {
     brands,
     notifications,
     loading,
+    listsMode,
     refetchReleases,
     refetchBugs,
     refetchProjects,
@@ -385,7 +387,11 @@ export default function ReleaseTracker() {
     () => filterBugs(scopedBugs, {}, { releaseById, projectById: projectsById }),
     [scopedBugs, releaseById, projectsById]
   );
-  const openBugTotal = useMemo(
+  // 'paged': pages load their own releases and bugs; 'legacy': the migrations
+  // aren't applied, so the full lists are loaded and handed down as before
+  const legacy = listsMode === 'legacy';
+  const paged = listsMode === 'paged';
+  const legacyOpenBugTotal = useMemo(
     () => scopedActiveBugs.filter((b) => b.status === 'open').length,
     [scopedActiveBugs]
   );
@@ -394,35 +400,50 @@ export default function ReleaseTracker() {
     [scopedActiveBugs]
   );
 
-  const openBugCountByRelease = useMemo(() => {
-    const m = {};
-    scopedActiveBugs.forEach((b) => {
-      if (b.status === 'open') m[b.releaseId] = (m[b.releaseId] || 0) + 1;
-    });
-    return m;
-  }, [scopedActiveBugs]);
+  // the Releases page pages through releases itself; this is the scope it asks for
+  const releasesScopeIds = useMemo(() => (adminScope ? null : [...scopedProjectIds]), [adminScope, scopedProjectIds]);
+  const scopeKey = releasesScopeIds ? [...releasesScopeIds].sort().join(',') : 'all';
 
-  // releases in the current project + platform + type context (no status filter)
-  const contextReleases = scopedReleases.filter(
-    (r) =>
-      (projectFilter === 'all' || r.projectId === projectFilter) &&
-      (platformFilter === 'all' || r.platform === platformFilter) &&
-      (typeFilter === 'all' || r.releaseType === typeFilter)
-  );
+  // open bugs on live releases, for the Releases page header
+  const openBugTotalQ = useQuery({
+    queryKey: ['bugs', 'liveCount', 'open', scopeKey],
+    queryFn: () => api.countLiveBugs({ projectIds: releasesScopeIds, status: 'open' }),
+    enabled: paged,
+  });
+  const openBugTotal = paged ? openBugTotalQ.data ?? 0 : legacyOpenBugTotal;
 
-  // stat cards reflect the active context
-  const counts = STATUS_ORDER.reduce((acc, key) => {
-    acc[key] = contextReleases.filter((r) => r.status === key).length;
-    return acc;
-  }, {});
+  // the release open in the detail window, with its bugs and neighbours
+  const detailQ = useQuery({
+    queryKey: ['releases', 'detail', selectedId],
+    queryFn: () => api.fetchReleaseDetail(selectedId),
+    enabled: paged && !!selectedId,
+  });
+  const detail = paged && detailQ.data && (adminScope || scopedProjectIds.has(detailQ.data.release.projectId)) ? detailQ.data : null;
+  // a release that's gone (deleted) or out of scope closes the window
+  useEffect(() => {
+    if (paged && selectedId && detailQ.isSuccess && !detail) setSelectedId(null);
+  }, [paged, selectedId, detailQ.isSuccess, detail]);
 
-  // hide closed (superseded) iterations from the active board unless explicitly filtered
-  const filtered = contextReleases.filter((r) =>
-    statusFilter === 'all' ? r.status !== 'closed' : r.status === statusFilter
-  );
+  // my sent-back builds and their bugs, for the Submit window
+  const mySentBackQ = useQuery({
+    queryKey: ['releases', 'mySentBack', user?.id],
+    queryFn: () => api.fetchMySentBack(user.id),
+    enabled: paged && showSubmit && !!user?.id,
+  });
+  // a project's builds, for the history window
+  const historyQ = useQuery({
+    queryKey: ['releases', 'project', historyProject?.id],
+    queryFn: () => api.fetchProjectReleases(historyProject.id),
+    enabled: paged && !!historyProject,
+  });
+
+  // the full lists, only when the migrations aren't applied (legacy); otherwise
+  // undefined, and each page loads its own data
+  const lr = legacy ? scopedReleases : undefined;
+  const lb = legacy ? scopedBugs : undefined;
 
   const unread = notifications.filter((n) => !n.read).length;
-  const selected = scopedReleases.find((r) => r.id === selectedId) || null;
+  const selected = paged ? detail?.release || null : scopedReleases.find((r) => r.id === selectedId) || null;
 
   /* ---- auth actions ---- */
   async function handleSignIn({ email, password }) {
@@ -559,13 +580,15 @@ export default function ReleaseTracker() {
       // Reject a duplicate version in the same stream up front (the DB unique
       // index is the hard guard; this gives a friendly message before it fires).
       const normV = normalizeVersion(form.version);
-      const dupRel = releases.find(
-        (r) =>
-          r.projectId === form.projectId &&
-          r.platform === newPlatform &&
-          (newPlatform !== 'Web' || (r.component || '') === newComponent) &&
-          normalizeVersion(r.version) === normV
-      );
+      const dupRel = paged
+        ? (await api.fetchStreamVersions(form.projectId, newPlatform, newComponent)).some((v) => normalizeVersion(v) === normV)
+        : releases.find(
+            (r) =>
+              r.projectId === form.projectId &&
+              r.platform === newPlatform &&
+              (newPlatform !== 'Web' || (r.component || '') === newComponent) &&
+              normalizeVersion(r.version) === normV
+          );
       if (dupRel) {
         throw new Error(
           `Version ${formatVersion(form.version)} already exists for this ${newPlatform}${newComponent ? ` · ${newComponent}` : ''} stream — use a different version.`
@@ -1340,8 +1363,9 @@ export default function ReleaseTracker() {
               notifOpen={showNotif}
               notifications={notifications}
               projects={scopedProjects}
-              releases={scopedReleases}
-              bugs={scopedBugs}
+              releases={lr}
+              bugs={lb}
+              searchScopeIds={releasesScopeIds}
               projectsById={projectsById}
               onToggleNotif={handleOpenNotif}
               onNotifClick={(n) => {
@@ -1363,8 +1387,9 @@ export default function ReleaseTracker() {
         {page === 'dashboard' && (
           <div className="page-area">
             <DashboardHome
-              releases={scopedReleases}
-              bugs={scopedBugs}
+              scopeProjectIds={releasesScopeIds}
+              releases={lr}
+              bugs={lb}
               projects={scopedProjects}
               profiles={profiles}
               teams={teams}
@@ -1388,19 +1413,20 @@ export default function ReleaseTracker() {
               <ProjectHub
                 user={user}
                 projects={scopedProjects}
-                releases={scopedReleases}
-                bugs={scopedBugs}
+                releases={lr || []}
+                bugs={lb || []}
                 profiles={profiles}
                 projectMembers={projectMembers}
                 projectsById={projectsById}
                 profilesById={profilesById}
-                releaseById={releaseById}
+                releaseById={legacy ? releaseById : {}}
                 canManage={canManage}
                 isSubmitting={isSubmitting}
                 showToast={showToast}
                 projectId={hubProjectId}
                 onSelectProject={setHubProjectId}
                 onProjectsChanged={refetchProjects}
+                teams={teams}
                 onOpenRelease={(id) => setSelectedId(id)}
                 onSubmit={() => setShowSubmit(true)}
                 onAddMember={handleAddMember}
@@ -1411,14 +1437,11 @@ export default function ReleaseTracker() {
 
             {page === 'releases' && (
               <ReleasesPage
-                releases={filtered}
-                scopedCount={scopedReleases.length}
-                counts={counts}
+                scopeProjectIds={releasesScopeIds}
                 openBugTotal={openBugTotal}
                 projects={scopedProjects}
                 projectsById={projectsById}
                 profilesById={profilesById}
-                openBugCountByRelease={openBugCountByRelease}
                 projectFilter={projectFilter}
                 platformFilter={platformFilter}
                 typeFilter={typeFilter}
@@ -1444,8 +1467,8 @@ export default function ReleaseTracker() {
                   teams={teams}
                   teamsById={teamsById}
                   projects={scopedProjects}
-                  releases={scopedReleases}
-                  bugs={scopedBugs}
+                  releases={lr}
+                  bugs={lb}
                   checklistItems={checklistItems}
                   brands={brands}
                   profiles={profiles}
@@ -1465,8 +1488,9 @@ export default function ReleaseTracker() {
 
             {page === 'bugs' && (
               <BugsPage
-                bugs={scopedBugs}
-                releases={scopedReleases}
+                scopeProjectIds={releasesScopeIds}
+                bugs={lb}
+                releases={lr}
                 projects={scopedProjects}
                 projectsById={projectsById}
                 profilesById={profilesById}
@@ -1487,16 +1511,17 @@ export default function ReleaseTracker() {
             )}
 
             {page === 'wbs' && (
-              <WbsPage user={user} projects={wbsProjects} releases={scopedReleases} bugs={scopedBugs} profiles={profiles} showToast={showToast} onProjectsChanged={refetchProjects} />
+              <WbsPage user={user} projects={wbsProjects} releases={lr} bugs={lb} profiles={profiles} showToast={showToast} onProjectsChanged={refetchProjects} />
             )}
 
             {/* ONE Analytics page for every stakeholder, scoped by role:
                 Admin → whole org + team filter; Team Lead → their team only. */}
             {page === 'analytics' && canManage && (
               <Analytics
+                scopeProjectIds={releasesScopeIds}
                 projects={scopedProjects}
-                releases={scopedReleases}
-                bugs={scopedBugs}
+                releases={lr}
+                bugs={lb}
                 profiles={isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
                 teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
                 projectsById={projectsById}
@@ -1511,14 +1536,15 @@ export default function ReleaseTracker() {
               <>
                 <PageHeader title={isAdmin ? 'Users' : 'Team members'} subtitle="Manage roles, teams and accounts" />
                 <UsersTab
+                  scopeProjectIds={releasesScopeIds}
                   currentUser={user}
                   isAdmin={isAdmin}
                   myTeamId={myTeamId}
                   profiles={visibleProfiles}
                   teams={teams}
                   teamsById={teamsById}
-                  releases={scopedReleases}
-                  bugs={scopedBugs}
+                  releases={lr}
+                  bugs={lb}
                   projectMembers={projectMembers}
                   isSubmitting={isSubmitting}
                   showToast={showToast}
@@ -1564,11 +1590,12 @@ export default function ReleaseTracker() {
                 onSignOut={handleSignOut}
                 reports={canExportReports && (
                   <ReportsSection
+                    scopeProjectIds={isExecutive ? null : [...reportProjectIds]}
                     user={user}
                     isAdmin={isExecutive}
                     projects={reportProjects}
-                    releases={reportReleases}
-                    bugs={reportBugs}
+                    releases={legacy ? reportReleases : undefined}
+                    bugs={legacy ? reportBugs : undefined}
                     profiles={isExecutive ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
                     teams={isExecutive ? teams : teams.filter((t) => t.id === myTeamId)}
                     projectMembers={projectMembers}
@@ -1585,10 +1612,10 @@ export default function ReleaseTracker() {
       {showSubmit && (
         <SubmitModal
           projects={scopedProjects}
-          sentBackReleases={releases.filter(
+          sentBackReleases={paged ? mySentBackQ.data?.releases || [] : releases.filter(
             (r) => r.status === 'sent_back' && r.submittedById === user.id
           )}
-          bugs={bugs}
+          bugs={paged ? mySentBackQ.data?.bugs || [] : bugs}
           isSubmitting={isSubmitting}
           onClose={() => setShowSubmit(false)}
           onSubmit={handleCreateRelease}
@@ -1608,7 +1635,7 @@ export default function ReleaseTracker() {
       {historyProject && (
         <HistoryModal
           project={historyProject}
-          releases={scopedReleases.filter((r) => r.projectId === historyProject.id)}
+          releases={paged ? historyQ.data || [] : scopedReleases.filter((r) => r.projectId === historyProject.id)}
           showToast={showToast}
           onClose={() => setHistoryProject(null)}
         />
@@ -1623,9 +1650,9 @@ export default function ReleaseTracker() {
           profiles={profiles}
           profilesById={profilesById}
           projectMembers={projectMembers}
-          bugs={bugs.filter((b) => b.releaseId === selected.id)}
-          supersedesRelease={releases.find((r) => r.id === selected.supersedesReleaseId) || null}
-          supersededByRelease={releases.find((r) => r.supersedesReleaseId === selected.id) || null}
+          bugs={paged ? detail.bugs : bugs.filter((b) => b.releaseId === selected.id)}
+          supersedesRelease={paged ? detail.supersedes : releases.find((r) => r.id === selected.supersedesReleaseId) || null}
+          supersededByRelease={paged ? detail.supersededBy : releases.find((r) => r.supersedesReleaseId === selected.id) || null}
           checklistItems={checklistItems.filter(
             (c) => c.projectId === selected.projectId
           )}

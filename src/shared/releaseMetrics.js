@@ -225,6 +225,28 @@ export function computeProjectSummaries(releases, bugs) {
   return out;
 }
 
+/* The same summary built from project_summaries' counts (database), for when
+   the releases and bugs themselves aren't loaded. Same status rules as above. */
+export function projectSummaryFromCounts(c) {
+  if (!c) return null;
+  const s = {
+    builds: c.builds || 0,
+    latest: c.latestBuild ? { version: c.latestBuild.version, status: c.latestBuild.status } : null,
+    inQa: c.inQa || 0,
+    openBugs: c.openBugs || 0,
+    resolvedBugs: c.resolvedBugs || 0,
+    blockingBugs: c.blockingBugs || 0,
+  };
+  s.status =
+    !s.builds ? { label: 'No builds', tone: 'neutral' }
+    : s.blockingBugs ? { label: 'At risk', tone: 'danger' }
+    : s.inQa ? { label: 'In QA', tone: 'info' }
+    : s.latest?.status === 'sent_back' ? { label: 'Needs fixes', tone: 'warning' }
+    : s.latest?.status === 'approved' ? { label: 'On track', tone: 'success' }
+    : { label: 'Idle', tone: 'neutral' };
+  return s;
+}
+
 /* Per-user overview for the Users grid. Projects = membership ∪ projects they
    logged time on. Hours include running/paused timers at their current elapsed.
    Developers are measured on the builds they submitted; QA on the builds they

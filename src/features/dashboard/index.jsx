@@ -1,10 +1,12 @@
 /* Dashboard chrome — stat cards, filter bar, release card, left sidebar (project
    nav + at-a-glance), and the right panel. The home dashboard lives in ./home. */
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import * as api from '@/api.js';
 export { DashboardHome } from './home/index.jsx';
 import { card, inputStyle, ghostButton, primaryButton, StatusBadge, TypeBadge, Avatar, CountBadge } from '@/ui.jsx';
 import { Chevron, StatBig } from '@shared/dashboard-kit.jsx';
-import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, PageHeader } from '@shared/ui-kit.jsx';
+import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, PageHeader, Pager, useDebounced } from '@shared/ui-kit.jsx';
 import {
   STATUSES,
   STATUS_ORDER,
@@ -54,30 +56,67 @@ function StatChip({ label, value, color, active, onClick }) {
 /* ReleasesPage — the dedicated "Releases" section (its own sidebar     */
 /* item). Header + clickable status summary + search & filters + list.  */
 /* ================================================================== */
+const RELEASES_PAGE_SIZE = 20;
+const CHIP_STATUSES = ['qa_pending', 'qa_in_progress', 'qa_done', 'approved', 'sent_back'];
+
+/* Loads one page of releases from the database, filtered and counted there.
+   scopeProjectIds: the caller's projects, or null for Admins (every project).
+   Query keys start with 'releases' / 'bugs' so the app's refetchReleases() and
+   refetchBugs() after a change also refresh this page. */
 export function ReleasesPage({
-  releases, scopedCount, counts, openBugTotal, projects, projectsById, profilesById, openBugCountByRelease,
+  scopeProjectIds, projects, projectsById, profilesById, openBugTotal,
   projectFilter, platformFilter, typeFilter, statusFilter, onProject, onPlatform, onType, onStatus,
-  loading, canSubmit, onSubmit, onOpen,
+  canSubmit, onSubmit, onOpen,
 }) {
   const [q, setQ] = useState('');
-  const term = q.trim().toLowerCase();
-  const shown = term
-    ? releases.filter(
-        (r) =>
-          `v${r.version}`.toLowerCase().includes(term) ||
-          (projectsById[r.projectId]?.name || '').toLowerCase().includes(term) ||
-          (r.releaseNotes || '').toLowerCase().includes(term)
-      )
-    : releases;
+  const [page, setPage] = useState(0);
+  const search = useDebounced(q.trim(), 300);
+  const scopeKey = scopeProjectIds ? [...scopeProjectIds].sort().join(',') : 'all';
+  const ctx = { projectIds: scopeProjectIds, project: projectFilter, platform: platformFilter, type: typeFilter };
+
+  // back to page 1 whenever what's being listed changes
+  useEffect(() => { setPage(0); }, [projectFilter, platformFilter, typeFilter, statusFilter, search, scopeKey]);
+
+  // project names are matched here, from the list the app already has
+  const searchProjectIds = useMemo(() => {
+    const t = search.toLowerCase();
+    return t ? projects.filter((p) => p.name.toLowerCase().includes(t)).map((p) => p.id) : [];
+  }, [search, projects]);
+
+  const listQ = useQuery({
+    queryKey: ['releases', 'page', scopeKey, projectFilter, platformFilter, typeFilter, statusFilter, search, page],
+    queryFn: () => api.fetchReleasesPage({ ...ctx, status: statusFilter, search, searchProjectIds, offset: page * RELEASES_PAGE_SIZE, limit: RELEASES_PAGE_SIZE }),
+    placeholderData: keepPreviousData,
+  });
+  const countsQ = useQuery({
+    queryKey: ['releases', 'statusCounts', scopeKey, projectFilter, platformFilter, typeFilter],
+    queryFn: () => api.fetchReleaseStatusCounts({ ...ctx, statuses: CHIP_STATUSES }),
+    placeholderData: keepPreviousData,
+  });
+  const rows = listQ.data?.rows || [];
+  const total = listQ.data?.total || 0;
+  const pageIds = rows.map((r) => r.id);
+  const bugCountsQ = useQuery({
+    queryKey: ['bugs', 'openByRelease', pageIds.join(',')],
+    queryFn: () => api.fetchOpenBugCountsByRelease(pageIds),
+    enabled: pageIds.length > 0,
+    placeholderData: keepPreviousData,
+  });
+  const openBugCountByRelease = bugCountsQ.data || {};
+  const counts = countsQ.data?.byStatus || {};
+  const scopedCount = countsQ.data?.scopeTotal;
+
+  // a page past the end (e.g. after the last release on it was closed): step back
+  useEffect(() => {
+    if (listQ.data && !listQ.isPlaceholderData && page > 0 && rows.length === 0) setPage(Math.max(0, Math.ceil(total / RELEASES_PAGE_SIZE) - 1));
+  }, [listQ.data, listQ.isPlaceholderData, page, rows.length, total]);
 
   const chips = [
     ['all', 'All', 'var(--color-text-tertiary)'],
-    ['qa_pending', STATUSES.qa_pending.label, STATUSES.qa_pending.color],
-    ['qa_in_progress', STATUSES.qa_in_progress.label, STATUSES.qa_in_progress.color],
-    ['qa_done', STATUSES.qa_done.label, STATUSES.qa_done.color],
-    ['approved', STATUSES.approved.label, STATUSES.approved.color],
-    ['sent_back', STATUSES.sent_back.label, STATUSES.sent_back.color],
+    ...CHIP_STATUSES.map((k) => [k, STATUSES[k].label, STATUSES[k].color]),
   ];
+  const fmt = (n) => (n == null ? '…' : n.toLocaleString());
+  const loadingFirst = listQ.isPending;
 
   return (
     <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
@@ -86,7 +125,7 @@ export function ReleasesPage({
         title="Releases"
         icon={<IconPackage size={18} />}
         subtitle={<>
-          Every build across your projects · <strong style={{ color: 'var(--color-text-primary)' }}>{scopedCount}</strong> total
+          Every build across your projects · <strong style={{ color: 'var(--color-text-primary)' }}>{fmt(scopedCount)}</strong> total
           {openBugTotal > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{openBugTotal}</strong> open bug{openBugTotal === 1 ? '' : 's'}</>}
         </>}
         actions={canSubmit && (
@@ -103,7 +142,7 @@ export function ReleasesPage({
             key={key}
             label={label}
             color={color}
-            value={key === 'all' ? scopedCount : counts[key] || 0}
+            value={fmt(key === 'all' ? scopedCount : counts[key])}
             active={statusFilter === key}
             onClick={() => onStatus(key)}
           />
@@ -122,7 +161,7 @@ export function ReleasesPage({
           onPlatform={onPlatform}
           onType={onType}
           onStatus={onStatus}
-          count={shown.length}
+          count={loadingFirst ? null : total}
         />
         <span style={{ flex: 1 }} />
         <div style={{ position: 'relative', flex: '0 1 260px' }}>
@@ -132,6 +171,7 @@ export function ReleasesPage({
           <input
             value={q}
             placeholder="Search version, project, notes…"
+            aria-label="Search releases"
             onChange={(e) => setQ(e.target.value)}
             style={{ ...inputStyle, paddingLeft: 34, height: 38, width: '100%' }}
           />
@@ -139,9 +179,15 @@ export function ReleasesPage({
       </div>
 
       {/* list */}
-      {loading ? (
+      {listQ.isError ? (
+        <div style={{ ...card, padding: 40, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Couldn’t load releases</div>
+          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>{listQ.error?.message}</div>
+          <button style={ghostButton} onClick={() => listQ.refetch()}>Try again</button>
+        </div>
+      ) : loadingFirst ? (
         <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading releases…</div>
-      ) : shown.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div style={{ ...card, padding: 48, textAlign: 'center' }}>
           <div style={{ display: 'inline-flex', marginBottom: 10, color: 'var(--color-text-tertiary)' }}><IconPackage size={30} /></div>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
@@ -152,18 +198,21 @@ export function ReleasesPage({
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {shown.map((r) => (
-            <ReleaseCard
-              key={r.id}
-              release={r}
-              project={projectsById[r.projectId]}
-              openBugs={openBugCountByRelease[r.id] || 0}
-              assignedName={r.assignedQa ? profilesById[r.assignedQa]?.name : null}
-              onClick={() => onOpen(r.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: listQ.isPlaceholderData ? 0.6 : 1, transition: 'opacity .15s' }}>
+            {rows.map((r) => (
+              <ReleaseCard
+                key={r.id}
+                release={r}
+                project={projectsById[r.projectId]}
+                openBugs={openBugCountByRelease[r.id] || 0}
+                assignedName={r.assignedQa ? profilesById[r.assignedQa]?.name : null}
+                onClick={() => onOpen(r.id, r)}
+              />
+            ))}
+          </div>
+          <Pager page={page} pageSize={RELEASES_PAGE_SIZE} total={total} onPage={setPage} busy={listQ.isFetching} noun={total === 1 ? 'release' : 'releases'} />
+        </>
       )}
     </div>
   );
@@ -255,9 +304,11 @@ export function FilterBar({
           </option>
         ))}
       </select>
-      <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-        {count} release{count === 1 ? '' : 's'}
-      </span>
+      {count != null && (
+        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          {count.toLocaleString()} release{count === 1 ? '' : 's'}
+        </span>
+      )}
     </div>
   );
 }

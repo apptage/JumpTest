@@ -9,6 +9,16 @@ export const KINDS = {
   api_integration: 'API Integration',
 };
 
+/* Values used by the time-log exports that the app has no equivalent for. */
+export const KIND_ALIASES = { 'app landing page': 'website' };
+// new_development isn't a category: landing-page titles are app_landing, the rest major_functionality
+export function categoryForNewDevelopment(title) {
+  return /landing/i.test(String(title ?? '')) ? 'app_landing' : 'major_functionality';
+}
+
+// requested_by is always PM on the imports: blank means pmo, and PM is accepted as a value
+export const DEFAULT_REQUESTER = 'pmo';
+export const REQUESTER_ALIASES = { pm: 'pmo' };
 export const REQUESTERS = { am: 'AM', pmo: 'PMO', seo: 'SEO team' };
 export const CHANNELS = { basecamp: 'Basecamp', crm: 'CRM', group: 'Group', other: 'Other' };
 
@@ -22,6 +32,11 @@ export const CATEGORIES = {
   app_landing: { label: 'App landing page', kind: 'website', requesters: ['am', 'pmo'] },
   api_integration: { label: 'Website API integration', kind: 'api_integration', requesters: ['am', 'pmo'] },
 };
+
+// website projects can also take API integration work; api_integration projects take only that
+export function categorySuitsKind(category, kind) {
+  return CATEGORIES[category].kind === kind || (category === 'api_integration' && kind === 'website');
+}
 
 export const PRIORITIES = { Low: 'Low', Medium: 'Medium', High: 'High' };
 export const TASK_STATUSES = { todo: 'To do', in_progress: 'In progress', in_review: 'In review', done: 'Done', on_hold: 'On hold' };
@@ -61,20 +76,20 @@ export const SHEETS = [
     about: 'One row per CMS project. A project that already exists (same name) is updated, not duplicated.',
     columns: [
       { key: 'project_name', req: true, note: 'Unique name. Used to link rows on the other sheets.' },
-      { key: 'cms_kind', note: 'website (default) or api_integration.', values: KINDS },
+      { key: 'cms_kind', note: 'website (default) or api_integration. App Landing Page is stored as website.', values: KINDS },
       { key: 'team', note: 'Team name exactly as in the app. Blank = no team.' },
       { key: 'brand', note: 'Brand name exactly as in the app. Blank = default brand.' },
     ],
   },
   {
     name: 'Tasks',
-    about: 'Work requests. A task with the same project, category and title as an existing one is skipped.',
+    about: 'Work requests. A task with the same project, category and title as an existing one is skipped, unless the assignee is someone else: then this row\'s details are added to it.',
     columns: [
-      { key: 'project_name', req: true, note: 'Must match a row on Projects, or a CMS project already in the app.' },
-      { key: 'category', req: true, note: 'Must suit the project kind (api_integration projects only take api_integration).', values: Object.fromEntries(Object.entries(CATEGORIES).map(([k, v]) => [k, v.label])) },
+      { key: 'project_name', req: true, note: 'A row on Projects or a CMS project already in the app. Any other name creates a new project.' },
+      { key: 'category', req: true, note: 'Must suit the project kind (api_integration projects only take api_integration; website projects take any category). new_development becomes app_landing for landing-page titles, otherwise major_functionality.', values: Object.fromEntries(Object.entries(CATEGORIES).map(([k, v]) => [k, v.label])) },
       { key: 'title', req: true, note: 'Short summary.' },
       { key: 'details', note: 'Longer description.' },
-      { key: 'requested_by', req: true, note: 'am, pmo or seo. Blogs / SEO tasks: seo or pmo. Others: am or pmo.', values: REQUESTERS },
+      { key: 'requested_by', note: 'Blank or PM = pmo. Otherwise am or seo. Blogs / SEO tasks: seo or pmo. Others: am or pmo.', values: REQUESTERS },
       { key: 'channel', note: 'Where the request came in.', values: CHANNELS },
       { key: 'reference_url', note: 'Link to the request (must start with http:// or https://).' },
       { key: 'assignee_email', note: 'Email of an existing user. Blank = unassigned.' },

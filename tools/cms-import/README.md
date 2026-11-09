@@ -9,7 +9,7 @@ When you no longer need it, delete the folder.
 | Sheet      | Creates                                   | Required columns                                    |
 |------------|-------------------------------------------|-----------------------------------------------------|
 | `Projects` | CMS projects (`projects`, type `cms`)     | `project_name`                                      |
-| `Tasks`    | Work requests (`cms_tasks`)               | `project_name`, `category`, `title`, `requested_by` |
+| `Tasks`    | Work requests (`cms_tasks`)               | `project_name`, `category`, `title`                 |
 | `Journey`  | Development journey (`cms_stages`)        | `project_name`, `stage`                             |
 | `Members`  | Project members (`project_members`)       | `project_name`, `email`                             |
 | `Links`    | Project info links (`project_resources`)  | `project_name`, `category`, `title`                 |
@@ -59,13 +59,29 @@ The import is safe to run again with the same file, or with a file that only hol
 - **Projects** are matched by name, ignoring case. An existing CMS project gets the
   `cms_kind`, `team` and `brand` cells you filled; blank cells leave it unchanged.
   A name already used by a mobile or web project is an error.
-- **Tasks** and **Links** with the same project, category and title as an existing one are skipped.
+- **Tasks** with the same project, category and title as an existing one are skipped, unless the
+  assignee is someone else. Then the row's `details` are added to the existing task under that
+  person's name, once. The task keeps its first assignee, status and date.
+- **Links** with the same project, category and title as an existing one are skipped.
 - **Journey**: listing any stage for a project starts its journey. All 9 stages are
   created, as the app does, and each listed row updates its stage.
 - **Members** already on the project are skipped. Admins are skipped, because they already see
   every project. A user from another team is added with *support* access, as the app does.
 - Rows on `Tasks`, `Journey`, `Members` and `Links` can point at a CMS project that is
   already in the app, so later files don't need to repeat the `Projects` sheet.
+- A project name on those sheets that is on neither `Projects` nor the app creates a new project,
+  in the team the `Projects` sheet uses (if it uses just one). The check prints a warning for each
+  one, because a typo in a name now creates a project instead of failing.
+
+Three values from the time-log exports are converted:
+
+- `cms_kind` **App Landing Page** is stored as `website`.
+- `requested_by` left blank, or typed as **PM**, is stored as `pmo`.
+- `category` **new_development** becomes `app_landing` when the title mentions a landing page,
+  otherwise `major_functionality`.
+
+Website projects can take any task category, including `api_integration`. API integration
+projects only take `api_integration`.
 
 Values can be typed as the key (`in_progress`) or as the label shown in the app
 (`In progress`). Dates can be Excel dates or `YYYY-MM-DD`. Users and teams are matched

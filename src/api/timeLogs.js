@@ -61,18 +61,26 @@ export function makeTimeLogApi(supabase) {
 
   return {
     // ---- reads ----
+    // every entry on one project, paged past PostgREST's 1000-row cap (exports)
     async fetchTimeLogsForProject(projectId) {
-      const { data, error } = await supabase
-        .from('time_logs')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('log_date', { ascending: false })
-        .order('created_at', { ascending: false });
-      if (error) {
-        if (isMissingTimeLogs(error)) return [];
-        throw error;
+      const PAGE = 1000;
+      const out = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('time_logs')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('log_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id')
+          .range(from, from + PAGE - 1);
+        if (error) {
+          if (isMissingTimeLogs(error)) return [];
+          throw error;
+        }
+        out.push(...(data || []).map(mapTimeLog));
+        if (!data || data.length < PAGE) return out;
       }
-      return (data || []).map(mapTimeLog);
     },
 
     // every log the caller may see for these users (RLS-scoped), paged past

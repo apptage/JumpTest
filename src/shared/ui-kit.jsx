@@ -2,6 +2,7 @@
    Moved verbatim out of ReleaseTracker.jsx (Phase 0 mechanical split) — no
    behavior change. Depends only on the base UI primitives, constants, and
    illustrations. */
+import { useState, useEffect } from 'react';
 import { card, labelStyle } from '../ui.jsx';
 import { SLA_COLORS, slaLevel, humanizeSince, STATUSES } from '../constants.js';
 import { EmptyIllustration } from '../illustrations.jsx';
@@ -255,5 +256,46 @@ export function DistBars({ items }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/* Value that only updates after `ms` without changes, so typing in a search
+   box doesn't send a request per keystroke. */
+export function useDebounced(value, ms = 300) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+/* Page controls for a server-paged list. page is 0-based. */
+export function Pager({ page, pageSize, total, onPage, busy = false, noun = 'items' }) {
+  if (!total) return null;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const first = page * pageSize + 1;
+  const last = Math.min(total, (page + 1) * pageSize);
+  const btn = (disabled) => ({
+    padding: '6px 13px', fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit', borderRadius: 10,
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
+    background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--color-text-primary)',
+  });
+  return (
+    <nav aria-label="Pagination" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginTop: 14, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+      <span className="tnum">
+        {first.toLocaleString()}–{last.toLocaleString()} of {total.toLocaleString()} {noun}
+        {busy && <span style={{ color: 'var(--color-text-tertiary)' }}> · loading…</span>}
+      </span>
+      {pages > 1 && (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button style={btn(page === 0)} disabled={page === 0} onClick={() => onPage(0)} aria-label="First page">«</button>
+          <button style={btn(page === 0)} disabled={page === 0} onClick={() => onPage(page - 1)}>Prev</button>
+          <span className="tnum" style={{ padding: '0 6px' }}>Page {page + 1} of {pages}</span>
+          <button style={btn(page >= pages - 1)} disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>Next</button>
+          <button style={btn(page >= pages - 1)} disabled={page >= pages - 1} onClick={() => onPage(pages - 1)} aria-label="Last page">»</button>
+        </span>
+      )}
+    </nav>
   );
 }
