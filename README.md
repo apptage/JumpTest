@@ -20,11 +20,18 @@
 3. **Backfill (only if you already had accounts before the tables existed)** —
    run [`backfill_existing_users.sql`](backfill_existing_users.sql).
 
-4. **Credentials** — copy [`.env.example`](.env.example) to **`.env.local`** or **`.env.production`**
-   and set `NEXT_PUBLIC_SUPABASE_*` from **Supabase Dashboard → Project Settings → API**.
-   Or run `npm run env:sync` once to bootstrap `.env.local` from `.env.example`.
+4. **Credentials (local only)** — one file: **`.env.local`** (gitignored).
 
-   Production on **Vercel** uses dashboard / GitHub `VERCEL_ENV` secrets — not local files.
+   ```bash
+   cp .env.example .env.local   # or: npm run env:sync (creates .env.local from example or legacy files)
+   ```
+
+   Paste keys from **Supabase Dashboard → Project Settings → API** into `.env.local`
+   (`NEXT_PUBLIC_SUPABASE_*`, `SUPABASE_PROJECT_REF`). Switch between staging and
+   production by editing those values in `.env.local`.
+
+   **Production (Vercel):** set the same `NEXT_PUBLIC_*` vars in the Vercel dashboard
+   — not via local files.
 
    Supabase CLI (migrations): `npm run db:link` then `npm run db:push`.
 
@@ -37,6 +44,7 @@
    npm run dev
    ```
 
+   Next.js loads **`.env.local`** automatically (no wrapper script).  
    Production build: `npm run build` then `npm run start`.
 
 ## Routes

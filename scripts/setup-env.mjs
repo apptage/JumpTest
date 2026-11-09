@@ -1,33 +1,46 @@
 #!/usr/bin/env node
 /**
- * Local dev helper: bootstrap .env.local from .env / .env.production / .env.example.
- * Skipped on CI and Vercel — those environments inject env vars directly.
+ * Ensures `.env.local` exists for local Next.js / extension / Supabase CLI.
+ * - Uses existing .env.local if present
+ * - Otherwise migrates from legacy .env.production.local or .env.staging.local
+ * - Otherwise copies from .env.example
+ * Skips work on CI / Vercel (those inject env vars).
  */
 import { copyFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 if (process.env.CI || process.env.VERCEL) {
-  console.log('env:sync skipped (CI/Vercel — using platform environment variables)');
+  console.log('env:sync skipped (CI/Vercel — use platform environment variables)');
   process.exit(0);
 }
 
 const localPath = join(root, '.env.local');
 
 if (existsSync(localPath)) {
-  console.log('Using existing .env.local');
+  console.log('Using .env.local');
   process.exit(0);
 }
 
-const sources = ['.env', '.env.production', '.env.example'];
-for (const name of sources) {
-  const src = join(root, name);
-  if (!existsSync(src)) continue;
-  copyFileSync(src, localPath);
-  console.log(`Created .env.local from ${name} — add your Supabase keys if still placeholders`);
-  process.exit(0);
+const legacy = [
+  join(root, '.env.production.local'),
+  join(root, '.env.staging.local'),
+];
+for (const legacyPath of legacy) {
+  if (existsSync(legacyPath)) {
+    copyFileSync(legacyPath, localPath);
+    console.log(`Created .env.local from ${basename(legacyPath)} (migrate to a single local file)`);
+    process.exit(0);
+  }
 }
 
-console.warn('No .env.local, .env, .env.production, or .env.example found. Create .env.local with NEXT_PUBLIC_SUPABASE_*');
+const examplePath = join(root, '.env.example');
+if (!existsSync(examplePath)) {
+  console.error('Missing .env.example — add it to the repo or create .env.local manually');
+  process.exit(1);
+}
+
+copyFileSync(examplePath, localPath);
+console.log('Created .env.local from .env.example — add your Supabase keys');

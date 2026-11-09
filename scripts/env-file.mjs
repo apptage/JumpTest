@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { applyPublicEnvAliases } from './public-env.mjs';
 
 export function loadEnvFile(filePath) {
   if (!existsSync(filePath)) return {};
@@ -19,5 +18,5 @@ export function loadEnvFile(filePath) {
     }
     out[key] = val;
   }
-  return applyPublicEnvAliases(out);
+  return out;
 }

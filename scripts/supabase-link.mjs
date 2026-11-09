@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Links Supabase CLI to SUPABASE_PROJECT_REF from local env files.
+ * Links Supabase CLI using SUPABASE_PROJECT_REF from .env.local
  */
 import { execSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -12,20 +12,17 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 spawnSync(process.execPath, ['scripts/setup-env.mjs'], { cwd: root, stdio: 'inherit' });
 
-const envPaths = ['.env.local', '.env.production', '.env', '.env.production.local'];
-let ref;
-for (const name of envPaths) {
-  const path = join(root, name);
-  if (!existsSync(path)) continue;
-  const env = loadEnvFile(path);
-  ref = env.SUPABASE_PROJECT_REF;
-  if (ref && !ref.startsWith('YOUR_')) break;
-}
+const envFile = join(root, '.env.local');
 
-if (!ref || ref.startsWith('YOUR_')) {
-  console.error('Set SUPABASE_PROJECT_REF in .env.local or .env.production');
+if (!existsSync(envFile)) {
+  console.error(`Missing .env.local. Run: npm run env:sync`);
   process.exit(1);
 }
 
-console.log(`Linking Supabase project ref: ${ref}`);
+if (!ref || ref.startsWith('YOUR_')) {
+  console.error('Set SUPABASE_PROJECT_REF in .env.local (Supabase Dashboard → Project Settings → General → Reference ID)');
+  process.exit(1);
+}
+
+console.log(`Linking Supabase CLI to ${ref}…`);
 execSync(`supabase link --project-ref ${ref}`, { cwd: root, stdio: 'inherit' });

@@ -46,6 +46,7 @@ import {
   bugSlaLevel,
   humanizeSince,
   formatVersion,
+  isSqaTrack,
 } from '@/constants.js';
 import { IconDownload, IconExternal } from '@/icons.jsx';
 
@@ -197,7 +198,8 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
   const derivedWbsPlatform = wbsPlatformForRelease(form.platform, resolvedComponent);
   const wbsEnabled = !!project?.wbsEnabled;
   const norm = (s) => String(s || '').trim().toLowerCase();
-  const matchingItems = wbsItems.filter((i) => norm(i.platformType) === norm(derivedWbsPlatform) && derivedWbsPlatform);
+  // design / marketing items aren't built into releases
+  const matchingItems = wbsItems.filter((i) => isSqaTrack(i.track) && norm(i.platformType) === norm(derivedWbsPlatform) && derivedWbsPlatform);
   const hasMatchingWbs = matchingItems.length > 0;
   // existing modules under this platform (for the new-task module picker)
   const platformModules = [...new Set(matchingItems.map((i) => i.module).filter(Boolean))];
@@ -244,7 +246,9 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
   // WBS section state: 'link' (matching WBS → pick/add), 'create' (no match, user
   // is adding items → creates the WBS), or 'skip' (no match, plain release notes)
-  const wbsMode = hasMatchingWbs ? 'link' : creatingWbs ? 'create' : 'skip';
+  // CMS projects have no WBS: always a plain release with notes
+  const isCms = project?.type === 'cms';
+  const wbsMode = isCms ? 'skip' : hasMatchingWbs ? 'link' : creatingWbs ? 'create' : 'skip';
   const wbsInvalid =
     wbsMode === 'link'
       ? !bugFixEligible && selectedTasks.length === 0 && validNewItems.length === 0
@@ -443,7 +447,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
       </Field>
 
       {/* WBS platform this release maps to (derived from Platform/Component) */}
-      <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', margin: '-4px 0 12px' }}>
+      {!isCms && <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', margin: '-4px 0 12px' }}>
         WBS platform:{' '}
         <strong style={{ color: 'var(--color-text-primary)' }}>{derivedWbsPlatform || '—'}</strong>
         {hasMatchingWbs ? (
@@ -451,7 +455,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         ) : (
           <span style={{ color: 'var(--color-text-tertiary)' }}> · no matching WBS</span>
         )}
-      </div>
+      </div>}
 
       {wbsMode === 'link' ? (
         <>
@@ -503,7 +507,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
       ) : (
         <>
           {/* No matching WBS — offer to create one inline, or continue without */}
-          <div style={{ padding: '10px 12px', marginBottom: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+          {!isCms && <div style={{ padding: '10px 12px', marginBottom: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
             <strong>No WBS found for {form.platform}{resolvedComponent ? ` · ${resolvedComponent}` : ''}.</strong>{' '}
             Create a new WBS for it (recommended), or continue without linking WBS items.
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
@@ -523,7 +527,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
                 Continue without
               </button>
             </div>
-          </div>
+          </div>}
 
           {wbsMode === 'create' ? (
             <NewTaskList

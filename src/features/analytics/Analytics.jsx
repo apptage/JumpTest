@@ -20,6 +20,7 @@ import {
 import { filterReleases, filterBugs, historicalBugs } from '@shared/filters.js';
 import { computeReleaseMetrics, computeBottlenecks, computeWorkload } from '@shared/releaseMetrics.js';
 import { aggregateBugMetrics, bugWorkflow, agingBugs } from '@shared/bugMetrics.js';
+import { capPct } from '@shared/wbsMetrics.js';
 import {
   STATUSES, STATUS_ORDER, SEVERITIES, SEVERITY_ORDER, BUG_STATUSES, BUG_STATUS_ORDER, BUG_RESOLUTIONS,
   RELEASE_PLATFORMS, ENVIRONMENTS, WBS_STATUSES, WBS_STATUS_ORDER, isActiveBug, isActiveStatus, isClosedStatus, slaLevel, formatVersion,
@@ -116,7 +117,7 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
     const by = {};
     WBS_STATUS_ORDER.forEach((k) => (by[k] = 0));
     work.forEach((i) => (by[i.status] = (by[i.status] || 0) + 1));
-    const pct = (n) => (work.length ? Math.round((n / work.length) * 100) : 0);
+    const pct = (n) => capPct(n, work.length);
     return { total: work.length, projects: new Set(work.map((i) => i.projectId)).size, by, pct };
   }, [wbsItems.list, f.project, f.team, projectsById]);
 
@@ -251,7 +252,7 @@ export function Analytics({ projects, releases, bugs, profiles, teams, projectsB
             {Object.keys(WORDS).map((k) => (
               <div key={k}><strong>{L(k)}</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— {HELP(k)}</span></div>
             ))}
-            <div><strong>Story points</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— each work-breakdown (WBS) item counts as one point; milestones aren’t counted. Follows the team and project filters only.</span></div>
+            <div><strong>Story points</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— each work-breakdown (WBS) item on any track (scope, improvements, upsell, design, marketing, support) counts as one point; milestones aren’t counted. Follows the team and project filters only.</span></div>
             <div><strong>All history vs Active only</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— everything ever shipped, or just builds still in flight.</span></div>
             <div><strong>Judged builds</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— approved or sent back; builds still in testing aren’t counted in rates. A build approved with a serious bug still open counts as sent back.</span></div>
           </div>

@@ -1,24 +1,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadBranchEnvIntoProcess } from './scripts/load-branch-env.mjs';
-import { nextClientEnvBlock } from './scripts/public-env.mjs';
-
-loadBranchEnvIntoProcess();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  env: nextClientEnvBlock(),
   reactStrictMode: true,
   webpack(config) {
-    // Inline SVG as string (brand.jsx uses `*.svg?raw`, same as the old Vite setup)
-    config.module.rules.push({
-      test: /\.svg$/i,
-      resourceQuery: /raw/,
-      type: 'asset/source',
-    });
-
     config.resolve.alias = {
       ...config.resolve.alias,
       '@': path.resolve(__dirname, './src'),
@@ -26,6 +14,13 @@ const nextConfig = {
       '@features': path.resolve(__dirname, './src/features'),
       '@config': path.resolve(__dirname, './src/config'),
     };
+    // `import x from './file.svg?raw'` gives the file's text (see src/brand.jsx).
+    // Next's image loader would otherwise turn it into an image object.
+    const imageRule = config.module.rules.find((r) => r.test?.test?.('.svg'));
+    if (imageRule) {
+      imageRule.resourceQuery = { not: [...(imageRule.resourceQuery?.not || []), /raw/] };
+    }
+    config.module.rules.push({ resourceQuery: /raw/, type: 'asset/source' });
     return config;
   },
 };

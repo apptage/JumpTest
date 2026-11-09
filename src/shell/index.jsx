@@ -10,13 +10,13 @@
 import { useState, useEffect } from 'react';
 import { card, inputStyle, ghostButton, primaryButton, Logo, Wordmark, Avatar, CountBadge } from '@/ui.jsx';
 import { PageHeader, sideHead } from '@shared/ui-kit.jsx';
-import { ApptageLogo, ApptageMark } from '@/brand.jsx';
+import { BrandLogo, BrandMark } from '@/brand.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
 import { requestPushPermission, pushConfigured } from '@/push/pushClient.js';
 import { EDIT_WINDOW_HOURS, SLA_HOURS, BUG_SLA_DAYS } from '@/constants.js';
 import {
   IconBell, IconBug, IconChart, IconCog, IconFolder, IconGrid,
-  IconLayers, IconPackage, IconPlus, IconPower, IconSearch, IconSliders, IconTree, IconUsers, IconUpload,
+  IconLayers, IconPackage, IconPlus, IconPower, IconSearch, IconSliders, IconTag, IconTree, IconUsers, IconUpload,
 } from '@/icons.jsx';
 
 /* ---- tiny inline icons the kit doesn't ship (Lucide-style, 1.75 stroke) ---- */
@@ -33,11 +33,11 @@ const IconChevron = ({ size = 14, dir = 'down' }) => {
 export const PAGE_TITLES = {
   dashboard: 'Dashboard', projecthub: 'Projects', releases: 'Releases',
   bugs: 'Bugs', wbs: 'WBS', projects: 'Manage Projects', analytics: 'Analytics', users: 'Users',
-  teams: 'Teams', settings: 'Settings',
+  teams: 'Teams', brands: 'Brands', settings: 'Settings',
 };
 const SECTION_OF = {
   dashboard: 'Main', projecthub: 'Work', releases: 'Work', bugs: 'Work', wbs: 'Work',
-  analytics: 'Insights', projects: 'Admin', users: 'Admin', teams: 'Admin', settings: 'Account',
+  analytics: 'Insights', projects: 'Admin', users: 'Admin', teams: 'Admin', brands: 'Admin', settings: 'Account',
 };
 function navSections({ canManage, isAdmin }) {
   return [
@@ -57,6 +57,7 @@ function navSections({ canManage, isAdmin }) {
       { key: 'projects', label: 'Manage Projects', Icon: IconSliders, show: canManage },
       { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
       { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
+      { key: 'brands', label: 'Brands', Icon: IconTag, show: isAdmin },
     ] },
     { label: 'Account', items: [
       { key: 'settings', label: 'Settings', Icon: IconCog, show: true },
@@ -69,7 +70,7 @@ function navSections({ canManage, isAdmin }) {
 /* ================================================================== */
 /* AppSidebar                                                          */
 /* ================================================================== */
-export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, collapsed, onToggleCollapsed }) {
+export function NavRail({ page, onNavigate, teamName, brand, canManage, isAdmin, collapsed, onToggleCollapsed }) {
   const sections = navSections({ canManage, isAdmin });
   return (
     <nav className={`nav-rail${collapsed ? ' collapsed' : ''}`} aria-label="Primary">
@@ -110,7 +111,7 @@ export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, collap
         ))}
       </div>
 
-      {/* SidebarFooter — the workspace owner (Apptage) + a quiet team label.
+      {/* SidebarFooter — the workspace's default brand + a quiet team label.
           The account menu stays in the header. */}
       <div style={{ marginTop: 'auto', padding: collapsed ? '14px 0 2px' : '14px 12px 2px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: collapsed ? 'center' : 'flex-start' }}>
         {teamName && !collapsed && (
@@ -118,14 +119,14 @@ export function NavRail({ page, onNavigate, teamName, canManage, isAdmin, collap
             Team · <span style={{ color: 'var(--rail-fg)', fontWeight: 600 }}>{teamName}</span>
           </div>
         )}
-        {collapsed ? (
-          <span title="Apptage workspace"><ApptageMark size={20} /></span>
+        {brand && (collapsed ? (
+          <span title={`${brand.name} workspace`}><BrandMark brand={brand} size={20} /></span>
         ) : (
-          <div title="Apptage workspace" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div title={`${brand.name} workspace`} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--rail-muted)' }}>Workspace</span>
-            <ApptageLogo size={18} color="var(--sidebar-foreground)" />
+            <BrandLogo brand={brand} size={18} />
           </div>
-        )}
+        ))}
       </div>
     </nav>
   );

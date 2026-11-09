@@ -2,11 +2,12 @@
    ?client=<token>. Moved verbatim out of ReleaseTracker.jsx (Phase 0). */
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
-import { card, inputStyle, ghostButton, CenteredMessage } from '@/ui.jsx';
-import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER } from '@/constants.js';
+import { card, inputStyle, ghostButton, Wordmark, CenteredMessage } from '@/ui.jsx';
+import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER, WBS_TRACK_ORDER, wbsTrackLabel } from '@/constants.js';
+import { capPct, computeWorkCompletion } from '@shared/wbsMetrics.js';
 import { sideHead } from '@shared/ui-kit.jsx';
-import { WbsBadge, latestEst } from '@features/wbs';
-import { ApptageLogo, MiaroLogo } from '@/brand.jsx';
+import { WbsBadge, TrackBreakdown, ProjectProgress, latestEst } from '@features/wbs';
+import { BrandLogo, MiaroLogo } from '@/brand.jsx';
 
 // relative "updated Xm ago" — coarse, no external dep
 function relTime(iso) {
@@ -35,8 +36,7 @@ const CLIENT_STATUS = {
 
 function publicWbsPct(items) {
   const work = items.filter((t) => t.type !== 'milestone');
-  if (!work.length) return 0;
-  return Math.round((work.filter((t) => t.status === 'completed').length / work.length) * 100);
+  return capPct(work.filter((t) => t.status === 'completed').length, work.length);
 }
 
 // format an ISO date ('YYYY-MM-DD') without a TZ off-by-one
@@ -56,8 +56,10 @@ const WBS_STATUS_HELP = {
   blocked: 'paused while waiting on something — often a decision or input from you.',
 };
 const WBS_READ_HELP = [
-  ['Total items', 'every feature or task in the agreed scope. Milestones are listed separately and aren’t counted.'],
-  ['Overall project completion', 'the share of items marked Completed. Items still in progress or in QA aren’t counted yet, so this can trail behind visible activity.'],
+  ['Total items', 'every feature or task we’re tracking: the agreed scope plus improvements, your feedback, upsells, design, marketing and ongoing support. Milestones are listed separately and aren’t counted.'],
+  ['Interface progress bars', 'how far each part of the product is, such as the Mobile App or Web App, counting completed items only.'],
+  ['Overall project progress', 'the share of all work that’s finished, including reported bugs. New requests lower it until they’re done, and items still in progress or in QA aren’t counted yet, so it can trail behind visible activity.'],
+  ['Work type filter', 'shows one type of work at a time, such as your feedback or upsell modules.'],
   ['Platform sections', 'work is grouped by platform (e.g. Mobile App), then by feature area. Completion is the target date to finish building that platform; Deployment is when it’s planned to go live.'],
   ['Feature-area % and Target', 'the % shows how many items in that group are completed; Target is the latest estimated finish date among them.'],
   ['Dates next to items', 'the estimated completion date for that item.'],
@@ -73,8 +75,8 @@ function WbsReadGuide() {
     </div>
   );
   return (
-    <div style={{ ...card, padding: 18, marginBottom: 16 }}>
-      <div style={{ marginBottom: 12 }}>
+    <div style={{ ...card, padding: 20 }}>
+      <div style={{ marginBottom: 14 }}>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>How to read this page</div>
         <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>What each number, status and date on this work breakdown means.</div>
       </div>
@@ -86,9 +88,10 @@ function WbsReadGuide() {
   );
 }
 
-function ClientWbsView({ wbs, platformTargets = [] }) {
+function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, ongoingSupport }) {
   const [q, setQ] = useState('');
   const [sf, setSf] = useState('all');
+  const [tf, setTf] = useState('all'); // work type (track)
   const [guide, setGuide] = useState(false);
 
   // platform milestones keyed the same way the groups are (empty → 'General')
@@ -97,7 +100,12 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
 
   const allWork = wbs.filter((t) => t.type !== 'milestone');
   const milestones = wbs.filter((t) => t.type === 'milestone');
-  const pct = publicWbsPct(allWork); // overall % is on the full scope, not the filtered subset
+  // overall % is on all work + reported bugs, not the filtered subset
+  const resolvedBugs = bugCounts?.resolved ?? 0;
+  const bugTotal = resolvedBugs + (bugCounts?.open ?? 0);
+  const itemCompletion = computeWorkCompletion(allWork);
+  const pct = capPct(itemCompletion.done + resolvedBugs, itemCompletion.total + bugTotal);
+  const tracksPresent = WBS_TRACK_ORDER.filter((t) => allWork.some((i) => (i.track || 'scope') === t));
 
   // status stat strip (full scope)
   const byStatus = (s) => allWork.filter((t) => t.status === s).length;
@@ -111,13 +119,14 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
   ];
 
   const work = allWork.filter(
-    (t) => (sf === 'all' || t.status === sf) && (!q.trim() || (t.name || '').toLowerCase().includes(q.trim().toLowerCase()))
+    (t) => (tf === 'all' || (t.track || 'scope') === tf) && (sf === 'all' || t.status === sf) && (!q.trim() || (t.name || '').toLowerCase().includes(q.trim().toLowerCase()))
   );
-  const platforms = Array.from(new Set(work.map((t) => t.platform).filter(Boolean)));
 
   const groups = {};
   work.forEach((t) => {
-    const pk = t.platform || 'General';
+    // the original scope groups by platform; other work reads as its type first
+    const tr = t.track || 'scope';
+    const pk = tr === 'scope' ? t.platform || 'General' : [wbsTrackLabel(tr), t.platform].filter(Boolean).join(' · ');
     const sk = t.section || 'General';
     (groups[pk] = groups[pk] || {});
     (groups[pk][sk] = groups[pk][sk] || []).push(t);
@@ -142,34 +151,30 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
   );
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <button style={ghostButton} onClick={() => setGuide((v) => !v)}>{guide ? 'Hide' : 'How to read this page'}</button>
-      </div>
-      {guide && <WbsReadGuide />}
-
-      {/* status stat strip */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+    <div className="portal-stack">
+      {/* status stat strip, then progress per interface and overall */}
+      <div className="portal-stats">
         {stats.map((s) => (
-          <div key={s.key} style={{ ...card, padding: '12px 16px', flex: '1 1 110px', minWidth: 100 }}>
+          <div key={s.key} style={{ ...card, padding: 16 }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: s.color || 'var(--color-text-primary)' }}>{s.value}</div>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
-
-      <div style={{ ...card, padding: 18, marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Overall project completion</span>
-          <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
-        </div>
-        <div style={{ height: 10, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
-          <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
-        </div>
+      <div style={{ ...card, padding: 16 }}>
+        <ProjectProgress
+          interfaces={itemCompletion.byInterface}
+          bugs={showBugCounts ? { total: bugTotal, resolved: resolvedBugs } : null}
+          overall={{ pct, done: itemCompletion.done + resolvedBugs, total: itemCompletion.total + bugTotal }}
+        />
+        {ongoingSupport && (
+          <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 10 }}>Ongoing support is active: new requests are added here as they come in.</div>
+        )}
+        <TrackBreakdown byTrack={itemCompletion.byTrack} />
       </div>
 
-      {/* search + status filter (read-only, viewer convenience) */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+      {/* search + status filter (read-only, viewer convenience) + reading guide */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input
           style={{ ...inputStyle, flex: '1 1 180px', width: 'auto', padding: '8px 12px', fontSize: 13 }}
           value={q}
@@ -184,10 +189,23 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
           <option value="all">All statuses</option>
           {WBS_STATUS_ORDER.map((s) => <option key={s} value={s}>{WBS_STATUSES[s].label}</option>)}
         </select>
+        {tracksPresent.length > 1 && (
+          <select
+            style={{ ...inputStyle, width: 'auto', padding: '8px 12px', fontSize: 13 }}
+            value={tf}
+            aria-label="Work type"
+            onChange={(e) => setTf(e.target.value)}
+          >
+            <option value="all">All work</option>
+            {tracksPresent.map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+          </select>
+        )}
+        <button style={ghostButton} onClick={() => setGuide((v) => !v)}>{guide ? 'Hide guide' : 'How to read this page'}</button>
       </div>
+      {guide && <WbsReadGuide />}
 
       {work.length === 0 && (
-        <div style={{ ...card, padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 18 }}>
+        <div style={{ ...card, padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>
           No items match your filter.
         </div>
       )}
@@ -196,12 +214,12 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
         const tgt = targetMap[pk];
         const comp = fmtDate(tgt?.completionDate);
         const dep = fmtDate(tgt?.deploymentDate);
-        const showName = platforms.length > 1;
+        const showName = Object.keys(groups).length > 1 || pk !== 'General';
         const showDates = comp || dep;
         return (
-        <div key={pk} style={{ marginBottom: 18 }}>
+        <div key={pk}>
           {(showName || showDates) && (
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
               {showName ? <div style={{ ...sideHead }}>{pk}</div> : <span />}
               {showDates && (
                 <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -211,7 +229,7 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
               )}
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="portal-cols">
             {Object.entries(sections).map(([sk, ts]) => (
               <div key={sk} style={{ ...card, padding: '4px 16px' }}>
                 <div
@@ -239,17 +257,17 @@ function ClientWbsView({ wbs, platformTargets = [] }) {
       })}
 
       {milestones.length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ ...sideHead, marginBottom: 8 }}>Milestones</div>
-          <div style={{ ...card, padding: '4px 16px' }}>
+        <div>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Milestones</div>
+          <div className="portal-rows" style={{ ...card, padding: '4px 16px' }}>
             {milestones.map((m, i) => (
               <div
                 key={i}
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
+                  gap: 12,
                   padding: '10px 0',
-                  borderBottom: i === milestones.length - 1 ? 'none' : '1px solid var(--color-border-primary)',
                 }}
               >
                 <span style={{ fontSize: 13, fontWeight: 500 }}>{m.name}</span>
@@ -306,19 +324,21 @@ function ClientBugReport({ report }) {
     <span style={{ fontSize: 10.5, fontWeight: 700, color, background: `${color}1a`, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>{label}</span>
   );
   const stat = (label, value, color) => (
-    <div style={{ ...card, padding: '12px 16px', flex: '1 1 120px', minWidth: 108 }}>
+    <div style={{ ...card, padding: 16 }}>
       <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
       <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
     </div>
   );
 
   return (
-    <section style={{ marginTop: 8 }}>
-      <div style={{ ...sideHead, marginBottom: 4 }}>QA bug report</div>
-      <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 14px' }}>
-        Every issue found by QA across all builds of this project.
-      </p>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
+    <section className="portal-stack">
+      <div>
+        <div style={{ ...sideHead, marginBottom: 4 }}>QA bug report</div>
+        <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: 0 }}>
+          Every issue found by QA across all builds of this project.
+        </p>
+      </div>
+      <div className="portal-stats">
         {stat('Total bugs', sum.total)}
         {stat('Open', sum.open, sum.open ? 'var(--danger)' : undefined)}
         {stat('Awaiting QA', sum.awaiting, sum.awaiting ? 'var(--warning)' : undefined)}
@@ -326,7 +346,7 @@ function ClientBugReport({ report }) {
         {stat('Critical', critical, critical ? 'var(--danger)' : undefined)}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="portal-cols wide">
         {builds.map((b, bi) => {
           const bugs = b.bugs || [];
           const bb = bugBucket(bugs);
@@ -398,6 +418,8 @@ export function ClientDashboard({ token }) {
   const [data, setData] = useState(undefined); // undefined=loading, null=invalid
   const [bugReport, setBugReport] = useState(null); // null when not enabled / not deployed
   const [allReleases, setAllReleases] = useState([]); // every build, all statuses
+  const [brand, setBrand] = useState(null); // project's brand, else the default
+  const [work, setWork] = useState(null); // items with their track + bug counts; null until deployed
   const [error, setError] = useState('');
   const [fetchedAt, setFetchedAt] = useState(null); // when this view last synced
   const [, forceTick] = useState(0); // re-render so the "ago" label stays fresh
@@ -420,12 +442,16 @@ export function ClientDashboard({ token }) {
         api.fetchPublicStatus(token),
         api.fetchPublicBugReport(token).catch(() => null), // never let the report break the portal
         api.fetchPublicReleases(token).catch(() => []),
+        api.fetchPublicProjectBrand(token).catch(() => null),
+        api.fetchPublicWork(token).catch(() => null),
       ])
-        .then(([d, br, rels]) => {
+        .then(([d, br, rels, b, w]) => {
           if (cancelled) return;
           setData(d);
           setBugReport(br);
           setAllReleases(rels || []);
+          setBrand(b);
+          setWork(w);
           setFetchedAt(Date.now());
         })
         .catch((e) => !cancelled && setError(e.message));
@@ -449,7 +475,7 @@ export function ClientDashboard({ token }) {
       </CenteredMessage>
     );
 
-  const wbs = data.wbs || [];
+  const wbs = work?.items || data.wbs || [];
   const showWbs = data.wbsEnabled && wbs.length > 0;
   // hide superseded (closed) iterations from the client
   const releases = (data.releases || []).filter((r) => r.status !== 'closed');
@@ -493,7 +519,6 @@ export function ClientDashboard({ token }) {
         alignItems: 'center',
         gap: 12,
         padding: '11px 0',
-        borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)',
       }}
     >
       <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
@@ -531,16 +556,16 @@ export function ClientDashboard({ token }) {
           padding: '14px 0',
         }}
       >
-        <div style={{ maxWidth: 880, margin: '0 auto', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Apptage runs this portal for its clients; Miaro Verify is the platform underneath */}
-          <ApptageLogo size={26} color="var(--color-text-primary)" />
+        <div className="portal-wrap" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* the project's brand runs this portal; Miaro Verify is the platform underneath */}
+          {brand ? <BrandLogo brand={brand} size={26} /> : <Wordmark size={26} />}
           <span style={{ width: 1, height: 20, background: 'var(--color-border-primary)', margin: '0 4px' }} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Client portal</span>
-          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>Live project tracking</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>Client portal</span>
+          <span className="portal-header-note" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>Live project tracking</span>
         </div>
       </header>
 
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: '28px 20px 64px' }}>
+      <div className="portal-wrap portal-body">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{data.project.name}</h1>
@@ -566,12 +591,11 @@ export function ClientDashboard({ token }) {
             })()}
           </div>
         </div>
-        <div style={{ height: 20 }} />
 
         {/* Tabs — shown when there's more than the status view (releases and/or the
             QA report). Otherwise the portal renders the project status directly. */}
         {showTabs && (
-          <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border-primary)', marginBottom: 22, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border-primary)', flexWrap: 'wrap' }}>
             {tabList.map(([k, label]) => (
               <button
                 key={k}
@@ -589,14 +613,22 @@ export function ClientDashboard({ token }) {
         )}
 
         {effectiveTab === 'status' && (
-          <>
-            {showWbs && <ClientWbsView wbs={wbs} platformTargets={data.platformTargets} />}
+          <div className="portal-stack">
+            {showWbs && (
+              <ClientWbsView
+                wbs={wbs}
+                platformTargets={data.platformTargets}
+                bugCounts={work?.bugs}
+                showBugCounts={data.showOpenBugs}
+                ongoingSupport={work?.ongoingSupport}
+              />
+            )}
 
             {/* release-based progress + summary only when there is no WBS (the WBS view
                 already shows completion, so we avoid a duplicate progress bar) */}
             {!showWbs && (
               <>
-                <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+                <div style={{ ...card, padding: 16 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>Overall progress</span>
                     <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--brand)' }}>{pct}%</span>
@@ -610,7 +642,7 @@ export function ClientDashboard({ token }) {
                     </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                   {statCard('Completed', completed.length, 'var(--success)')}
                   {statCard('In progress', inProgress.length, 'var(--warning)')}
                   {statCard('Resolved bugs', data.bugs?.resolved ?? 0, 'var(--success)')}
@@ -621,40 +653,43 @@ export function ClientDashboard({ token }) {
 
             {/* Releases are ALWAYS shown — a WBS-enabled project must NOT hide its
                 release status / approvals / send-backs / history from the client. */}
-            {showWbs && releases.length > 0 && <div style={{ ...sideHead, margin: '10px 0 12px' }}>Releases</div>}
-            {inProgress.length > 0 && (
-              <section style={{ marginBottom: 24 }}>
-                <div style={{ ...sideHead, marginBottom: 10 }}>In progress</div>
-                <div style={{ ...card, padding: '4px 16px' }}>{inProgress.map(relRow)}</div>
-              </section>
-            )}
-            {completed.length > 0 && (
-              <section style={{ marginBottom: 24 }}>
-                <div style={{ ...sideHead, marginBottom: 10 }}>Completed</div>
-                <div style={{ ...card, padding: '4px 16px' }}>{completed.map(relRow)}</div>
-              </section>
+            {(inProgress.length > 0 || completed.length > 0) && (
+              <div className="portal-duo">
+                {inProgress.length > 0 && (
+                  <section>
+                    <div style={{ ...sideHead, marginBottom: 12 }}>{showWbs ? 'Releases in progress' : 'In progress'}</div>
+                    <div className="portal-rows" style={{ ...card, padding: '4px 16px' }}>{inProgress.map(relRow)}</div>
+                  </section>
+                )}
+                {completed.length > 0 && (
+                  <section>
+                    <div style={{ ...sideHead, marginBottom: 12 }}>{showWbs ? 'Completed releases' : 'Completed'}</div>
+                    <div className="portal-rows" style={{ ...card, padding: '4px 16px' }}>{completed.map(relRow)}</div>
+                  </section>
+                )}
+              </div>
             )}
             {releases.length > 0 && (
               <section>
-                <div style={{ ...sideHead, marginBottom: 10 }}>Release history</div>
-                <div style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
+                <div style={{ ...sideHead, marginBottom: 12 }}>Release history</div>
+                <div className="portal-rows" style={{ ...card, padding: '4px 16px' }}>{releases.map(relRow)}</div>
               </section>
             )}
-          </>
+          </div>
         )}
 
         {effectiveTab === 'releases' && (
           <section>
             <div style={{ ...sideHead, marginBottom: 4 }}>All releases</div>
-            <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 14px' }}>
+            <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 16px' }}>
               Every build submitted for this project — including superseded iterations.
             </p>
             {allReleases.length === 0 ? (
               <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No releases yet.</div>
             ) : (
-              <div style={{ ...card, padding: '4px 16px' }}>
-                {allReleases.map((r, i, arr) => (
-                  <div key={i} style={{ padding: '12px 0', borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)' }}>
+              <div className="portal-rows" style={{ ...card, padding: '4px 16px' }}>
+                {allReleases.map((r, i) => (
+                  <div key={i} style={{ padding: '12px 0' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -684,8 +719,8 @@ export function ClientDashboard({ token }) {
 
         {effectiveTab === 'qa' && <ClientBugReport report={bugReport} />}
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 32 }}>
-          Live project tracking &amp; client status reviews by Apptage · powered by
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+          {brand ? `Live project tracking & client status reviews by ${brand.name}` : 'Read-only project status'} · powered by
           <MiaroLogo size={14} color="var(--color-text-secondary)" />
         </div>
       </div>

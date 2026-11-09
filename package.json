@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "env:sync": "node scripts/setup-env.mjs",
-    "dev": "npm run env:sync; next dev",
+    "dev": "next dev",
     "build": "next build",
-    "build:extension": "npm run env:sync; node scripts/build-extension.mjs",
     "start": "next start",
-    "preview": "npm run start",
-    "db:push": "npm run env:sync && supabase db push",
+    "preview": "next start",
+    "build:extension": "node scripts/build-extension.mjs",
+    "db:push": "supabase db push",
     "db:link": "npm run env:sync && node scripts/supabase-link.mjs"
   },
   "dependencies": {

@@ -24,7 +24,22 @@ export function mapProject(p) {
     platform: p.platform,
     teamId: p.team_id ?? null,
     wbsEnabled: !!p.wbs_enabled,
+    brandId: p.brand_id ?? null,
+    ongoingSupport: !!p.ongoing_support,
+    cmsKind: p.type === 'cms' ? p.cms_kind || 'website' : null,
     createdAt: p.created_at,
+  };
+}
+
+export function mapBrand(b) {
+  return {
+    id: b.id,
+    name: b.name,
+    logoUrl: b.logo_url,
+    logoDarkUrl: b.logo_dark_url || null,
+    markUrl: b.mark_url || null,
+    isDefault: !!b.is_default,
+    createdAt: b.created_at,
   };
 }
 
@@ -310,6 +325,38 @@ export async function deleteClientLink(id) {
   if (error) throw error;
 }
 
+// Brand shown on a client's portal: the project's own brand, else the default.
+// null when the brands migration isn't deployed yet — the portal then shows the
+// Miaro Verify wordmark.
+export async function fetchPublicProjectBrand(token) {
+  const { data, error } = await supabase.rpc('public_project_brand', { p_token: token });
+  if (error) {
+    if (isMissingBrands(error)) return null;
+    throw error;
+  }
+  return data;
+}
+// Default brand for the signed-out sign-in page.
+export async function fetchPublicDefaultBrand() {
+  const { data, error } = await supabase.rpc('public_default_brand');
+  if (error) {
+    if (isMissingBrands(error)) return null;
+    throw error;
+  }
+  return data;
+}
+
+// Client portal work items with their track + bug counts. null when the
+// migration isn't deployed — the portal falls back to public_project_status.
+export async function fetchPublicWork(token) {
+  const { data, error } = await supabase.rpc('public_project_work', { p_token: token });
+  if (error) {
+    if (error.code === 'PGRST202' || /public_project_work|function .* does not exist|schema cache/i.test(error.message || '')) return null;
+    throw error;
+  }
+  return data;
+}
+
 export async function fetchPublicStatus(token) {
   const { data, error } = await supabase.rpc('public_project_status', { p_token: token });
   if (error) throw error;
@@ -352,12 +399,15 @@ export function mapWbsItem(t) {
     platformType: t.platform_type || '',
     module: t.module || '',
     type: t.type,
+    track: t.track || 'scope',
     title: t.title,
     description: t.description || '',
     status: t.status || 'not_started',
     devComments: t.dev_comments || '',
     estimatedCompletionDate: t.estimated_completion_date || '',
     actualCompletionDate: t.actual_completion_date || null,
+    qaApprovedBy: t.qa_approved_by || null,
+    qaApprovedAt: t.qa_approved_at || null,
     assignedTo: t.assigned_to || null,
     priority: t.priority || '',
     position: t.position,
@@ -396,6 +446,7 @@ export async function createWbsItem(projectId, item) {
     assignedTo = null,
     type = 'task',
     position = 0,
+    track = 'scope',
   } = item;
   const { data, error } = await supabase
     .from('wbs_items')
@@ -413,6 +464,7 @@ export async function createWbsItem(projectId, item) {
       priority,
       assigned_to: assignedTo,
       position,
+      ...(track !== 'scope' ? { track } : {}), // column default covers 'scope'
     })
     .select('id')
     .single();
@@ -576,6 +628,7 @@ export async function importWbs(projectId, rows) {
       estimated_completion_date: r.est || r.estimated_completion_date || '',
       priority: r.priority || null,
       position: pos++,
+      ...(r.track && r.track !== 'scope' ? { track: r.track } : {}),
     });
   }
   let added = 0;
@@ -595,16 +648,19 @@ export async function deleteWbs(projectId) {
   await supabase.from('projects').update({ wbs_enabled: false }).eq('id', projectId);
 }
 
-// Delete one platform group's WBS (all items with that platform_type) + its
-// milestone target. Release/bug snapshots survive via ON DELETE SET NULL.
-export async function deleteWbsPlatform(projectId, platformType) {
+// Delete one platform group on one track (+ its milestone target, on the scope
+// track). Release/bug snapshots survive via ON DELETE SET NULL.
+export async function deleteWbsPlatform(projectId, platformType, track = 'scope') {
   const pt = platformType || '';
+  // one tab only: the same platform can have items on other tracks
   const { error } = await supabase
     .from('wbs_items')
     .delete()
     .eq('project_id', projectId)
-    .eq('platform_type', pt);
+    .eq('platform_type', pt)
+    .eq('track', track);
   if (error) throw error;
+  if (track !== 'scope') return; // milestone dates belong to the original scope
   await supabase
     .from('wbs_platform_targets')
     .delete()
@@ -677,6 +733,53 @@ export async function fetchBugsByTaskIds(taskIds) {
     }));
 }
 
+// Every release each of a project's WBS items went out on: { taskId: [release…] }.
+// Paged by project, not by id list: a large WBS would overflow the request URL.
+export async function fetchWbsQaLinks(projectId) {
+  const PAGE = 1000;
+  const out = {};
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('release_tasks')
+      .select('id, task_id, releases!inner(version, status, created_at, qa_completed_at, project_id)')
+      .eq('releases.project_id', projectId)
+      .not('task_id', 'is', null)
+      .order('id')
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    data.forEach((l) => {
+      (out[l.task_id] = out[l.task_id] || []).push({
+        version: l.releases.version,
+        status: l.releases.status,
+        createdAt: l.releases.created_at,
+        qaCompletedAt: l.releases.qa_completed_at,
+      });
+    });
+    if (data.length < PAGE) return out;
+  }
+}
+// SQA signs off items already Completed. The database stamps who and when.
+export async function approveWbsItemsQa(itemIds) {
+  if (!itemIds || !itemIds.length) return;
+  const { error } = await supabase
+    .from('wbs_items')
+    .update({ qa_approved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .in('id', itemIds);
+  if (error) throw error;
+}
+
+// Of these WBS items, the ones on a release QA has ruled on (Approved / Sent Back).
+export async function fetchQaDecidedTaskIds(taskIds) {
+  if (!taskIds || taskIds.length === 0) return new Set();
+  const { data, error } = await supabase
+    .from('release_tasks')
+    .select('task_id, releases!inner(status)')
+    .in('task_id', taskIds)
+    .in('releases.status', ['approved', 'sent_back']);
+  if (error) throw error;
+  return new Set(data.map((r) => r.task_id));
+}
+
 export async function fetchReleaseTasks(releaseId) {
   const { data, error } = await supabase
     .from('release_tasks')
@@ -722,6 +825,8 @@ export async function createProject(p) {
       type: p.type,
       platform: p.platform,
       team_id: p.team_id ?? null,
+      ...(p.brand_id ? { brand_id: p.brand_id } : {}),
+      ...(p.type === 'cms' ? { cms_kind: p.cms_kind || 'website' } : {}),
     })
     .select('id')
     .single();
@@ -1227,6 +1332,159 @@ export async function setReleaseCheck(releaseId, itemId, checked) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Brands (Admin → Brands; assigned per project)                      */
+/* ------------------------------------------------------------------ */
+
+// true when the failure is "the brands migration isn't deployed yet"
+function isMissingBrands(e) {
+  return (
+    e?.code === '42P01' || // undefined_table
+    e?.code === 'PGRST205' || // PostgREST: table not in schema cache
+    e?.code === 'PGRST202' || // PostgREST: function not found
+    /bucket not found/i.test(e?.message || '')
+  );
+}
+const friendlyBrandError = (e) =>
+  isMissingBrands(e) ? new Error('Brands aren’t enabled yet — run the brands migration on the database.') : e;
+
+export async function fetchBrands() {
+  const { data, error } = await supabase.from('brands').select('*').order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingBrands(error)) return [];
+    throw error;
+  }
+  return data.map(mapBrand);
+}
+export async function createBrand(row) {
+  const { error } = await supabase.from('brands').insert(row);
+  if (error) throw friendlyBrandError(error);
+}
+export async function updateBrand(id, patch) {
+  const { error } = await supabase.from('brands').update(patch).eq('id', id);
+  if (error) throw friendlyBrandError(error);
+}
+export async function deleteBrand(id) {
+  const { error } = await supabase.from('brands').delete().eq('id', id);
+  if (error) throw friendlyBrandError(error);
+}
+export async function setDefaultBrand(id) {
+  const { error } = await supabase.rpc('set_default_brand', { p_id: id });
+  if (error) throw friendlyBrandError(error);
+}
+export async function uploadBrandAsset(file) {
+  try {
+    return await uploadFile('brand-assets', file);
+  } catch (e) {
+    throw friendlyBrandError(e);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Project information (Project Hub → Project info)                   */
+/* ------------------------------------------------------------------ */
+
+// true when the failure is "the project info migration isn't deployed yet"
+const isMissingProjectInfo = (e) => e?.code === '42P01' || e?.code === 'PGRST205' || e?.code === 'PGRST202';
+
+function mapProjectResource(r) {
+  return {
+    id: r.id,
+    projectId: r.project_id,
+    category: r.category,
+    title: r.title,
+    url: r.url,
+    notes: r.notes || '',
+    filePath: r.file_path,
+    fileName: r.file_name,
+  };
+}
+// null = not deployed yet
+export async function fetchProjectResources(projectId) {
+  const { data, error } = await supabase
+    .from('project_resources')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    if (isMissingProjectInfo(error)) return null;
+    throw error;
+  }
+  return data.map(mapProjectResource);
+}
+export async function createProjectResource(row) {
+  const { error } = await supabase.from('project_resources').insert(row);
+  if (error) throw error;
+}
+export async function updateProjectResource(id, patch) {
+  const { error } = await supabase
+    .from('project_resources')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+export async function deleteProjectResource(resource) {
+  const { error } = await supabase.from('project_resources').delete().eq('id', resource.id);
+  if (error) throw error;
+  if (resource.filePath) await removeProjectFile(resource.filePath).catch(() => {});
+}
+
+// Private bucket: the first folder is the project, which storage policies check.
+export async function uploadProjectFile(projectId, file) {
+  const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${projectId}/${Date.now()}-${safe}`;
+  const { error } = await supabase.storage.from('project-files').upload(path, file, { upsert: false });
+  if (error) throw error;
+  return path;
+}
+export async function removeProjectFile(path) {
+  const { error } = await supabase.storage.from('project-files').remove([path]);
+  if (error) throw error;
+}
+export async function getProjectFileUrl(path) {
+  const { data, error } = await supabase.storage.from('project-files').createSignedUrl(path, 60);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+// Credentials only ever go through these RPCs. The list carries no secrets; the
+// database checks access on each call and logs every reveal.
+export async function fetchProjectCredentials(projectId) {
+  const { data, error } = await supabase.rpc('list_project_credentials', { p_project: projectId });
+  if (error) {
+    if (isMissingProjectInfo(error)) return null;
+    throw error;
+  }
+  return data || [];
+}
+export async function revealProjectCredential(id) {
+  const { data, error } = await supabase.rpc('reveal_project_credential', { p_id: id });
+  if (error) throw error;
+  return data; // { username, password }
+}
+export async function saveProjectCredential({ id, projectId, category, label, url, accessLevel, username, password }) {
+  const { error } = await supabase.rpc('save_project_credential', {
+    p_id: id,
+    p_project: projectId,
+    p_category: category,
+    p_label: label,
+    p_url: url,
+    p_access_level: accessLevel,
+    p_username: username,
+    p_password: password,
+  });
+  if (error) throw error;
+}
+export async function deleteProjectCredential(id) {
+  const { error } = await supabase.rpc('delete_project_credential', { p_id: id });
+  if (error) throw error;
+}
+export async function fetchProjectCredentialLog(projectId) {
+  const { data, error } = await supabase.rpc('list_project_credential_log', { p_project: projectId });
+  if (error) throw error;
+  return data || [];
+}
+
+/* ------------------------------------------------------------------ */
 /* Storage (public buckets)                                           */
 /* ------------------------------------------------------------------ */
 
@@ -1240,4 +1498,97 @@ export async function uploadFile(bucket, file) {
   if (error) throw error;
   const { data } = supabase.storage.from(bucket).getPublicUrl(path);
   return data.publicUrl;
+}
+
+/* ------------------------------------------------------------------ */
+/* CMS projects: tasks + development journey                          */
+/* ------------------------------------------------------------------ */
+// null = the CMS migration isn't deployed yet (same codes as project info)
+export function mapCmsTask(t) {
+  return {
+    id: t.id,
+    projectId: t.project_id,
+    category: t.category,
+    title: t.title,
+    details: t.details || '',
+    requestedBy: t.requested_by,
+    channel: t.channel || null,
+    referenceUrl: t.reference_url || null,
+    assignedTo: t.assigned_to || null,
+    priority: t.priority || null,
+    status: t.status,
+    dueDate: t.due_date || null,
+    completedAt: t.completed_at || null,
+    createdBy: t.created_by || null,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  };
+}
+export async function fetchCmsTasks(projectId) {
+  const { data, error } = await supabase
+    .from('cms_tasks')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+  if (error) {
+    if (isMissingProjectInfo(error)) return null;
+    throw error;
+  }
+  return data.map(mapCmsTask);
+}
+// every CMS project's tasks at once (dashboard); [] until the CMS migration is deployed
+export async function fetchCmsTasksForProjects(projectIds) {
+  if (!projectIds || !projectIds.length) return [];
+  try {
+    return (await selectAllByProjects('cms_tasks', projectIds)).map(mapCmsTask);
+  } catch (error) {
+    if (isMissingProjectInfo(error)) return [];
+    throw error;
+  }
+}
+export async function createCmsTask(row) {
+  const { error } = await supabase.from('cms_tasks').insert(row);
+  if (error) throw error;
+}
+export async function updateCmsTask(id, patch) {
+  const { error } = await supabase.from('cms_tasks').update(patch).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteCmsTask(id) {
+  const { error } = await supabase.from('cms_tasks').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export function mapCmsStage(s) {
+  return {
+    id: s.id,
+    projectId: s.project_id,
+    stage: s.stage,
+    status: s.status,
+    ownerId: s.owner_id || null,
+    dueDate: s.due_date || null,
+    startedAt: s.started_at || null,
+    completedAt: s.completed_at || null,
+    notes: s.notes || '',
+    updatedAt: s.updated_at,
+  };
+}
+export async function fetchCmsStages(projectId) {
+  const { data, error } = await supabase.from('cms_stages').select('*').eq('project_id', projectId);
+  if (error) {
+    if (isMissingProjectInfo(error)) return null;
+    throw error;
+  }
+  return data.map(mapCmsStage);
+}
+// creates any stage rows the project doesn't have yet
+export async function startCmsJourney(projectId, stageKeys) {
+  const { error } = await supabase
+    .from('cms_stages')
+    .upsert(stageKeys.map((stage) => ({ project_id: projectId, stage })), { onConflict: 'project_id,stage', ignoreDuplicates: true });
+  if (error) throw error;
+}
+export async function updateCmsStage(id, patch) {
+  const { error } = await supabase.from('cms_stages').update(patch).eq('id', id);
+  if (error) throw error;
 }

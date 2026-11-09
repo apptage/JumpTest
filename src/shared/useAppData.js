@@ -28,6 +28,7 @@ export function useAppData(session, user, onError) {
   const teamsQ = q('teams', api.fetchTeams);
   const membersQ = q('projectMembers', api.fetchProjectMembers);
   const checklistQ = q('checklistItems', api.fetchChecklistItems);
+  const brandsQ = q('brands', api.fetchBrands);
   const notifQ = useQuery({
     queryKey: ['notifications', user?.id],
     queryFn: () => api.fetchNotifications(user.id),
@@ -60,6 +61,7 @@ export function useAppData(session, user, onError) {
     teams: teamsQ.data ?? EMPTY,
     projectMembers: membersQ.data ?? EMPTY,
     checklistItems: checklistQ.data ?? EMPTY,
+    brands: brandsQ.data ?? EMPTY,
     notifications: notifQ.data ?? EMPTY,
     // initial-load spinner: isPending stays true until the first successful
     // fetch resolves, so we keep showing the spinner (not an empty UI) through
@@ -70,6 +72,7 @@ export function useAppData(session, user, onError) {
     refetchProjects: useCallback(() => inv('projects'), [inv]),
     refetchProfiles: useCallback(() => inv('profiles'), [inv]),
     refetchChecklist: useCallback(() => inv('checklistItems'), [inv]),
+    refetchBrands: useCallback(() => inv('brands'), [inv]),
     refetchTeams: useCallback(() => inv('teams'), [inv]),
     refetchProjectMembers: useCallback(() => inv('projectMembers'), [inv]),
     refetchNotifications: useCallback(
