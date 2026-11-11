@@ -26,6 +26,7 @@ import {
   RELEASE_PLATFORMS,
   SLA_COLORS,
 } from '@/constants.js';
+import { managesProject } from '@shared/permissions.js';
 
 /* Clickable status chip — same look as the Releases page so the platform reads
    the same everywhere: dot · label · count; accent fill when active. */
@@ -420,7 +421,8 @@ function BugCard({
   const sev = SEVERITIES[bug.severity] || {};
   // same role gating as the release Bugs tab; actions need an editable release
   const canAct = !!rel && !isReadOnly(rel) && !!user;
-  const isManagerRole = user?.role === 'Team Lead' || user?.role === 'Admin';
+  // Admin, the project's Team Lead, or its Project Manager
+  const isManagerRole = managesProject(user, proj);
   // Team Leads also develop and submit builds → they get Start / Mark fixed too.
   const isDev = canAct && (user?.role === 'Developer' || user?.role === 'Team Lead' || user?.role === 'Admin');
   const isQA = canAct && (user?.role === 'QA' || isManagerRole);

@@ -709,7 +709,8 @@ export function DetailModal({
   const [note, setNote] = useState(release.qaNote || '');
   const [checks, setChecks] = useState({}); // item_id -> checked
 
-  // a "manager" (Admin anywhere, or Team Lead in their own team) gets full rights
+  // a "manager" (Admin anywhere, Team Lead in their own team, or the project's
+  // Project Manager) gets full rights
   const isQA = user.role === 'QA' || isManager;
   const canDoQA =
     isManager ||
@@ -882,6 +883,7 @@ export function DetailModal({
           bugs={bugs}
           user={user}
           isQA={isQA}
+          isManager={isManager}
           profiles={profiles}
           projectTeamId={project?.teamId}
           wbsEnabled={!!project?.wbsEnabled}
@@ -1286,6 +1288,7 @@ function BugsTab({
   bugs,
   user,
   isQA,
+  isManager = false, // Admin, the project's Team Lead, or its Project Manager
   profiles,
   projectTeamId,
   wbsEnabled,
@@ -1333,8 +1336,7 @@ function BugsTab({
   // (Start / Mark fixed) too — the app-layer guard (canDevActOn) already authorizes
   // a TL on their own team's release.
   const isDev = user.role === 'Developer' || user.role === 'Team Lead' || user.role === 'Admin';
-  // only a Team Lead / Admin verifies a developer's proposed close
-  const isManager = user.role === 'Team Lead' || user.role === 'Admin';
+  // only the project's managers verify a developer's proposed close (isManager prop)
   const readOnly = isReadOnly(release);
   // no new bugs once the release has left the QA gate (approved or closed)
   const noNewBugs = release.status === 'approved' || readOnly;

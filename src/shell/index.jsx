@@ -34,14 +34,14 @@ const IconChevron = ({ size = 14, dir = 'down' }) => {
 /* ---- nav model: sections in DS order; hidden items are omitted, not disabled ---- */
 export const PAGE_TITLES = {
   dashboard: 'Dashboard', projecthub: 'Projects', releases: 'Releases',
-  bugs: 'Bugs', wbs: 'WBS', projects: 'Manage Projects', analytics: 'Analytics', users: 'Users',
+  bugs: 'Bugs', wbs: 'WBS', analytics: 'Analytics', users: 'Users',
   teams: 'Teams', brands: 'Brands', settings: 'Settings',
 };
 const SECTION_OF = {
   dashboard: 'Main', projecthub: 'Work', releases: 'Work', bugs: 'Work', wbs: 'Work',
-  analytics: 'Insights', projects: 'Admin', users: 'Admin', teams: 'Admin', brands: 'Admin', settings: 'Account',
+  analytics: 'Insights', users: 'Admin', teams: 'Admin', brands: 'Admin', settings: 'Account',
 };
-function navSections({ canManage, isAdmin }) {
+function navSections({ canManage, isAdmin, isPm = false }) {
   return [
     { label: 'Main', items: [
       { key: 'dashboard', label: 'Dashboard', Icon: IconGrid, show: true },
@@ -56,8 +56,7 @@ function navSections({ canManage, isAdmin }) {
       { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
     ] },
     { label: 'Admin', items: [
-      { key: 'projects', label: 'Manage Projects', Icon: IconSliders, show: canManage },
-      { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage },
+      { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage && !isPm }, // not for Project Managers
       { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
       { key: 'brands', label: 'Brands', Icon: IconTag, show: isAdmin },
     ] },
@@ -72,8 +71,8 @@ function navSections({ canManage, isAdmin }) {
 /* ================================================================== */
 /* AppSidebar                                                          */
 /* ================================================================== */
-export function NavRail({ page, onNavigate, teamName, brand, canManage, isAdmin, collapsed, onToggleCollapsed }) {
-  const sections = navSections({ canManage, isAdmin });
+export function NavRail({ page, onNavigate, teamName, brand, canManage, isAdmin, isPm = false, collapsed, onToggleCollapsed }) {
+  const sections = navSections({ canManage, isAdmin, isPm });
   return (
     <nav className={`nav-rail${collapsed ? ' collapsed' : ''}`} aria-label="Primary">
       {/* SidebarHeader: logo (mark when collapsed) + trigger (expanded only) */}
@@ -138,10 +137,10 @@ export function NavRail({ page, onNavigate, teamName, brand, canManage, isAdmin,
 /* AppHeader                                                           */
 /* ================================================================== */
 export function AppHeader({
-  user, page, canSubmit, canManage, isAdmin, collapsed, onToggleCollapsed,
+  user, page, canSubmit, canManage, canCreateProject = canManage, isAdmin, collapsed, onToggleCollapsed,
   unread, notifOpen, notifications, projects, releases, bugs, searchScopeIds = null, projectsById,
   onToggleNotif, onNotifClick, onMarkAllRead,
-  onSubmitClick, onNewProject, onInviteUser, onOpenRelease, onNavigate, onSettings, onSignOut,
+  onSubmitClick, onNewProject, onInviteUser, onOpenRelease, onOpenProject, onNavigate, onSettings, onSignOut,
 }) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [acctOpen, setAcctOpen] = useState(false);
@@ -170,7 +169,7 @@ export function AppHeader({
 
       {/* global search */}
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 120, padding: '0 12px' }}>
-        <GlobalSearch projects={projects} releases={releases} bugs={bugs} scopeIds={searchScopeIds} projectsById={projectsById} onNavigate={onNavigate} onOpenRelease={onOpenRelease} />
+        <GlobalSearch projects={projects} releases={releases} bugs={bugs} scopeIds={searchScopeIds} projectsById={projectsById} onNavigate={onNavigate} onOpenProject={onOpenProject} onOpenRelease={onOpenRelease} />
       </div>
 
       {/* QuickActionMenu — dark fill */}
@@ -187,8 +186,8 @@ export function AppHeader({
               <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setActionsOpen(false)} />
               <div style={{ ...dropdown, width: 210 }}>
                 {canSubmit && <button style={menuItem} onClick={() => { setActionsOpen(false); onSubmitClick(); }}><IconUpload size={15} /> Submit release</button>}
-                {canManage && <button style={menuItem} onClick={() => { setActionsOpen(false); onNewProject(); }}><IconFolder size={15} /> New project</button>}
-                {canManage && <button style={menuItem} onClick={() => { setActionsOpen(false); onInviteUser(); }}><IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}</button>}
+                {canCreateProject && <button style={menuItem} onClick={() => { setActionsOpen(false); onNewProject(); }}><IconFolder size={15} /> New project</button>}
+                {canManage && user.role !== 'Project Manager' && <button style={menuItem} onClick={() => { setActionsOpen(false); onInviteUser(); }}><IconUsers size={15} /> {isAdmin ? 'Add user' : 'Manage team'}</button>}
               </div>
             </>
           )}
@@ -294,7 +293,7 @@ export function SettingsPage({ user, team, onSignOut, reports }) {
             'Role',
             <Pill
               label={user.role}
-              tone={{ Admin: 'info', 'Team Lead': 'warning', QA: 'success', Developer: 'neutral' }[user.role] || 'neutral'}
+              tone={{ Admin: 'info', 'Team Lead': 'warning', 'Project Manager': 'info', QA: 'success', Developer: 'neutral' }[user.role] || 'neutral'}
             />
           )}
           {row('Team', team ? team.name : '—')}
@@ -330,7 +329,7 @@ export function SettingsPage({ user, team, onSignOut, reports }) {
 /* ================================================================== */
 /* releases / bugs: the loaded lists (legacy mode). When they're not given, the
    search asks the database instead, a moment after you stop typing. */
-function GlobalSearch({ projects, releases, bugs, scopeIds = null, projectsById, onNavigate, onOpenRelease }) {
+function GlobalSearch({ projects, releases, bugs, scopeIds = null, projectsById, onNavigate, onOpenRelease, onOpenProject }) {
   const [q, setQ] = useState('');
   const [focused, setFocused] = useState(false);
   const term = q.trim().toLowerCase();
@@ -368,7 +367,7 @@ function GlobalSearch({ projects, releases, bugs, scopeIds = null, projectsById,
   function pick(r) {
     setQ('');
     setFocused(false);
-    if (r.type === 'project') onNavigate('projects');
+    if (r.type === 'project') (onOpenProject ? onOpenProject(r.id) : onNavigate('projecthub'));
     else onOpenRelease(r.id);
   }
 

@@ -22,7 +22,8 @@ import { CmsOverview, CmsTasksTab, CmsJourneyTab, useCmsData } from '@features/c
 import { IconPackage, IconBug, IconTree, IconFolder, IconGlobe, IconSmartphone, IconLayers, IconSearch } from '@/icons.jsx';
 import { WbsPage } from '@features/wbs';
 import { ReleaseHistory } from '@features/analytics/ReleaseHistory.jsx';
-import { ProjectMembersSection } from '@features/admin';
+import { ProjectMembersSection, ProjectsTab, PROJECTS_FILTERS } from '@features/admin';
+import { managesProject } from '@shared/permissions.js';
 
 function HealthDot({ tone = 'neutral', size = 10 }) {
   const t = TONES[tone] || TONES.neutral;
@@ -32,22 +33,8 @@ function HealthDot({ tone = 'neutral', size = 10 }) {
 const panelHead = { fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' };
 const panelSub = { fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 };
 
-/* ---- project picker (shown when no project is selected) ---- */
-export const PICKER_DEFAULTS = { q: '', type: 'all', team: 'all', status: 'all', sort: 'name', page: 0 };
-const PICKER_STATUS = [
-  ['all', 'All'],
-  ['bugs', 'Open bugs'],
-  ['active', 'Active build'],
-  ['idle', 'No active build'],
-];
-const PICKER_SORT = [
-  ['name', 'Name (A–Z)'],
-  ['bugs', 'Most open bugs'],
-  ['recent', 'Latest build'],
-  ['builds', 'Most builds'],
-];
+/* project type with its icon, for the open project's header */
 const TYPE_ICON = { web: IconGlobe, mobile: IconSmartphone, both: IconPackage, cms: IconLayers };
-
 function ProjectTypeTag({ type }) {
   const Ico = TYPE_ICON[type] || IconPackage;
   return (
@@ -55,235 +42,6 @@ function ProjectTypeTag({ type }) {
       <Ico size={14} />
       {projectTypeLabel(type)}
     </span>
-  );
-}
-
-// CMS cards count tasks instead of builds and bugs: open = anything not done
-function CmsTaskCounts({ counts }) {
-  if (counts === undefined) return <span style={{ color: 'var(--color-text-tertiary)' }}>Loading tasks…</span>;
-  if (counts === null) return <span style={{ color: 'var(--color-text-tertiary)' }}>Tasks unavailable</span>;
-  if (!counts.total) return <span style={{ color: 'var(--color-text-secondary)' }}>No tasks yet</span>;
-  return (
-    <>
-      <span style={{ color: counts.open ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontWeight: counts.open ? 600 : 400 }}>{counts.open} open task{counts.open === 1 ? '' : 's'}</span>
-      <span style={{ color: 'var(--color-text-secondary)' }}>{counts.done} task{counts.done === 1 ? '' : 's'} done</span>
-    </>
-  );
-}
-
-const PICKER_PAGE_SIZE = 24;
-
-/* Shows one page of project cards at a time. Name, type and team filters run on
-   the project list the app already has. Build / bug numbers come from
-   project_summaries for just the cards on the page, unless a sort or the status
-   filter needs every project's numbers: then one call covers the filtered set.
-   CMS task totals are counted for the CMS cards on the page only.
-   releases / bugs / releaseById: the loaded lists in legacy mode, used when
-   project_summaries isn't deployed. */
-export function ProjectPicker({ projects, releases = [], bugs = [], releaseById = {}, teams = [], filters, onFilters, onOpen }) {
-  const f = filters;
-  // any filter change goes back to page 1; the page lives in `filters` so it
-  // survives opening a project and coming back
-  const set = (k, v) => onFilters({ ...f, [k]: v, page: 0 });
-  const wantedPage = f.page || 0;
-  const setPage = (n) => onFilters({ ...f, page: n });
-  const teamName = useMemo(() => Object.fromEntries(teams.map((t) => [t.id, t.name])), [teams]);
-
-  // 1. filters that only need the project list, sorted by name
-  const term = f.q.trim().toLowerCase();
-  const metaFiltered = useMemo(() => projects
-    .filter((p) => !term || p.name.toLowerCase().includes(term) || (teamName[p.teamId] || '').toLowerCase().includes(term))
-    .filter((p) => f.type === 'all' || p.type === f.type)
-    .filter((p) => f.team === 'all' || (p.teamId || 'none') === f.team)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
-  [projects, term, teamName, f.type, f.team]);
-
-  // 2. numbers: the page's projects, or the whole filtered set when ordering needs them
-  const needsAll = f.sort !== 'name' || f.status !== 'all';
-  const lastPage = (n) => Math.max(0, Math.ceil(n / PICKER_PAGE_SIZE) - 1);
-  // without status/sort the total is known now; otherwise it's clamped below
-  const page = needsAll ? wantedPage : Math.min(wantedPage, lastPage(metaFiltered.length));
-  const countIds = useMemo(
-    () => (needsAll ? metaFiltered : metaFiltered.slice(page * PICKER_PAGE_SIZE, (page + 1) * PICKER_PAGE_SIZE)).map((p) => p.id).sort(),
-    [needsAll, metaFiltered, page]
-  );
-  const summariesQ = useQuery({
-    queryKey: ['releases', 'projectSummaries', countIds.join(',')],
-    queryFn: () => api.fetchProjectSummaries(countIds),
-    enabled: countIds.length > 0,
-    staleTime: 0, // counted again each time the list is shown
-  });
-  // undefined = loading, null = function not deployed (count from the loaded lists)
-  const summaries = !countIds.length ? {} : summariesQ.isError ? null : summariesQ.data;
-
-  const rowFor = (p) => {
-    if (summaries !== null) {
-      const s = summaries?.[p.id];
-      return {
-        p, loading: summaries === undefined,
-        builds: s?.builds ?? 0, open: s?.openBugs ?? 0, latest: s?.latest || '',
-        active: s?.active ? { version: s.active.version, platform: s.active.platform } : null,
-      };
-    }
-    const rel = releases.filter((r) => r.projectId === p.id);
-    const pbugs = bugs.filter((b) => releaseById[b.releaseId]?.projectId === p.id);
-    const open = pbugs.filter(isActiveBug).length;
-    const active = rel.find((r) => !isClosedStatus(r.status)) || null;
-    const latest = rel.reduce((m, r) => ((r.date || '') > m ? r.date || '' : m), '');
-    return { p, builds: rel.length, open, active, latest };
-  };
-
-  // 3. status filter + sort (needs every number), then the page
-  const ordering = needsAll && summaries === undefined;
-  let list = needsAll ? metaFiltered.map(rowFor) : null;
-  if (list) {
-    list = list
-      .filter((r) => (f.status === 'bugs' ? r.open > 0 : f.status === 'active' ? !!r.active : f.status === 'idle' ? !r.active : true))
-      .sort((a, b) => {
-        const byName = a.p.name.localeCompare(b.p.name, undefined, { sensitivity: 'base' });
-        if (f.sort === 'bugs') return b.open - a.open || byName;
-        if (f.sort === 'builds') return b.builds - a.builds || byName;
-        if (f.sort === 'recent') return b.latest.localeCompare(a.latest) || byName;
-        return byName;
-      });
-  }
-  const total = ordering ? 0 : list ? list.length : metaFiltered.length;
-  const shownPage = list ? Math.min(page, lastPage(list.length)) : page;
-  const pageRows = ordering ? [] : list
-    ? list.slice(shownPage * PICKER_PAGE_SIZE, (shownPage + 1) * PICKER_PAGE_SIZE)
-    : metaFiltered.slice(page * PICKER_PAGE_SIZE, (page + 1) * PICKER_PAGE_SIZE).map(rowFor);
-  const shown = pageRows;
-
-  // 4. CMS task totals for the CMS cards on this page
-  const cmsIds = pageRows.filter((r) => isCmsProject(r.p)).map((r) => r.p.id).sort();
-  const cmsQ = useQuery({
-    queryKey: ['cmsTaskCounts', cmsIds.join(',')],
-    queryFn: () => api.fetchCmsTaskCounts(cmsIds),
-    enabled: cmsIds.length > 0,
-    staleTime: 0,
-  });
-  const cmsCounts = cmsQ.isError ? null : cmsIds.length ? cmsQ.data : {};
-
-  // only offer the filters that would actually split this list
-  const typesPresent = PROJECT_TYPES.filter((t) => projects.some((p) => p.type === t));
-  const teamIds = [...new Set(projects.map((p) => p.teamId || 'none'))];
-  const showTeam = teamIds.length > 1;
-  const rows = projects; // type / team option counts use the project list
-  const filtered = f.q.trim() || f.type !== 'all' || f.team !== 'all' || f.status !== 'all';
-  const count = (fn) => rows.filter(fn).length;
-  // status option counts are only known when every project's numbers are loaded
-  const statusCount = (k) => {
-    if (!needsAll || summaries === undefined) return null;
-    const all = metaFiltered.map(rowFor);
-    return all.filter((r) => (k === 'bugs' ? r.open > 0 : k === 'active' ? !!r.active : !r.active)).length;
-  };
-  const fSel = { ...inputStyle, width: 'auto', minHeight: 0, padding: '7px 10px', fontSize: 12.5 };
-
-  return (
-    <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
-      <PageHeader
-        title="Projects"
-        icon={<IconFolder size={18} />}
-        subtitle="Open a project to plan work, track builds, and see its health in one place."
-      />
-      {rows.length === 0 ? (
-        <div style={{ ...card, padding: 48, textAlign: 'center' }}>
-          <div style={{ display: 'inline-flex', marginBottom: 10, color: 'var(--color-text-tertiary)' }}><IconFolder size={30} /></div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>No projects yet</div>
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>You're not a member of any project.</div>
-        </div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-            <label style={{ position: 'relative', flex: '1 1 240px', maxWidth: 420, display: 'block' }}>
-              <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', display: 'inline-flex', pointerEvents: 'none' }}><IconSearch size={15} /></span>
-              <input
-                style={{ ...inputStyle, paddingLeft: 34 }}
-                value={f.q}
-                aria-label="Search projects"
-                placeholder={showTeam ? 'Search projects or teams…' : 'Search projects…'}
-                onChange={(e) => set('q', e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && total === 1 && shown[0]) onOpen(shown[0].p.id); if (e.key === 'Escape') set('q', ''); }}
-              />
-            </label>
-            {typesPresent.length > 1 && (
-              <select style={fSel} aria-label="Project type" value={f.type} onChange={(e) => set('type', e.target.value)}>
-                <option value="all">All types</option>
-                {typesPresent.map((t) => <option key={t} value={t}>{projectTypeLabel(t)} ({count((p) => p.type === t)})</option>)}
-              </select>
-            )}
-            {showTeam && (
-              <select style={fSel} aria-label="Team" value={f.team} onChange={(e) => set('team', e.target.value)}>
-                <option value="all">All teams</option>
-                {teamIds
-                  .map((id) => [id, id === 'none' ? 'No team' : teamName[id] || 'Unknown team'])
-                  .sort((a, b) => a[1].localeCompare(b[1]))
-                  .map(([id, name]) => <option key={id} value={id}>{name} ({count((p) => (p.teamId || 'none') === id)})</option>)}
-              </select>
-            )}
-            <select style={fSel} aria-label="Status" value={f.status} onChange={(e) => set('status', e.target.value)}>
-              {PICKER_STATUS.map(([k, label]) => (
-                <option key={k} value={k}>
-                  {k === 'all' ? 'Any status' : statusCount(k) == null ? label : `${label} (${statusCount(k)})`}
-                </option>
-              ))}
-            </select>
-            <select style={fSel} aria-label="Sort" value={f.sort} onChange={(e) => set('sort', e.target.value)}>
-              {PICKER_SORT.map(([k, label]) => <option key={k} value={k}>Sort: {label}</option>)}
-            </select>
-            {filtered && (
-              <button style={{ ...ghostButton, padding: '6px 12px', minHeight: 0, fontSize: 12.5 }} onClick={() => onFilters({ ...PICKER_DEFAULTS, sort: f.sort })}>Clear</button>
-            )}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
-            {ordering ? 'Counting builds and bugs…' : filtered ? `${total} of ${rows.length} projects` : `${rows.length} project${rows.length === 1 ? '' : 's'}`}
-          </div>
-
-          {ordering ? (
-            <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading…</div>
-          ) : shown.length === 0 ? (
-            <div style={{ ...card, padding: 40, textAlign: 'center' }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>No projects match</div>
-              <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>Try another search or clear the filters.</div>
-              <button style={{ ...ghostButton, marginTop: 14 }} onClick={() => onFilters({ ...PICKER_DEFAULTS, sort: f.sort })}>Clear filters</button>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-              {shown.map(({ p, builds, open, active, loading: cardLoading }) => (
-                <button
-                  key={p.id}
-                  onClick={() => onOpen(p.id)}
-                  className="mgr-card clickable"
-                  style={{ ...card, padding: 18, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', flexDirection: 'column', gap: 12 }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ display: 'inline-flex', color: 'var(--brand)' }}><IconPackage size={18} /></span>
-                    <span style={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.name}>{p.name}</span>
-                    {p.type && <ProjectTypeTag type={p.type} />}
-                  </div>
-                  <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
-                    {isCmsProject(p) ? (
-                      <CmsTaskCounts counts={cmsCounts === null ? null : cmsCounts && (cmsCounts[p.id] || { open: 0, done: 0, total: 0 })} />
-                    ) : (
-                      cardLoading ? <span style={{ color: 'var(--color-text-tertiary)' }}>Loading…</span> : <>
-                        <span style={{ color: 'var(--color-text-secondary)' }}>{builds} build{builds === 1 ? '' : 's'}</span>
-                        <span style={{ color: open ? 'var(--danger)' : 'var(--color-text-secondary)', fontWeight: open ? 600 : 400 }}>{open} open bug{open === 1 ? '' : 's'}</span>
-                      </>
-                    )}
-                    {showTeam && <span style={{ marginLeft: 'auto', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{teamName[p.teamId] || 'No team'}</span>}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
-                    {isCmsProject(p) ? <>CMS · {cmsKindLabel(p.cmsKind)}</>
-                      : cardLoading ? '\u00a0' : active ? <>Active build {formatVersion(active.version)} · {active.platform}</> : 'No active build'}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-          {!ordering && <Pager page={shownPage} pageSize={PICKER_PAGE_SIZE} total={total} onPage={setPage} busy={summariesQ.isFetching} noun={total === 1 ? 'project' : 'projects'} />}
-        </>
-      )}
-    </div>
   );
 }
 
@@ -630,12 +388,15 @@ function TimeTab({ projectId, user, wbsItems, logs, totals, pager, loading, prof
 /* ================================================================== */
 export function ProjectHub({
   user, projects, releases, bugs, profiles, projectMembers,
-  projectsById, profilesById, releaseById, canManage, isSubmitting,
+  projectsById, profilesById, releaseById, canManage, canCreate = canManage, canDelete = false, isSubmitting,
   showToast, onOpenRelease, onSubmit, onAddMember, onUpdateMember, onRemoveMember,
-  projectId = null, onSelectProject, onProjectsChanged, teams = [],
+  projectId = null, onSelectProject, onProjectsChanged, teams = [], legacyLists = false,
+  // the project list (the former Manage Projects page)
+  isAdmin = false, myTeamId = null, teamsById = {}, checklistItems = [], brands = [], createSignal = 0,
+  onCreateProject, onUpdateProject, onDeleteProject, onAddChecklistItem, onDeleteChecklistItem,
 }) {
-  // kept here so the search and filters survive opening a project and coming back
-  const [pickerFilters, setPickerFilters] = useState(PICKER_DEFAULTS);
+  // kept here so the search, filters and page survive opening a project and coming back
+  const [pickerFilters, setPickerFilters] = useState(PROJECTS_FILTERS);
   // Selection is controlled by the parent so other pages (e.g. Command Center)
   // can deep-link straight to a project. Falls back to local state if no
   // controller is wired.
@@ -658,6 +419,8 @@ export function ProjectHub({
   const [timeLogs, setTimeLogs] = useState({ list: [], loading: false });
 
   const project = selId ? projectsById[selId] : null;
+  // manager rights on the open project: Admin, the team's Team Lead, or its Project Manager
+  const managesThis = !!project && canManage && managesProject(user, project);
   const isCms = isCmsProject(project);
   const cms = useCmsData(isCms ? selId : null);
 
@@ -718,7 +481,45 @@ export function ProjectHub({
   };
 
   if (!project) {
-    return <ProjectPicker projects={projects} releases={releases} bugs={bugs} releaseById={releaseById} teams={teams} filters={pickerFilters} onFilters={setPickerFilters} onOpen={(id) => { setSel(id); setTab('overview'); }} />;
+    return (
+      <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
+        <PageHeader
+          title="Projects"
+          icon={<IconFolder size={18} />}
+          subtitle={canManage ? 'Open a project to plan work and track builds, or create and manage projects, QA checklists and members.' : 'Open a project to plan work, track builds, and see its health in one place.'}
+        />
+        <ProjectsTab
+          isAdmin={isAdmin}
+          canManage={canManage}
+          canCreate={canCreate}
+          canDelete={canDelete}
+          user={user}
+          myTeamId={myTeamId}
+          teams={teams}
+          teamsById={teamsById}
+          projects={projects}
+          releases={legacyLists ? releases : undefined}
+          bugs={legacyLists ? bugs : undefined}
+          checklistItems={checklistItems}
+          brands={brands}
+          profiles={profiles}
+          projectMembers={projectMembers}
+          isSubmitting={isSubmitting}
+          filters={pickerFilters}
+          onFilters={setPickerFilters}
+          createSignal={createSignal}
+          onOpen={(id) => { setSel(id); setTab('overview'); }}
+          onCreateProject={onCreateProject}
+          onUpdateProject={onUpdateProject}
+          onDeleteProject={onDeleteProject}
+          onAddChecklistItem={onAddChecklistItem}
+          onDeleteChecklistItem={onDeleteChecklistItem}
+          onAddMember={onAddMember}
+          onUpdateMember={onUpdateMember}
+          onRemoveMember={onRemoveMember}
+        />
+      </div>
+    );
   }
 
   // ---- per-project rollup (mirrors Command Center projRows) ----
@@ -783,7 +584,7 @@ export function ProjectHub({
       {isCms && tab === 'tasks' && (
         <CmsTasksTab
           project={project} user={user} tasks={cms.tasks} missing={cms.missing} assignees={assignees} profilesById={profilesById}
-          canEdit={canEditCms} canManage={canManage} onReload={cms.reload} showToast={showToast}
+          canEdit={canEditCms} canManage={managesThis} onReload={cms.reload} showToast={showToast}
         />
       )}
       {isCms && tab === 'journey' && (
@@ -823,13 +624,13 @@ export function ProjectHub({
         <TimeTab
           projectId={selId} user={user} wbsItems={wbs.items} logs={timeRows} totals={timeTotals} loading={timeLoading}
           pager={{ page: timePage, pageSize: TIME_PAGE, total: timeCount, onPage: setTimePage, busy: timePageQ.isFetching }}
-          profilesById={profilesById} canManage={canManage} onReload={reloadTime} showToast={showToast}
+          profilesById={profilesById} canManage={managesThis} onReload={reloadTime} showToast={showToast}
         />
       )}
       {tab === 'team' && (
         <TeamTab
           project={project} members={members} profiles={profiles} profilesById={profilesById}
-          wbsItems={isCms ? cms.tasks : wbs.items} rel={rel} pbugs={pbugs} hoursByUser={timeTotals?.byUser || {}} canManage={canManage} currentUser={user}
+          wbsItems={isCms ? cms.tasks : wbs.items} rel={rel} pbugs={pbugs} hoursByUser={timeTotals?.byUser || {}} canManage={managesThis} currentUser={user}
           isSubmitting={isSubmitting} onAddMember={onAddMember} onUpdateMember={onUpdateMember} onRemoveMember={onRemoveMember}
         />
       )}

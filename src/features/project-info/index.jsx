@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '@/api.js';
 import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell } from '@/ui.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
+import { managesProject } from '@shared/permissions.js';
 
 const RESOURCE_SECTIONS = [
   ['domain', 'Domain & website'],
@@ -236,7 +237,7 @@ function CredentialModal({ projectId, credential, onClose, onSaved, showToast })
         <div>
           <label style={labelStyle} htmlFor="cred-access">Who can see this</label>
           <select id="cred-access" style={inputStyle} value={f.access} onChange={(e) => set('access', e.target.value)}>
-            <option value="managers">Team Leads and Admins only</option>
+            <option value="managers">Managers only (Team Lead, Project Manager, Admin)</option>
             <option value="team">Project members too</option>
           </select>
         </div>
@@ -318,7 +319,7 @@ function AccessLogModal({ projectId, onClose, showToast }) {
     api.fetchProjectCredentialLog(projectId).then(setRows).catch((e) => { showToast(e.message, 'error'); setRows([]); });
   }, [projectId, showToast]);
   return (
-    <ModalShell onClose={onClose} title="Credential access log" subtitle="Latest 200 events. Only Team Leads and Admins can see this." maxWidth={560}>
+    <ModalShell onClose={onClose} title="Credential access log" subtitle="Latest 200 events. Only the project's managers can see this." maxWidth={560}>
       {rows === null ? (
         <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
       ) : rows.length === 0 ? (
@@ -337,7 +338,7 @@ function AccessLogModal({ projectId, onClose, showToast }) {
 
 /* ---- the tab ---- */
 export function ProjectInfoTab({ project, user, isMember, showToast }) {
-  const canManage = user.role === 'Admin' || (user.role === 'Team Lead' && project.teamId === user.teamId);
+  const canManage = managesProject(user, project);
   const canEdit = user.role !== 'Manager' && (canManage || isMember);
   const projectId = project.id;
   const [resources, setResources] = useState([]);
@@ -412,7 +413,7 @@ export function ProjectInfoTab({ project, user, isMember, showToast }) {
       >
         {credentials.length === 0 ? (
           <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>
-            {canManage ? 'No credentials yet.' : 'No credentials have been shared with you. Ask your Team Lead if you need access.'}
+            {canManage ? 'No credentials yet.' : 'No credentials have been shared with you. Ask your Team Lead or Project Manager if you need access.'}
           </div>
         ) : (
           credentials.map((c) => (

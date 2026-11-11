@@ -442,11 +442,12 @@ export const CMS_STAGE_STATUSES = {
 export const CMS_STAGE_STATUS_ORDER = ['pending', 'in_progress', 'done', 'skipped'];
 
 /* Roles. ('Manager' was retired and merged into Admin — see fixes24.sql.) */
-export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
+export const ROLES = ['Developer', 'QA', 'Team Lead', 'Project Manager', 'Admin'];
 export const ROLE_COLORS = {
   QA: '#6366F1',
   Developer: '#16a34a',
   'Team Lead': '#d97706',
+  'Project Manager': '#0891b2',
   Admin: '#6366F1',
 };
 /* Roles a Team Lead is allowed to assign within their own team. */

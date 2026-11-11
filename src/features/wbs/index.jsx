@@ -27,6 +27,7 @@ import {
   SEVERITIES,
   BUG_STATUSES,
 } from '@/constants.js';
+import { managesProject } from '@shared/permissions.js';
 
 export function WbsBadge({ status }) {
   const s = WBS_STATUSES[status] || { label: status, color: '#64748b' };
@@ -1033,7 +1034,7 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   }, [projects, projectId]);
 
   const project = projects.find((p) => p.id === projectId) || null;
-  const canManage = user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
+  const canManage = managesProject(user, project);
   const canEdit = user.role === 'Developer' || canManage;
   // Mark-all-complete follows the same sign-off rule as a single item's status
   const canCompleteAll = isSqaTrack(track) ? user.role === 'QA' : canManage;

@@ -127,6 +127,7 @@ import { NavRail, AppHeader, SettingsPage } from '@/shell';
 import { useAppData } from '@shared/useAppData.js';
 import { filterBugs } from '@shared/filters.js';
 import { usePush } from '@/push/usePush.js';
+import { isPm, managesProject, canCreateProjects, canDeleteProjects, hasOrgScope } from '@shared/permissions.js';
 import { unregisterDevice } from '@/push/pushClient.js';
 
 /* ================================================================== */
@@ -169,6 +170,7 @@ export default function ReleaseTracker() {
   const [editingRelease, setEditingRelease] = useState(null);
   const [historyProject, setHistoryProject] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [newProjectTick, setNewProjectTick] = useState(0); // the header's "New project" opens the form on Projects
   const [hubProjectId, setHubProjectId] = useState(null); // Project Hub selection (deep-linkable)
   // Sidebar collapse (DS: cookie-persisted + ⌘/Ctrl+B) — persisted in localStorage.
   const [navCollapsed, setNavCollapsed] = useState(() => {
@@ -328,8 +330,9 @@ export default function ReleaseTracker() {
      Non-admins see only projects they're an active member of (home members of
      their team's projects + temporary support grants on other teams' projects).
      Admins see everything. Expired support grants drop out automatically.
-     Manager is org-wide read-only (Command Center), so it gets full scope too. */
-  const adminScope = user?.role === 'Admin' || user?.role === 'Manager';
+     Manager is org-wide read-only (Command Center), so it gets full scope too,
+     and a Project Manager manages every project. */
+  const adminScope = hasOrgScope(user);
   const myTeamId = user?.teamId ?? null;
 
   const myProjectIds = useMemo(() => {
@@ -738,6 +741,16 @@ export default function ReleaseTracker() {
           releaseId: release.id,
         });
       }
+      // Project Managers hear about every QA outcome (approved / sent back)
+      if (newStatus === 'approved' || newStatus === 'sent_back') {
+        const pms = profiles.filter((p) => isPm(p) && p.id !== user.id && p.id !== release.submittedById).map((p) => p.id);
+        await api.notify(pms, {
+          type: `release_${newStatus}`,
+          title: 'Release update',
+          message: `${user.name} ${verb} ${projectsById[release.projectId]?.name || 'a project'} v${release.version}`,
+          releaseId: release.id,
+        });
+      }
     }, 'Release updated');
     if (ok) refetchReleases();
   }
@@ -845,11 +858,10 @@ export default function ReleaseTracker() {
   // ---- authorization (app-layer; the DB guard is fixes20.sql) ----
   // #8 — QA actions on a release (its bugs + status transitions) are limited to the
   //      release's ASSIGNED QA, plus the team's manager. QA B can't touch QA A's release.
-  // #9 — a Team Lead only manages their OWN team's work; Admin manages any team.
+  // #9 — a Team Lead only manages their OWN team's work; Admin manages any team;
+  //      a Project Manager manages the projects they're assigned to.
   function isTeamManagerOf(release) {
-    const project = projectsById[release.projectId];
-    if (user.role === 'Admin') return true;
-    return user.role === 'Team Lead' && !!project?.teamId && project.teamId === (user.teamId ?? null);
+    return managesProject(user, projectsById[release.projectId]);
   }
   function canQaActOn(release) {
     if (isTeamManagerOf(release)) return true;
@@ -873,7 +885,7 @@ export default function ReleaseTracker() {
     if (ok) return false;
     showToast(
       kind === 'manage'
-        ? "Only this team's Team Lead or an Admin can do that."
+        ? "Only this project's Team Lead, Project Manager or an Admin can do that."
         : kind === 'dev'
           ? "Only a developer on this release's team (or the team lead) can update this."
           : 'Only the QA assigned to this release (or the team lead) can update it.',
@@ -998,8 +1010,9 @@ export default function ReleaseTracker() {
           notes: `${resolution}${note ? `: ${note}` : ''}`,
         });
         const teamId = projectsById[release.projectId]?.teamId;
+        // the team's Team Lead and every Project Manager can verify it
         const leads = profiles.filter(
-          (p) => p.role === 'Team Lead' && teamId && p.teamId === teamId
+          (p) => (p.role === 'Team Lead' && teamId && p.teamId === teamId) || isPm(p)
         );
         for (const lead of leads) {
           await api.createNotification({
@@ -1152,7 +1165,8 @@ export default function ReleaseTracker() {
     const ok = await run(async () => {
       const projectId = await api.createProject(p);
       // creator becomes the project's first (home) member so it's visible to them
-      if (projectId && user.role !== 'Admin') {
+      // (Admins and Project Managers see every project without a membership)
+      if (projectId && user.role !== 'Admin' && !isPm(user)) {
         await api.addProjectMember({
           project_id: projectId,
           user_id: user.id,
@@ -1310,8 +1324,13 @@ export default function ReleaseTracker() {
 
   const isAdmin = user.role === 'Admin';
   const isLead = user.role === 'Team Lead';
-  const isExecutive = isAdmin || user.role === 'Manager';
-  const canManage = isAdmin || isLead; // can open the Manage panel
+  const isPmUser = isPm(user);
+  // org-wide numbers and reports with a team filter: Admin, Manager, Project Manager
+  const isExecutive = hasOrgScope(user);
+  const canManage = isAdmin || isLead || isPmUser; // manages projects (Analytics, Manage)
+  const canCreate = canCreateProjects(user);
+  const canDelete = canDeleteProjects(user);
+  const canSeePeople = isAdmin || isLead; // the Users / Team page (not Project Managers)
   const canExportReports = isExecutive || isLead;
   const canSubmit = user.role === 'Developer' || isLead || isAdmin;
   const myTeam = teams.find((t) => t.id === myTeamId) || null;
@@ -1324,14 +1343,16 @@ export default function ReleaseTracker() {
   const reportReleases = releases.filter((r) => reportProjectIds.has(r.projectId));
   const reportBugs = bugs.filter((b) => reportProjectIds.has(releaseProjectId[b.releaseId]));
 
-  // manager rights on the selected release (admin everywhere; lead in own team)
-  const selProjectTeam = selected ? projectsById[selected.projectId]?.teamId : null;
-  const isManagerOfSelected =
-    isAdmin || (isLead && selProjectTeam && selProjectTeam === myTeamId);
+  // manager rights on the selected release (admin everywhere; lead in own team;
+  // a PM on their assigned projects)
+  const isManagerOfSelected = !!selected && managesProject(user, projectsById[selected.projectId]);
 
   const teamsById = {};
   teams.forEach((t) => (teamsById[t.id] = t));
-  const visibleProfiles = isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId);
+  // the people and teams someone works with: everyone for org-wide roles, else their own team
+  const myPeople = isExecutive ? profiles : profiles.filter((p) => p.teamId === myTeamId);
+  const myTeams = isExecutive ? teams : teams.filter((t) => t.id === myTeamId);
+  const visibleProfiles = isAdmin ? profiles : myPeople;
 
   return (
     <>
@@ -1346,6 +1367,7 @@ export default function ReleaseTracker() {
             brand={brands.find((b) => b.isDefault) || null}
             canManage={canManage}
             isAdmin={isAdmin}
+            isPm={isPmUser}
             collapsed={navCollapsed}
             onToggleCollapsed={toggleNav}
           />
@@ -1356,6 +1378,7 @@ export default function ReleaseTracker() {
               page={page}
               canSubmit={canSubmit}
               canManage={canManage}
+              canCreateProject={canCreate}
               isAdmin={isAdmin}
               collapsed={navCollapsed}
               onToggleCollapsed={toggleNav}
@@ -1374,7 +1397,8 @@ export default function ReleaseTracker() {
               }}
               onMarkAllRead={handleMarkAllRead}
               onSubmitClick={() => setShowSubmit(true)}
-              onNewProject={() => setPage('projects')}
+              onNewProject={() => { setHubProjectId(null); setPage('projecthub'); setNewProjectTick((n) => n + 1); }}
+              onOpenProject={(id) => { setHubProjectId(id); setPage('projecthub'); }}
               onInviteUser={() => setPage('users')}
               onOpenRelease={(id) => {
                 setSelectedId(id);
@@ -1394,7 +1418,7 @@ export default function ReleaseTracker() {
               profiles={profiles}
               teams={teams}
               user={user}
-              teamName={isAdmin ? null : myTeam?.name}
+              teamName={isExecutive ? null : myTeam?.name}
               canSubmit={canSubmit}
               onSubmit={() => setShowSubmit(true)}
               onOpenRelease={(id) => setSelectedId(id)}
@@ -1421,12 +1445,26 @@ export default function ReleaseTracker() {
                 profilesById={profilesById}
                 releaseById={legacy ? releaseById : {}}
                 canManage={canManage}
+                canCreate={canCreate}
+                canDelete={canDelete}
                 isSubmitting={isSubmitting}
                 showToast={showToast}
                 projectId={hubProjectId}
                 onSelectProject={setHubProjectId}
                 onProjectsChanged={refetchProjects}
                 teams={teams}
+                legacyLists={legacy}
+                isAdmin={isAdmin}
+                myTeamId={myTeamId}
+                teamsById={teamsById}
+                checklistItems={checklistItems}
+                brands={brands}
+                createSignal={newProjectTick}
+                onCreateProject={handleCreateProject}
+                onUpdateProject={handleUpdateProject}
+                onDeleteProject={handleDeleteProject}
+                onAddChecklistItem={handleAddChecklistItem}
+                onDeleteChecklistItem={handleDeleteChecklistItem}
                 onOpenRelease={(id) => setSelectedId(id)}
                 onSubmit={() => setShowSubmit(true)}
                 onAddMember={handleAddMember}
@@ -1457,35 +1495,6 @@ export default function ReleaseTracker() {
               />
             )}
 
-            {page === 'projects' && canManage && (
-              <>
-                <PageHeader title="Projects" subtitle="Create and manage projects and QA checklists" />
-                <ProjectsTab
-                  isAdmin={isAdmin}
-                  user={user}
-                  myTeamId={myTeamId}
-                  teams={teams}
-                  teamsById={teamsById}
-                  projects={scopedProjects}
-                  releases={lr}
-                  bugs={lb}
-                  checklistItems={checklistItems}
-                  brands={brands}
-                  profiles={profiles}
-                  projectMembers={projectMembers}
-                  isSubmitting={isSubmitting}
-                  onCreateProject={handleCreateProject}
-                  onUpdateProject={handleUpdateProject}
-                  onDeleteProject={handleDeleteProject}
-                  onAddChecklistItem={handleAddChecklistItem}
-                  onDeleteChecklistItem={handleDeleteChecklistItem}
-                  onAddMember={handleAddMember}
-                  onUpdateMember={handleUpdateMember}
-                  onRemoveMember={handleRemoveMember}
-                />
-              </>
-            )}
-
             {page === 'bugs' && (
               <BugsPage
                 scopeProjectIds={releasesScopeIds}
@@ -1495,8 +1504,8 @@ export default function ReleaseTracker() {
                 projectsById={projectsById}
                 profilesById={profilesById}
                 profiles={profiles}
-                teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
-                isAdmin={isAdmin}
+                teams={myTeams}
+                isAdmin={isExecutive}
                 user={user}
                 isSubmitting={isSubmitting}
                 onOpenRelease={(id) => {
@@ -1515,24 +1524,24 @@ export default function ReleaseTracker() {
             )}
 
             {/* ONE Analytics page for every stakeholder, scoped by role:
-                Admin → whole org + team filter; Team Lead → their team only. */}
+                Admin / Project Manager → whole org + team filter; Team Lead → their team only. */}
             {page === 'analytics' && canManage && (
               <Analytics
                 scopeProjectIds={releasesScopeIds}
                 projects={scopedProjects}
                 releases={lr}
                 bugs={lb}
-                profiles={isAdmin ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
-                teams={isAdmin ? teams : teams.filter((t) => t.id === myTeamId)}
+                profiles={myPeople}
+                teams={myTeams}
                 projectsById={projectsById}
                 profilesById={profilesById}
-                isAdmin={isAdmin}
+                isAdmin={isExecutive}
                 onOpenRelease={(id) => setSelectedId(id)}
                 onOpenHistory={(p) => setHistoryProject(p)}
               />
             )}
 
-            {page === 'users' && canManage && (
+            {page === 'users' && canSeePeople && (
               <>
                 <PageHeader title={isAdmin ? 'Users' : 'Team members'} subtitle="Manage roles, teams and accounts" />
                 <UsersTab
@@ -1596,8 +1605,8 @@ export default function ReleaseTracker() {
                     projects={reportProjects}
                     releases={legacy ? reportReleases : undefined}
                     bugs={legacy ? reportBugs : undefined}
-                    profiles={isExecutive ? profiles : profiles.filter((p) => p.teamId === myTeamId)}
-                    teams={isExecutive ? teams : teams.filter((t) => t.id === myTeamId)}
+                    profiles={myPeople}
+                    teams={myTeams}
                     projectMembers={projectMembers}
                     projectsById={projectsById}
                     profilesById={profilesById}

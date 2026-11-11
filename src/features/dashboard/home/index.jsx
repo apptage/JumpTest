@@ -2,6 +2,7 @@
    what is happening, what needs attention, and what to do next.
      Admin      → organisation health, bottlenecks, risks, team workload
      Team Lead  → the team's progress, each member's load, decisions waiting on them
+     Project Manager → the Admin view (they manage every project)
      Developer  → my bugs, my tasks, my builds
      QA         → my test queue and re-tests */
 import { useMetricsData, daysAgo } from '@shared/useMetricsData.js';
@@ -22,7 +23,7 @@ import { Kpi, KpiRow, AttentionList, WhereWorkWaits, WeeklyBars, ProjectHealth, 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const RELEASE_TONE = { qa_pending: 'warning', qa_in_progress: 'info', qa_done: 'info', approved: 'success', sent_back: 'danger', closed: 'neutral' };
 const BUG_TONE = { open: 'danger', in_progress: 'info', disputed: 'warning', fixed: 'info', pending_tl: 'info', verified: 'success' };
-const ROLE_LABEL = { Admin: 'Admin', Manager: 'Manager', 'Team Lead': 'Team Lead', Developer: 'Developer', QA: 'QA' };
+const ROLE_LABEL = { Admin: 'Admin', Manager: 'Manager', 'Team Lead': 'Team Lead', 'Project Manager': 'Project Manager', Developer: 'Developer', QA: 'QA' };
 
 function passCaption(p) {
   if (p.pct == null) return 'No builds decided in the last 30 days';
@@ -88,10 +89,15 @@ function releaseItems(ctx, releases, onOpenRelease, { showQa = true } = {}) {
 }
 
 /* ---------- role views ---------- */
-function AdminView({ header, ctx, teams, go, onOpenRelease, onOpenProject, onNavigate }) {
+function AdminView({ header, ctx, me, teams, go, onOpenRelease, onOpenProject, onNavigate }) {
+  // a Project Manager gets this view too, but has no Users or Teams pages
+  const peoplePages = me?.role === 'Admin' || me?.role === 'Manager';
   const health = useMemo(() => projectHealth(ctx), [ctx]);
   const people = useMemo(() => peopleWorkload(ctx, ctx.profiles), [ctx]);
-  const attention = useMemo(() => attentionForAdmin(ctx, { teams, health, people }), [ctx, teams, health, people]);
+  const attention = useMemo(
+    () => attentionForAdmin(ctx, { teams, health, people }).map((a) => (peoplePages || !['users', 'teams'].includes(a.action?.page) ? a : { ...a, action: null })),
+    [ctx, teams, health, people, peoplePages]
+  );
   const rf = useMemo(() => releaseFlow(ctx), [ctx]);
   const bf = useMemo(() => bugFlow(ctx), [ctx]);
   const trend = useMemo(() => weeklyTrend(ctx, 'bugs'), [ctx]);
@@ -120,7 +126,7 @@ function AdminView({ header, ctx, teams, go, onOpenRelease, onOpenProject, onNav
         </div>
         <div className="home-2col">
           <ProjectHealth health={health} onOpenProject={onOpenProject} onNavigate={onNavigate} />
-          <PeopleWorkload rows={people} teamsById={teamsById} onNavigate={onNavigate} title="Who is busy" />
+          <PeopleWorkload rows={people} teamsById={teamsById} onNavigate={peoplePages ? onNavigate : null} title="Who is busy" />
         </div>
         <div className="home-2col">
           <WeeklyBars trend={trend} mode="bugs" />
@@ -273,7 +279,8 @@ export function DashboardHome({
   const header = (attention) => (
     <HomeHeader user={user} teamName={teamName} canSubmit={canSubmit} onSubmit={onSubmit} onNavigate={onNavigate} attention={attention} loading={tasksLoading} />
   );
-  const View = role === 'Admin' ? AdminView : role === 'Team Lead' ? LeadView : role === 'QA' ? QaView : DeveloperView;
+  // a Project Manager manages every project, so they get the organisation view
+  const View = role === 'Admin' || role === 'Project Manager' ? AdminView : role === 'Team Lead' ? LeadView : role === 'QA' ? QaView : DeveloperView;
   return (
     <div className="anim-in home" style={{ maxWidth: 1460, margin: '0 auto' }}>
       <View {...props} header={header} />
