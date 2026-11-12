@@ -324,7 +324,8 @@ function WbsImportModal({ headers, rows, trackLabel, onCancel, onConfirm }) {
 
 /* Bulk Add: paste a list / outline (or drop in a preset pack) → many items at once.
    Reuses parseWbsBulk; the live preview shows exactly what will be created. */
-function WbsBulkModal({ trackLabel, onCancel, onConfirm }) {
+function WbsBulkModal({ track: initialTrack = 'scope', ongoingSupport = false, onCancel, onConfirm }) {
+  const [toTrack, setToTrack] = useState(initialTrack);
   const [platform, setPlatform] = useState('');
   const [module, setModule] = useState('');
   const [text, setText] = useState('');
@@ -354,7 +355,7 @@ function WbsBulkModal({ trackLabel, onCancel, onConfirm }) {
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <button style={ghostButton} onClick={onCancel}>Cancel</button>
-        <button style={primaryButton(!items.length)} disabled={!items.length} onClick={() => onConfirm(items)}>
+        <button style={primaryButton(!items.length)} disabled={!items.length} onClick={() => onConfirm(items, toTrack)}>
           Add {items.length ? `${items.length} ` : ''}item{items.length === 1 ? '' : 's'}
         </button>
       </div>
@@ -365,10 +366,19 @@ function WbsBulkModal({ trackLabel, onCancel, onConfirm }) {
     <ModalShell
       onClose={onCancel}
       title="Bulk add items"
-      subtitle={`Adds to the ${trackLabel} tab. Paste raw feature lists or load a preset pack to create WBS items fast.`}
+      subtitle={`Adds to the ${wbsTrackLabel(toTrack)} tab. Paste raw feature lists or load a preset pack to create WBS items fast.`}
       maxWidth={720}
       footer={footer}
     >
+      <div style={{ marginBottom: 16 }}>
+        <label style={lbl} htmlFor="wbs-bulk-track">WBS tab</label>
+        <select id="wbs-bulk-track" style={{ ...inputStyle, marginTop: 8 }} value={toTrack} onChange={(e) => setToTrack(e.target.value)}>
+          {moveTargets(initialTrack, ongoingSupport).map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+        </select>
+        {!ongoingSupport && (
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>Turn on Ongoing support for this project to add to that tab.</div>
+        )}
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
         <div>
           <label style={lbl}>Default platform</label>
@@ -1269,27 +1279,30 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   }
   // Rows land on the open tab. A sheet can't claim SQA's sign-off: items it marks
   // Completed on an SQA-tracked tab arrive In QA, ready for SQA to approve.
-  const importRows = async (rows, verb) => {
-    const holdForSqa = isSqaTrack(track) && user.role !== 'QA';
+  const importRows = async (rows, verb, toTrack = track) => {
+    const holdForSqa = isSqaTrack(toTrack) && user.role !== 'QA';
     let held = 0;
     const prepared = rows.map((r) => {
       if (holdForSqa && normalizeWbsStatus(r.status) === 'completed') {
         held += 1;
-        return { ...r, track, status: 'in_qa' };
+        return { ...r, track: toTrack, status: 'in_qa' };
       }
-      return { ...r, track };
+      return { ...r, track: toTrack };
     });
     const res = await api.importWbs(projectId, prepared);
-    showToast(`${verb} ${res.added} item${res.added === 1 ? '' : 's'}${held ? ` · ${held} marked Completed are In QA until SQA approves them` : ''}`);
+    showToast(`${verb} ${res.added} item${res.added === 1 ? '' : 's'}${toTrack !== track ? ` to ${wbsTrackLabel(toTrack)}` : ''}${held ? ` · ${held} marked Completed are In QA until SQA approves them` : ''}`);
   };
   const confirmImport = async (mapped) => {
     setImportData(null);
     await run(() => importRows(mapped, 'Imported'));
   };
   // bulk add reuses the additive importer (fresh import_keys → all inserted, appended)
-  const confirmBulk = async (parsed) => {
+  const confirmBulk = async (parsed, toTrack = track) => {
     setBulkOpen(false);
-    await run(() => importRows(parsed, 'Added'));
+    let ok = false;
+    await run(async () => { await importRows(parsed, 'Added', toTrack); ok = true; });
+    // show the tab the items went to
+    if (ok && toTrack !== track) { setTrack(toTrack); setAdding(false); setStatusF('all'); setQaF('all'); }
   };
   const setOngoingSupport = (on) =>
     run(async () => {
@@ -1541,7 +1554,7 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
         />
       )}
 
-      {bulkOpen && <WbsBulkModal trackLabel={wbsTrackLabel(track)} onCancel={() => setBulkOpen(false)} onConfirm={confirmBulk} />}
+      {bulkOpen && <WbsBulkModal track={track} ongoingSupport={!!project?.ongoingSupport} onCancel={() => setBulkOpen(false)} onConfirm={confirmBulk} />}
 
       {shareOpen && project && <WbsShareModal project={project} onClose={() => setShareOpen(false)} showToast={showToast} />}
     </>
