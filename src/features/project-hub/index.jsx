@@ -11,7 +11,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import * as api from '@/api.js';
 import { card, ghostButton, primaryButton, Avatar, StatusBadge, SeverityBadge, CountBadge, inputStyle } from '@/ui.jsx';
-import { SubTabs, DataTable, Pill, StatCard, TONES } from '@shared/dashboard-kit.jsx';
+import { SubTabs, DataTable, Pill, StatCard, TONES, SkeletonList, Skeleton } from '@shared/dashboard-kit.jsx';
 import { relativeTime, StatusAge, PageHeader, Pager } from '@shared/ui-kit.jsx';
 import { ProjectInfoTab } from '@features/project-info';
 import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel, liveBugs } from '@shared/wbsMetrics.js';
@@ -30,15 +30,15 @@ function HealthDot({ tone = 'neutral', size = 10 }) {
   return <span style={{ width: size, height: size, borderRadius: 999, background: t.fg, display: 'inline-block', flexShrink: 0 }} />;
 }
 
-const panelHead = { fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' };
-const panelSub = { fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 };
+const panelHead = { fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' };
+const panelSub = { fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 };
 
 /* project type with its icon, for the open project's header */
 const TYPE_ICON = { web: IconGlobe, mobile: IconSmartphone, both: IconPackage, cms: IconLayers };
 function ProjectTypeTag({ type }) {
   const Ico = TYPE_ICON[type] || IconPackage;
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
       <Ico size={14} />
       {projectTypeLabel(type)}
     </span>
@@ -51,10 +51,10 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, 
   return (
     <div>
       {/* health banner */}
-      <div style={{ ...card, padding: 18, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <div style={{ ...card, padding: 16, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <HealthDot tone={health.tone} size={14} />
         <div style={{ flex: 1, minWidth: 180 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{relLoading ? 'Loading…' : health.label}</div>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{relLoading ? <Skeleton width={120} height={18} /> : health.label}</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Composite health — WBS progress, open bugs & QA pass rate combined</div>
         </div>
         <Pill label={ms.label} tone={ms.tone} />
@@ -62,23 +62,23 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, 
 
       {/* KPI row */}
       <div className="dash-kpis" style={{ marginBottom: 16 }}>
-        <StatCard label="Project Completion" value={wbsLoading || relLoading ? '…' : wh.hasWbs ? `${wh.pct}%` : '—'} foot={wh.hasWbs ? `${wh.completion.done}/${wh.completion.total} INCL. BUGS` : 'NO WBS YET'} />
-        <StatCard label="Open Bugs" value={relLoading ? '…' : openBugs.length.toLocaleString()} foot={`${critical} CRITICAL`} />
-        <StatCard label="Builds" value={relLoading ? '…' : rel.length.toLocaleString()} foot="ALL TIME" />
-        <StatCard label="Pass Rate" value={relLoading ? '…' : passRate != null ? `${passRate}%` : '—'} foot="QA DECISIONS" />
-        <StatCard label="Blocked Tasks" value={wbsLoading ? '…' : (wh.blocked || 0).toLocaleString()} foot="WBS BLOCKED" />
+        <StatCard label="Project completion" loading={wbsLoading || relLoading} value={wbsLoading || relLoading ? '…' : wh.hasWbs ? `${wh.pct}%` : '—'} foot={wh.hasWbs ? `${wh.completion.done}/${wh.completion.total} incl. bugs` : 'NO WBS YET'} />
+        <StatCard label="Open bugs" loading={relLoading} tone={critical ? 'danger' : 'neutral'} value={relLoading ? '…' : openBugs.length.toLocaleString()} foot={`${critical} critical`} />
+        <StatCard label="Builds" loading={relLoading} value={relLoading ? '…' : rel.length.toLocaleString()} foot="All time" />
+        <StatCard label="Pass rate" loading={relLoading} value={relLoading ? '…' : passRate != null ? `${passRate}%` : '—'} foot="Of QA decisions" />
+        <StatCard label="Blocked tasks" loading={wbsLoading} tone={wh.blocked ? 'warning' : 'neutral'} value={wbsLoading ? '…' : (wh.blocked || 0).toLocaleString()} foot="Marked blocked in the WBS" />
       </div>
 
       <div className="dash-mid">
         {/* active build + WBS by platform */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...card, padding: 16 }}>
             <div style={panelHead}>Active build</div>
             {relLoading ? (
-              <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+              <div style={{ marginTop: 12 }}><SkeletonList rows={2} height={40} /></div>
             ) : active ? (
-              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 15, fontWeight: 700 }}>{formatVersion(active.version)}</span>
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 16, fontWeight: 700 }}>{formatVersion(active.version)}</span>
                 <StatusBadge status={active.status} />
                 <StatusAge release={active} />
                 <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{active.platform}</span>
@@ -89,30 +89,30 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, 
                 <button style={ghostButton} onClick={() => onOpenRelease(active.id)}>Open</button>
               </div>
             ) : (
-              <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No active build — everything is closed or approved.</div>
+              <div style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-tertiary)' }}>No active build — everything is closed or approved.</div>
             )}
           </div>
 
-          <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...card, padding: 16 }}>
             <div style={panelHead}>WBS by platform</div>
             <div style={panelSub}>Completion vs milestone target</div>
             {wbsLoading ? (
-              <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Loading WBS…</div>
+              <div style={{ marginTop: 16 }}><SkeletonList rows={3} height={40} label="Loading the WBS" /></div>
             ) : !wh.hasWbs ? (
-              <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>
-                No WBS for this project yet. <button style={{ ...ghostButton, padding: '4px 10px', marginLeft: 6 }} onClick={() => onTab('plan')}>Open Plan</button>
+              <div style={{ marginTop: 16, fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+                No WBS for this project yet. <button style={{ ...ghostButton, padding: '4px 12px', marginLeft: 8 }} onClick={() => onTab('plan')}>Open Plan</button>
               </div>
             ) : (
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {wh.byPlatform.map((pl) => {
                   const risk = milestoneLabel(pl.risk);
                   return (
                     <div key={pl.platform}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 500 }}>{pl.platform}</span>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                           {pl.risk && pl.risk !== 'none' && <Pill label={risk.label} tone={risk.tone} />}
-                          <span className="tnum" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{pl.pct}%</span>
+                          <span className="tnum" style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{pl.pct}%</span>
                         </span>
                       </div>
                       <div style={{ height: 6, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
@@ -127,19 +127,19 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, 
         </div>
 
         {/* WBS by module */}
-        <div style={{ ...card, padding: 18 }}>
+        <div style={{ ...card, padding: 16 }}>
           <div style={panelHead}>WBS by module</div>
           <div style={panelSub}>Progress per feature area</div>
           {wbsLoading ? (
-            <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+            <div style={{ marginTop: 16 }}><SkeletonList rows={2} height={40} /></div>
           ) : !wh.hasWbs || wh.byModule.length === 0 ? (
-            <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No modules yet.</div>
+            <div style={{ marginTop: 16, fontSize: 13, color: 'var(--color-text-tertiary)' }}>No modules yet.</div>
           ) : (
-            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 360, overflowY: 'auto' }}>
+            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 360, overflowY: 'auto' }}>
               {wh.byModule.map((mod) => (
                 <div key={mod.module}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 5 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mod.module}</span>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mod.module}</span>
                     <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
                       {mod.completed}/{mod.total}{mod.blocked ? ` · ${mod.blocked} blocked` : ''}
                     </span>
@@ -170,24 +170,24 @@ function TeamTab({ project, members, profiles, profilesById, wbsItems, rel, pbug
   });
   return (
     <div>
-      <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+      <div style={{ ...card, padding: 16, marginBottom: 16 }}>
         <div style={panelHead}>Workload on this project</div>
         <div style={panelSub}>{isCmsProject(project) ? 'CMS tasks' : 'WBS tasks'} assigned · active builds · open bugs raised</div>
         {memberRows.length === 0 ? (
-          <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No members yet.</div>
+          <div style={{ marginTop: 16, fontSize: 13, color: 'var(--color-text-tertiary)' }}>No members yet.</div>
         ) : (
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {memberRows.map(({ mem, prof, assigned, activeBuilds, openBugs, logged }) => (
-              <div key={mem.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 8px', borderRadius: 8 }}>
+              <div key={mem.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', borderRadius: 8 }}>
                 <Avatar name={prof?.name || '—'} size={28} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prof?.name || 'Unknown'}</div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{prof?.role || mem.projectRole}{mem.accessType === 'support' ? ' · support' : ''}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prof?.name || 'Unknown'}</div>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{prof?.role || mem.projectRole}{mem.accessType === 'support' ? ' · support' : ''}</div>
                 </div>
-                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }} title={isCmsProject(project) ? 'CMS tasks assigned' : 'WBS tasks assigned'}><IconTree size={13} /> {assigned}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }} title="Active builds"><IconPackage size={13} /> {activeBuilds}</span>
-                <span style={{ fontSize: 11.5, color: openBugs ? 'var(--danger)' : 'var(--color-text-secondary)' }} title="Open bugs raised"><IconBug size={13} /> {openBugs}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', minWidth: 40, textAlign: 'right' }} title="Hours logged">{logged ? `${logged}h` : '—'}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }} title={isCmsProject(project) ? 'CMS tasks assigned' : 'WBS tasks assigned'}><IconTree size={13} /> {assigned}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }} title="Active builds"><IconPackage size={13} /> {activeBuilds}</span>
+                <span style={{ fontSize: 12, color: openBugs ? 'var(--danger)' : 'var(--color-text-secondary)' }} title="Open bugs raised"><IconBug size={13} /> {openBugs}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', minWidth: 40, textAlign: 'right' }} title="Hours logged">{logged ? `${logged}h` : '—'}</span>
               </div>
             ))}
           </div>
@@ -284,15 +284,15 @@ function TimeTab({ projectId, user, wbsItems, logs, totals, pager, loading, prof
     catch (e) { showToast?.(e.message, 'error'); }
   }
 
-  const fieldLabel = { fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 5, display: 'block' };
+  const fieldLabel = { fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4, display: 'block' };
 
   return (
     <div className="dash-mid">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ ...card, padding: 18 }}>
+        <div style={{ ...card, padding: 16 }}>
           <div style={panelHead}>Log time</div>
           <div style={panelSub}>Record hours against this project{taskItems.length > 0 ? ' — optionally against a WBS task' : ''}</div>
-          <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 12 }}>
+          <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 12 }}>
             <div>
               <label style={fieldLabel}>Hours</label>
               <input style={inputStyle} type="number" min="0" step="0.25" value={hours} placeholder="e.g. 2.5" onChange={(e) => setHours(e.target.value)} />
@@ -313,15 +313,15 @@ function TimeTab({ projectId, user, wbsItems, logs, totals, pager, loading, prof
               <input style={inputStyle} value={note} placeholder="What did you work on?" onChange={(e) => setNote(e.target.value)} />
             </div>
           </div>
-          <button style={{ ...primaryButton(busy), marginTop: 14 }} disabled={busy} onClick={submit}>{busy ? 'Logging…' : 'Log time'}</button>
+          <button style={{ ...primaryButton(busy), marginTop: 16 }} disabled={busy} onClick={submit}>{busy ? 'Logging…' : 'Log time'}</button>
         </div>
 
-        <div style={{ ...card, padding: 18 }}>
+        <div style={{ ...card, padding: 16 }}>
           <div style={panelHead}>Entries</div>
           {loading ? (
-            <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+            <div style={{ marginTop: 12 }}><SkeletonList rows={2} height={40} /></div>
           ) : logs.length === 0 ? (
-            <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No time logged yet. Log your first entry above.</div>
+            <div style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-tertiary)' }}>No time logged yet. Log your first entry above.</div>
           ) : (
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 2 }}>
               {logs.map((l) => {
@@ -329,10 +329,10 @@ function TimeTab({ projectId, user, wbsItems, logs, totals, pager, loading, prof
                 const open = l.status === 'running' || l.status === 'paused';
                 const timer = l.source === 'timer' && l.startedAt && l.endedAt;
                 return (
-                  <div key={l.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', borderRadius: 8 }}>
+                  <div key={l.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', borderRadius: 8 }}>
                     {open ? (
                       <span style={{ minWidth: 44, display: 'inline-flex', flexDirection: 'column', lineHeight: 1.15 }}>
-                        <span style={{ fontSize: 10.5, fontWeight: 700, color: l.status === 'running' ? 'var(--success)' : 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: l.status === 'running' ? 'var(--success)' : 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                           {l.status === 'running' ? 'In progress' : 'Paused'}
                         </span>
                         <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{fmtClock(api.elapsedMs(l))}</span>
@@ -341,18 +341,18 @@ function TimeTab({ projectId, user, wbsItems, logs, totals, pager, loading, prof
                       <span className="tnum" style={{ fontSize: 13, fontWeight: 700, minWidth: 44 }}>{l.hours}h</span>
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {itemLabel(l.wbsItemId) ? <span style={{ fontWeight: 500 }}>{itemLabel(l.wbsItemId)}</span> : <span style={{ color: 'var(--color-text-tertiary)' }}>General</span>}
                         {l.note ? <span style={{ color: 'var(--color-text-secondary)' }}> — {l.note}</span> : ''}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                         {profilesById[l.userId]?.name || 'Unknown'} · {l.logDate}
                         {timer && <> · {fmtTime(l.startedAt)}–{fmtTime(l.endedAt)}</>}
                       </div>
                     </div>
                     {/* an open timer is discarded from the extension, never removed here */}
                     {!open && (mine || canManage) && (
-                      <button onClick={() => remove(l.id)} style={{ ...ghostButton, padding: '4px 9px', fontSize: 11, color: 'var(--danger)', borderColor: 'transparent' }}>Remove</button>
+                      <button onClick={() => remove(l.id)} style={{ ...ghostButton, padding: '4px 8px', fontSize: 12, color: 'var(--danger)', borderColor: 'transparent' }}>Remove</button>
                     )}
                   </div>
                 );
@@ -363,18 +363,18 @@ function TimeTab({ projectId, user, wbsItems, logs, totals, pager, loading, prof
         </div>
       </div>
 
-      <div style={{ ...card, padding: 18 }}>
+      <div style={{ ...card, padding: 16 }}>
         <div style={panelHead}>Totals</div>
         <div style={panelSub}>Hours logged on this project</div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 700, marginTop: 12 }}>{total}h</div>
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 11 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, marginTop: 12 }}>{total}h</div>
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {memberRollup.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No contributors yet.</div>
+            <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No contributors yet.</div>
           ) : memberRollup.map((r) => (
-            <div key={r.uid} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div key={r.uid} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <Avatar name={r.name} size={26} />
-              <span style={{ flex: 1, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
-              <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700 }}>{r.h}h</span>
+              <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+              <span className="tnum" style={{ fontSize: 13, fontWeight: 700 }}>{r.h}h</span>
             </div>
           ))}
         </div>
@@ -563,15 +563,15 @@ export function ProjectHub({
   return (
     <div className="anim-in" style={{ maxWidth: 1460, margin: '0 auto' }}>
       {/* breadcrumb + header */}
-      <button style={{ ...ghostButton, padding: '5px 11px', marginBottom: 14 }} onClick={() => setSel(null)}>← All projects</button>
+      <button style={{ ...ghostButton, padding: '4px 12px', marginBottom: 16 }} onClick={() => setSel(null)}>← All projects</button>
       <PageHeader
         icon={<IconPackage size={18} />}
-        title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {project.name}
           {isCms ? <Pill label={`CMS · ${cmsKindLabel(project.cmsKind)}`} tone="info" /> : project.type && <ProjectTypeTag type={project.type} />}
         </span>}
         subtitle={isCms ? 'Website work, tracked as tasks and a development journey (no WBS)' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          {relLoading ? 'Loading…' : <><HealthDot tone={health.tone} />{health.label}</>}
+          {relLoading ? <Skeleton width={96} height={12} /> : <><HealthDot tone={health.tone} />{health.label}</>}
         </span>}
         actions={<button style={{ ...primaryButton(false) }} onClick={onSubmit}>Submit release</button>}
       />
@@ -613,9 +613,9 @@ export function ProjectHub({
       )}
       {tab === 'builds' && (
         relLoading ? (
-          <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading builds…</div>
+          <SkeletonList rows={4} height={64} card label="Loading builds" />
         ) : rel.length === 0 ? (
-          <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>No builds submitted for this project yet.</div>
+          <div style={{ ...card, padding: 48, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>No builds submitted for this project yet.</div>
         ) : (
           <ReleaseHistory releases={rel} projectsById={projectsById} profilesById={profilesById} onRowClick={(r) => onOpenRelease(r.id)} />
         )
@@ -635,7 +635,7 @@ export function ProjectHub({
         />
       )}
       {tab === 'bugs' && (
-        relLoading ? <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading bugs…</div>
+        relLoading ? <SkeletonList rows={4} height={64} card label="Loading bugs" />
           : <BugsTab projectId={selId} bugs={pbugs} releaseById={projReleaseById} projectsById={projectsById} onOpenRelease={onOpenRelease} />
       )}
     </div>

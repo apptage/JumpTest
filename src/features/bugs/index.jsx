@@ -4,10 +4,10 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import * as api from '@/api.js';
-import { card, inputStyle, ghostButton, BugStatusBadge, SeverityBadge } from '@/ui.jsx';
-import { Empty, PageHeader, SlaBadge, TagChip, sideHead, Pager, useDebounced } from '@shared/ui-kit.jsx';
+import { card, inputStyle, ghostButton, BugStatusBadge, SeverityBadge, ModalShell } from '@/ui.jsx';
+import { Empty, PageHeader, SlaBadge, TagChip, sideHead, Pager, useDebounced, filterSelect, filterInput } from '@shared/ui-kit.jsx';
 import { useMetricsData } from '@shared/useMetricsData.js';
-import { StatSmall } from '@shared/dashboard-kit.jsx';
+import { StatSmall, SkeletonList } from '@shared/dashboard-kit.jsx';
 import { filterBugs, filterReleases } from '@shared/filters.js';
 import { computeBottlenecks } from '@shared/releaseMetrics.js';
 import { agingBugs, aggregateBugMetrics, bugWorkflow } from '@shared/bugMetrics.js';
@@ -35,7 +35,7 @@ function QuickChip({ label, value, color, active, onClick }) {
     <button
       onClick={onClick}
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 12,
+        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 12,
         cursor: 'pointer', fontFamily: 'inherit', boxShadow: 'var(--shadow-sm)',
         background: active ? 'var(--accent)' : 'var(--card)',
         color: active ? 'var(--accent-foreground)' : 'var(--color-text-primary)',
@@ -43,17 +43,17 @@ function QuickChip({ label, value, color, active, onClick }) {
       }}
     >
       <span style={{ width: 8, height: 8, borderRadius: 999, background: active ? 'var(--accent-foreground)' : color, flexShrink: 0 }} />
-      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</span>
-      <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700, color: active ? 'var(--accent-foreground)' : 'var(--color-text-secondary)' }}>{value}</span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+      <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: active ? 'var(--accent-foreground)' : 'var(--color-text-secondary)' }}>{value}</span>
     </button>
   );
 }
 /* Shared section heading (matches Analytics / Hub): Lexend title + muted line. */
 const sectionTitle = (t, sub, dot) => (
   <div style={{ marginBottom: 12, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-    {dot && <span style={{ width: 8, height: 8, borderRadius: 999, background: dot, marginTop: 6, flexShrink: 0 }} />}
+    {dot && <span style={{ width: 8, height: 8, borderRadius: 999, background: dot, marginTop: 8, flexShrink: 0 }} />}
     <div>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>{t}</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>{t}</div>
       {sub && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{sub}</div>}
     </div>
   </div>
@@ -210,9 +210,9 @@ export function BugsPage({
   if (from || to) crumbs.push(`${from || '…'} → ${to || '…'}`);
   if (q.trim()) crumbs.push(`"${q.trim()}"`);
 
-  const fSel = { ...inputStyle, width: 'auto', minHeight: 36, padding: '0 10px', fontSize: 12 };
+  const fSel = filterSelect;
   const tbBtn = {
-    minHeight: 36, padding: '0 12px', fontSize: 12.5, fontWeight: 600, borderRadius: 12, cursor: 'pointer',
+    minHeight: 36, padding: '0 12px', fontSize: 13, fontWeight: 600, borderRadius: 12, cursor: 'pointer',
     border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-body)',
   };
   // secondary filters live behind "More filters"; auto-shown while any of them is active
@@ -229,7 +229,7 @@ export function BugsPage({
       <PageHeader title="Bugs" subtitle="Track and triage every bug across your releases" />
 
       {/* status chips — click to narrow the list (counts follow the toolbar filters) */}
-      <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         {[
           ['all', 'All bugs', wf.total, 'var(--color-text-tertiary)'],
           ['needsDev', 'With the developer', wf.needsDev, 'var(--danger)'],
@@ -243,28 +243,30 @@ export function BugsPage({
       </div>
 
       {/* one toolbar — the primary filters visible, everything else behind "More filters" */}
-      <div style={{ ...card, padding: 12, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="filter-bar stacked">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <input
-            style={{ ...inputStyle, flex: '1 1 220px', width: 'auto', minHeight: 36 }}
+            type="search"
+            className="filter-search"
+            style={filterInput}
             value={q}
             placeholder="Search bugs or projects…"
             aria-label="Search bugs"
             onChange={(e) => setQ(e.target.value)}
           />
-          <select style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select aria-label="Status" style={fSel} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="all">All statuses</option>
             {BUG_STATUS_ORDER.map((s) => <option key={s} value={s}>{BUG_STATUSES[s].label}</option>)}
           </select>
-          <select style={fSel} value={sev} onChange={(e) => setSev(e.target.value)}>
+          <select aria-label="Severity" style={fSel} value={sev} onChange={(e) => setSev(e.target.value)}>
             <option value="all">All severities</option>
             {SEVERITY_ORDER.map((s) => <option key={s} value={s}>{SEVERITIES[s].label}</option>)}
           </select>
-          <select style={fSel} value={project} onChange={(e) => setProject(e.target.value)}>
+          <select aria-label="Project" style={fSel} value={project} onChange={(e) => setProject(e.target.value)}>
             <option value="all">All projects</option>
             {(projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <select style={fSel} value={sort} onChange={(e) => setSort(e.target.value)}>
+          <select aria-label="Sort" style={fSel} value={sort} onChange={(e) => setSort(e.target.value)}>
             <option value="newest">Newest first</option>
             <option value="oldest">Oldest first</option>
           </select>
@@ -274,7 +276,7 @@ export function BugsPage({
           {anyFilter && <button style={tbBtn} onClick={resetAll}>Reset</button>}
         </div>
         {showMore && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', paddingTop: 10, borderTop: '1px solid var(--color-border-primary)' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', paddingTop: 12, borderTop: '1px solid var(--color-border-primary)' }}>
             <select style={fSel} value={platform} onChange={(e) => setPlatform(e.target.value)}>
               <option value="all">All platforms</option>
               {RELEASE_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -323,17 +325,17 @@ export function BugsPage({
                   key={b.id}
                   className="mgr-row"
                   onClick={() => onOpenRelease(b.releaseId)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 6px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5 }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}
                 >
                   <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[bugSlaLevel(b.status, b.createdAt)] || 'var(--danger)', flexShrink: 0 }} />
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{b.title}</span>
                   {relById[b.releaseId] && (
-                    <span className="tnum" style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                    <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                       v{String(relById[b.releaseId].version).replace(/^v+/i, '')}
                     </span>
                   )}
                   <SeverityBadge severity={b.severity} />
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{humanizeSince(b.createdAt)}</span>
+                  <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{humanizeSince(b.createdAt)}</span>
                 </div>
               ))}
               {agingAll.length > 4 && (
@@ -347,8 +349,8 @@ export function BugsPage({
             <div style={{ ...card, padding: 16 }}>
               {sectionTitle('Needs a decision', `${bottlenecks.length} thing${bottlenecks.length === 1 ? '' : 's'} slowing this work down right now`)}
               {(showDecisions ? bottlenecks : bottlenecks.slice(0, 4)).map((b, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 6px', fontSize: 12.5, lineHeight: 1.45 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 5 }} />
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 8px', fontSize: 13, lineHeight: 1.45 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: SLA_COLORS[b.level], flexShrink: 0, marginTop: 4 }} />
                   <span>{b.text}</span>
                 </div>
               ))}
@@ -364,18 +366,18 @@ export function BugsPage({
 
       {/* list */}
       {serverQ.isError ? (
-        <div style={{ ...card, padding: 40, textAlign: 'center' }}>
+        <div style={{ ...card, padding: 48, textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Couldn’t load bugs</div>
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>{serverQ.error?.message}</div>
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>{serverQ.error?.message}</div>
           <button style={ghostButton} onClick={() => serverQ.refetch()}>Try again</button>
         </div>
       ) : loadingFirst ? (
-        <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading bugs…</div>
+        <SkeletonList rows={5} height={64} card label="Loading bugs" />
       ) : listedCount === 0 ? (
         <Empty>No bugs match your filters.</Empty>
       ) : (
         <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: serverQ.isPlaceholderData ? 0.6 : 1, transition: 'opacity .15s' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, opacity: serverQ.isPlaceholderData ? 0.6 : 1, transition: 'opacity .15s' }}>
             {pageBugs.map((b) => (
               <BugCard
                 key={b.id}
@@ -429,24 +431,22 @@ function BugCard({
   const isManager = canAct && isManagerRole;
   const canDelete = canAct && (user?.role === 'Admin' || bug.createdById === user?.id);
   const desc = bug.description || '';
-  const long = desc.length > 240;
-  const shown = open || !long ? desc : desc.slice(0, 240).trimEnd() + '…';
   const dot = <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>;
 
   return (
     <div style={{ ...card, padding: 0, overflow: 'hidden', display: 'flex' }}>
       <div style={{ width: 4, flexShrink: 0, background: sev.color || 'var(--color-border-tertiary)' }} />
-      <div style={{ flex: 1, minWidth: 0, padding: 14 }}>
+      <div style={{ flex: 1, minWidth: 0, padding: 16 }}>
         {/* title row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <SlaBadge level={bugSlaLevel(bug.status, bug.createdAt)} title="Aging — needs attention" />
-          <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 160 }}>{bug.title}</span>
+          <span className="clamp-1" title={bug.title} style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 160 }}>{bug.title}</span>
           <SeverityBadge severity={bug.severity} />
           <BugStatusBadge status={bug.status} />
         </div>
 
         {/* meta: project · platform · version · reporter/time */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 7, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflow: 'hidden', whiteSpace: 'nowrap', marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{proj?.name || 'Unknown project'}</span>
           {rel && (
             <>
@@ -481,30 +481,20 @@ function BugCard({
           </span>
         </div>
 
-        {/* description */}
+        {/* description: two lines at most, so every card is the same height;
+            the full text, the proposed close and the timeline open in Details */}
         {desc ? (
-          <p style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-secondary)', margin: '10px 0 0', whiteSpace: 'pre-wrap' }}>
-            {shown}
-            {long && (
-              <button
-                onClick={() => setOpen((o) => !o)}
-                style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, padding: '0 0 0 6px' }}
-              >
-                {open ? 'show less' : 'show more'}
-              </button>
-            )}
-          </p>
+          <p className="clamp-2" style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-secondary)', margin: '12px 0 0', minHeight: 40 }}>{desc}</p>
         ) : (
-          <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '10px 0 0', fontStyle: 'italic' }}>
+          <p style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-tertiary)', margin: '12px 0 0', fontStyle: 'italic', minHeight: 40 }}>
             No description provided.
           </p>
         )}
-
-        {/* developer's proposed close — resolution, reason, who + when */}
-        <ProposedCloseBanner bug={bug} proposerName={proposerName} />
-
-        {/* full lifecycle timeline (from bug_history) */}
-        <BugTimeline bugId={bug.id} releasesById={releasesById} />
+        {bug.status === 'pending_tl' && (
+          <div className="clamp-1" style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: 'var(--c-cyan)' }}>
+            Close proposed{bug.resolution ? `: ${bug.resolution}` : ''}{proposerName ? ` by ${proposerName}` : ''}. See Details.
+          </div>
+        )}
 
         {/* role-aware actions (same as the release Bugs tab) */}
         {canAct && (
@@ -523,20 +513,63 @@ function BugCard({
         )}
 
         {/* tags + action */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+        {/* one line: up to three tags, the rest as +N (all of them in its tooltip) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', marginTop: 12, minWidth: 0 }}>
           {bug.feature && <TagChip label={bug.feature} tone="brand" />}
-          {bug.tags.map((t) => (
+          {bug.tags.slice(0, 3).map((t) => (
             <TagChip key={t} label={t} />
           ))}
+          {bug.tags.length > 3 && <span title={bug.tags.slice(3).join(', ')}><TagChip label={`+${bug.tags.length - 3}`} /></span>}
           <span style={{ flex: 1 }} />
           <button
+            onClick={() => setOpen(true)}
+            title="Full description, proposed close and timeline"
+            style={{ ...ghostButton, padding: '4px 12px', fontSize: 12 }}
+          >
+            Details
+          </button>
+          <button
             onClick={() => onOpen(bug.releaseId)}
-            style={{ ...ghostButton, padding: '5px 12px', fontSize: 12 }}
+            style={{ ...ghostButton, padding: '4px 12px', fontSize: 12 }}
           >
             Open release →
           </button>
         </div>
       </div>
+
+      {open && (
+        <ModalShell
+          variant="drawer"
+          maxWidth={560}
+          onClose={() => setOpen(false)}
+          title={bug.title}
+          subtitle={`${proj?.name || 'Unknown project'}${rel ? ` · v${rel.version}` : ''} · reported ${humanizeSince(bug.createdAt)} ago${reporter ? ` by ${reporter}` : ''}`}
+        >
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            <SeverityBadge severity={bug.severity} />
+            <BugStatusBadge status={bug.status} />
+          </div>
+          <p style={{ fontSize: 13, lineHeight: 1.6, color: desc ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {desc || 'No description provided.'}
+          </p>
+          <ProposedCloseBanner bug={bug} proposerName={proposerName} />
+          <BugTimeline bugId={bug.id} releasesById={releasesById} />
+          {canAct && (
+            <BugActions
+              bug={bug}
+              isDev={isDev}
+              isQA={isQA}
+              isManager={isManager}
+              canDelete={canDelete}
+              isSubmitting={isSubmitting}
+              onStatus={(st) => onBugStatus(rel, bug, st)}
+              onResolve={(res) => onBugResolve(rel, bug, res)}
+              onCloseReview={(dec) => onBugCloseReview(rel, bug, dec)}
+              onDelete={() => onDeleteBug(bug)}
+            />
+          )}
+        </ModalShell>
+      )}
     </div>
   );
 }

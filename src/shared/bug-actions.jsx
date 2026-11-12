@@ -6,7 +6,8 @@
 import { useState } from 'react';
 import * as api from '@/api.js';
 import { ghostButton, inputStyle } from '@/ui.jsx';
-import { BUG_STATUSES, BUG_RESOLUTIONS, DEV_DISPUTE_RESOLUTIONS, humanizeSince, formatVersion } from '@/constants.js';
+import { BUG_STATUSES, BUG_RESOLUTIONS, DEV_DISPUTE_RESOLUTIONS, humanizeSince, formatVersion, tint } from '@/constants.js';
+import { SkeletonList } from '@shared/dashboard-kit.jsx';
 
 /* Lifecycle timeline for one bug, from bug_history (see fixes15.sql). Lazy —
    fetches only when expanded. releasesById (optional) maps release_id → release
@@ -53,7 +54,7 @@ export function BugTimeline({ bugId, releasesById = {} }) {
       </button>
       {open && (
         <div style={{ marginTop: 8, borderLeft: '2px solid var(--color-border-tertiary)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {loading && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Loading…</div>}
+          {loading && <SkeletonList rows={2} height={32} label="Loading the timeline" />}
           {!loading && events && events.length === 0 && (
             <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No history recorded yet.</div>
           )}
@@ -85,36 +86,36 @@ export function ProposedCloseBanner({ bug, proposerName }) {
   return (
     <div
       style={{
-        marginTop: 10,
-        padding: '10px 12px',
-        background: '#ECFEFF',
-        border: '1px solid #A5F3FC',
+        marginTop: 12,
+        padding: '12px 12px',
+        background: 'color-mix(in srgb, var(--c-cyan) 8%, var(--card))',
+        border: '1px solid color-mix(in srgb, var(--c-cyan) 30%, transparent)',
         borderRadius: 8,
-        fontSize: 12.5,
+        fontSize: 13,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 700, color: '#0e7490' }}>Proposed close</span>
+        <span style={{ fontWeight: 700, color: 'var(--c-cyan)' }}>Proposed close</span>
         <span
           style={{
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 700,
-            padding: '2px 9px',
+            padding: '2px 8px',
             borderRadius: 999,
             background: '#fff',
-            border: '1px solid #A5F3FC',
-            color: '#0e7490',
+            border: '1px solid color-mix(in srgb, var(--c-cyan) 30%, transparent)',
+            color: 'var(--c-cyan)',
           }}
         >
           {bug.resolution || '—'}
         </span>
       </div>
       {bug.resolutionNote && (
-        <div style={{ marginTop: 6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap' }}>
+        <div style={{ marginTop: 8, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap' }}>
           “{bug.resolutionNote}”
         </div>
       )}
-      <div style={{ marginTop: 6, color: 'var(--color-text-tertiary)', fontSize: 11.5 }}>
+      <div style={{ marginTop: 8, color: 'var(--color-text-tertiary)', fontSize: 12 }}>
         by {proposerName || 'a developer'}
         {bug.resolutionAt ? ` · ${humanizeSince(bug.resolutionAt)}` : ''}
       </div>
@@ -166,7 +167,7 @@ export function BugActions({
   if (!showBar) return null;
 
   return (
-    <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
       {actions.map(([st, label]) => (
         <button
           key={st}
@@ -174,10 +175,10 @@ export function BugActions({
           onClick={() => onStatus(st)}
           style={{
             ...ghostButton,
-            padding: '6px 10px',
+            padding: '8px 12px',
             fontSize: 12,
             color: BUG_STATUSES[st].color,
-            borderColor: `${BUG_STATUSES[st].color}55`,
+            borderColor: tint(BUG_STATUSES[st].color, 33),
           }}
         >
           {label}
@@ -189,7 +190,7 @@ export function BugActions({
           <button
             disabled={isSubmitting}
             onClick={() => onCloseReview('approve')}
-            style={{ ...ghostButton, padding: '6px 10px', fontSize: 12, color: '#16a34a', borderColor: '#16a34a55' }}
+            style={{ ...ghostButton, padding: '8px 12px', fontSize: 12, color: 'var(--tone-success-fg)', borderColor: tint('var(--c-green)', 33) }}
             title={`Approve closing as ${bug.resolution}`}
           >
             Approve close
@@ -197,7 +198,7 @@ export function BugActions({
           <button
             disabled={isSubmitting}
             onClick={() => onCloseReview('reject')}
-            style={{ ...ghostButton, padding: '6px 10px', fontSize: 12, color: '#dc2626', borderColor: '#dc262655' }}
+            style={{ ...ghostButton, padding: '8px 12px', fontSize: 12, color: 'var(--c-red)', borderColor: tint('var(--c-red)', 33) }}
             title="Reject — send back to developer as a real bug"
           >
             Reject
@@ -210,7 +211,7 @@ export function BugActions({
           value=""
           disabled={isSubmitting}
           onChange={(e) => e.target.value && onResolve(e.target.value)}
-          style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}
+          style={{ ...inputStyle, width: 'auto', padding: '8px 8px', fontSize: 12 }}
           title="Propose a close (needs Team Lead verification)"
         >
           <option value="">Close as…</option>
@@ -226,7 +227,7 @@ export function BugActions({
           value=""
           disabled={isSubmitting}
           onChange={(e) => e.target.value && onResolve(e.target.value)}
-          style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}
+          style={{ ...inputStyle, width: 'auto', padding: '8px 8px', fontSize: 12 }}
           title="Close without a code fix"
         >
           <option value="">Close as…</option>
@@ -243,10 +244,10 @@ export function BugActions({
           onClick={onDelete}
           style={{
             ...ghostButton,
-            padding: '6px 10px',
+            padding: '8px 12px',
             fontSize: 12,
-            color: '#dc2626',
-            borderColor: '#dc262644',
+            color: 'var(--c-red)',
+            borderColor: tint('var(--c-red)', 27),
             marginLeft: 'auto',
           }}
         >

@@ -66,8 +66,7 @@ import {
   ModalShell,
   Toast,
   CenteredMessage,
-  Info,
-} from './ui.jsx';
+  Info, confirmAction } from './ui.jsx';
 import {
   HeroIllustration,
   EmptyIllustration,
@@ -110,20 +109,19 @@ import {
   EnvBadge,
   sideHead,
   relativeTime,
-  TagChip,
-} from '@shared/ui-kit.jsx';
+  TagChip, TooltipLayer } from '@shared/ui-kit.jsx';
 import { WbsPage } from '@features/wbs';
 import { HistoryModal } from '@features/analytics';
 import { Analytics } from '@features/analytics/Analytics.jsx';
 import { ProjectsTab, UsersTab, TeamsTab } from '@features/admin';
 import { BrandsTab } from '@features/brands';
 import { SubmitModal, EditReleaseModal, DetailModal } from '@features/releases';
-import { AuthScreen, SetPasswordScreen } from '@features/auth';
+import { AuthScreen, SetPasswordScreen, ConfirmResetScreen } from '@features/auth';
 import { BugsPage } from '@features/bugs';
 import { DashboardHome, ReleasesPage } from '@features/dashboard';
 import { ProjectHub } from '@features/project-hub';
 import { ReportsSection } from '@features/reports';
-import { NavRail, AppHeader, SettingsPage } from '@/shell';
+import { NavRail, AppHeader, SettingsPage, useNavMode, AppSkeleton } from '@/shell';
 import { useAppData } from '@shared/useAppData.js';
 import { filterBugs } from '@shared/filters.js';
 import { usePush } from '@/push/usePush.js';
@@ -156,6 +154,10 @@ export default function ReleaseTracker() {
   const [user, setUser] = useState(null);
   const [profileMissing, setProfileMissing] = useState(false);
   const [recovery, setRecovery] = useState(false);
+  // a reset link's one-time token, waiting for the person to press Continue
+  const [pendingResetToken, setPendingResetToken] = useState(null);
+  // shown on the sign-in screen, e.g. "that reset link has expired"
+  const [authNotice, setAuthNotice] = useState(null);
 
   // server state (projects/releases/bugs/…) is provided by useAppData (React Query) below
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -181,6 +183,10 @@ export default function ReleaseTracker() {
       try { localStorage.setItem('gq-sidebar', c ? 'expanded' : 'collapsed'); } catch { /* ignore */ }
       return !c;
     });
+  // full sidebar / icon rail / drawer, by screen width (see useNavMode)
+  const navMode = useNavMode();
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { if (navMode !== 'drawer') setMenuOpen(false); }, [navMode]);
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
@@ -190,6 +196,11 @@ export default function ReleaseTracker() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  // closing the drawer hands focus back to the menu button that opened it
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    setTimeout(() => document.querySelector('[aria-controls="app-nav"]')?.focus(), 0);
   }, []);
   const [showNotif, setShowNotif] = useState(false);
 
@@ -223,9 +234,34 @@ export default function ReleaseTracker() {
 
   /* ---- auth session ---- */
   useEffect(() => {
-    // a recovery link sets type=recovery in the URL hash
-    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
-      setRecovery(true);
+    if (typeof window !== 'undefined') {
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const query = new URLSearchParams(window.location.search);
+      const err = hash.get('error') || query.get('error');
+      const errCode = hash.get('error_code') || query.get('error_code');
+      const tokenHash = query.get('token_hash');
+      const clearUrl = () => window.history.replaceState(null, '', window.location.pathname);
+      if (err) {
+        // Supabase sends people back with #error=… when a link can't be used
+        // (most often: it expired, or it was already used once)
+        const expired = errCode === 'otp_expired' || /expired|invalid/i.test(hash.get('error_description') || query.get('error_description') || '');
+        setAuthNotice({
+          tone: 'error',
+          title: expired ? 'That link has expired or was already used' : 'That link didn’t work',
+          text: expired
+            ? 'Password reset links work once and only for a limited time. Enter your email below and we’ll send you a new one.'
+            : (hash.get('error_description') || query.get('error_description') || 'Please request a new link.').replace(/\+/g, ' '),
+          mode: 'reset',
+        });
+        clearUrl();
+      } else if (tokenHash && query.get('type') === 'recovery') {
+        // scanner-safe reset link: the token is only used when they press Continue
+        setPendingResetToken(tokenHash);
+        clearUrl();
+      } else if (window.location.hash.includes('type=recovery')) {
+        // an older-style recovery link (token in the URL hash)
+        setRecovery(true);
+      }
     }
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -465,11 +501,32 @@ export default function ReleaseTracker() {
 
   async function handleResetRequest(email) {
     await run(async () => {
+      // back to this app (it must be in Supabase → Auth → URL Configuration →
+      // Redirect URLs, or Supabase falls back to its Site URL)
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: window.location.origin,
+        redirectTo: `${window.location.origin}/`,
       });
       if (error) throw error;
     }, 'Reset link sent — check your email.');
+  }
+
+  // the person pressed Continue on a reset link: use its one-time token now
+  async function handleConfirmReset() {
+    setIsSubmitting(true);
+    const { data, error } = await supabase.auth.verifyOtp({ type: 'recovery', token_hash: pendingResetToken });
+    setIsSubmitting(false);
+    setPendingResetToken(null);
+    if (error) {
+      setAuthNotice({
+        tone: 'error',
+        title: 'That link has expired or was already used',
+        text: 'Password reset links work once and only for a limited time. Enter your email below and we’ll send you a new one.',
+        mode: 'reset',
+      });
+      return;
+    }
+    if (data?.session) setSession(data.session);
+    setRecovery(true);
   }
 
   async function handleSetPassword(password) {
@@ -785,7 +842,7 @@ export default function ReleaseTracker() {
   }
 
   async function handleDeleteRelease(release) {
-    if (!window.confirm('Delete this release? This cannot be undone.')) return;
+    if (!await confirmAction('Delete this release? This cannot be undone.')) return;
     const ok = await run(
       () => api.deleteRelease(release.id),
       'Release deleted'
@@ -1104,7 +1161,7 @@ export default function ReleaseTracker() {
   }
 
   async function handleDeleteBug(bug) {
-    if (!window.confirm('Delete this bug?')) return;
+    if (!await confirmAction('Delete this bug?')) return;
     const ok = await run(async () => {
       await api.deleteBug(bug.id);
       // deleting a bug may unblock its WBS task — re-sync it with the shared rule
@@ -1188,7 +1245,7 @@ export default function ReleaseTracker() {
   }
   async function handleDeleteProject(id) {
     if (
-      !window.confirm(
+      !await confirmAction(
         'Delete this project? Its checklist items will be removed; releases stay but lose their project link.'
       )
     )
@@ -1233,7 +1290,7 @@ export default function ReleaseTracker() {
   }
   async function handleDeleteTeam(id) {
     if (
-      !window.confirm(
+      !await confirmAction(
         'Delete this team? Its members and projects become unassigned (visible only to admins).'
       )
     )
@@ -1279,7 +1336,15 @@ export default function ReleaseTracker() {
   }
 
   /* ---- render gates ---- */
-  if (authLoading) return <CenteredMessage>Loading…</CenteredMessage>;
+  if (authLoading) return <AppSkeleton mode={navMode} />;
+
+  if (pendingResetToken)
+    return (
+      <>
+        <ConfirmResetScreen isSubmitting={isSubmitting} onContinue={handleConfirmReset} onCancel={() => setPendingResetToken(null)} />
+        <Toast toast={toast} />
+      </>
+    );
 
   if (recovery)
     return (
@@ -1293,10 +1358,13 @@ export default function ReleaseTracker() {
     return (
       <>
         <AuthScreen
+          key={authNotice ? 'notice' : 'plain'}
           isSubmitting={isSubmitting}
           onSignIn={handleSignIn}
           onSignUp={handleSignUp}
-          onResetRequest={handleResetRequest}
+          onResetRequest={async (email) => { await handleResetRequest(email); setAuthNotice(null); }}
+          notice={authNotice}
+          initialMode={authNotice?.mode || 'signin'}
         />
         <Toast toast={toast} />
       </>
@@ -1306,10 +1374,10 @@ export default function ReleaseTracker() {
     return (
       <>
         <CenteredMessage>
-          <div style={{ fontWeight: 500, marginBottom: 6 }}>
+          <div style={{ fontWeight: 500, marginBottom: 8 }}>
             No profile for this account
           </div>
-          <div style={{ marginBottom: 18 }}>
+          <div style={{ marginBottom: 16 }}>
             Your access may have been removed, or your email isn't confirmed yet.
           </div>
           <button style={ghostButton} onClick={handleSignOut}>
@@ -1320,7 +1388,7 @@ export default function ReleaseTracker() {
       </>
     );
 
-  if (!user) return <CenteredMessage>Loading your profile…</CenteredMessage>;
+  if (!user) return <AppSkeleton mode={navMode} />;
 
   const isAdmin = user.role === 'Admin';
   const isLead = user.role === 'Team Lead';
@@ -1370,6 +1438,9 @@ export default function ReleaseTracker() {
             isPm={isPmUser}
             collapsed={navCollapsed}
             onToggleCollapsed={toggleNav}
+            mode={navMode}
+            drawerOpen={menuOpen}
+            onCloseDrawer={closeMenu}
           />
 
           <div className="nav-main">
@@ -1382,6 +1453,9 @@ export default function ReleaseTracker() {
               isAdmin={isAdmin}
               collapsed={navCollapsed}
               onToggleCollapsed={toggleNav}
+              navMode={navMode}
+              menuOpen={menuOpen}
+              onOpenMenu={() => setMenuOpen(true)}
               unread={unread}
               notifOpen={showNotif}
               notifications={notifications}
@@ -1684,6 +1758,7 @@ export default function ReleaseTracker() {
       )}
 
         <Toast toast={toast} />
+        <TooltipLayer />
           </div>
         </div>
     </>

@@ -3,7 +3,7 @@
    sidebar and the sign-in page use the default brand. */
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
-import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell } from '@/ui.jsx';
+import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell, confirmAction } from '@/ui.jsx';
 import { Pill, StatSmall } from '@shared/dashboard-kit.jsx';
 import { IconPlus } from '@/icons.jsx';
 
@@ -21,7 +21,7 @@ function fileError(file) {
 function LogoPane({ src, alt, tone, height = 72, plate }) {
   return (
     <div style={{ flex: 1, minWidth: 0, height, padding: 12, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', background: PREVIEW_BG[tone] }}>
-      {src && <img src={src} alt={alt} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', ...(plate ? { background: '#fff', borderRadius: 6, padding: '3px 6px', boxSizing: 'border-box' } : null) }} />}
+      {src && <img src={src} alt={alt} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', ...(plate ? { background: '#fff', borderRadius: 6, padding: '4px 8px', boxSizing: 'border-box' } : null) }} />}
     </div>
   );
 }
@@ -35,9 +35,9 @@ function ImagePicker({ label, hint, previewUrl, tone, onPick, onClear, error }) 
           <LogoPane src={previewUrl} alt={`${label} preview`} tone={tone} height={60} />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 6, lineHeight: 1.4 }}>{hint}</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <label style={{ ...ghostButton, display: 'inline-flex', alignItems: 'center', padding: '5px 10px', minHeight: 0, fontSize: 12, cursor: 'pointer' }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.4 }}>{hint}</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <label style={{ ...ghostButton, display: 'inline-flex', alignItems: 'center', padding: '4px 12px', minHeight: 0, fontSize: 12, cursor: 'pointer' }}>
               {previewUrl ? 'Replace' : 'Choose file'}
               <input
                 type="file"
@@ -48,10 +48,10 @@ function ImagePicker({ label, hint, previewUrl, tone, onPick, onClear, error }) 
               />
             </label>
             {previewUrl && onClear && (
-              <button type="button" style={{ ...ghostButton, padding: '5px 10px', minHeight: 0, fontSize: 12 }} onClick={onClear}>Remove</button>
+              <button type="button" style={{ ...ghostButton, padding: '4px 12px', minHeight: 0, fontSize: 12 }} onClick={onClear}>Remove</button>
             )}
           </div>
-          {error && <div style={{ fontSize: 11.5, color: 'var(--danger)', marginTop: 6 }}>{error}</div>}
+          {error && <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{error}</div>}
         </div>
       </div>
     </div>
@@ -113,7 +113,7 @@ function BrandForm({ brand, isFirst, userId, onClose, onSaved, showToast }) {
 
   return (
     <ModalShell onClose={onClose} title={brand ? `Edit ${brand.name}` : 'New brand'} maxWidth={560}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div>
           <label style={labelStyle} htmlFor="brand-name">Name</label>
           <input
@@ -168,10 +168,10 @@ export function BrandsTab({ brands, projects, userId, showToast, onChanged, onPr
     }
   }
 
-  function remove(b) {
+  async function remove(b) {
     const n = usage(b.id);
     const moved = n ? ` ${n} project${n === 1 ? '' : 's'} will switch to the default brand.` : '';
-    if (!window.confirm(`Delete ${b.name}?${moved}`)) return;
+    if (!await confirmAction(`Delete ${b.name}?${moved}`)) return;
     act(b.id, async () => {
       await api.deleteBrand(b.id);
       onProjectsChanged(); // brand_id on its projects was cleared
@@ -179,28 +179,28 @@ export function BrandsTab({ brands, projects, userId, showToast, onChanged, onPr
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="stat-row">
         <StatSmall label="Brands" value={brands.length} />
         <StatSmall label="Projects with their own brand" value={projects.length - usingDefault} />
         <StatSmall label="Projects on the default brand" value={usingDefault} />
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
           Choose a project’s brand under Manage Projects. The default also appears on the sidebar and sign-in page.
         </span>
-        <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => setForm('new')}>
+        <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={() => setForm('new')}>
           <IconPlus size={14} /> New brand
         </button>
       </div>
 
       {brands.length === 0 ? (
-        <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+        <div style={{ ...card, padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>
           No brands yet — create your first one.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
           {brands.map((b) => {
             const n = usage(b.id) + (b.isDefault ? usingDefault : 0);
             const busy = busyId === b.id;
@@ -219,11 +219,11 @@ export function BrandsTab({ brands, projects, userId, showToast, onChanged, onPr
                     Shown on {n} project{n === 1 ? '' : 's'}
                   </div>
                   <div style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--color-border-primary)', paddingTop: 12 }}>
-                    <button style={{ ...ghostButton, flex: 1, padding: '6px 10px', minHeight: 0, fontSize: 12 }} onClick={() => setForm(b)} disabled={busy}>Edit</button>
+                    <button style={{ ...ghostButton, flex: 1, padding: '8px 12px', minHeight: 0, fontSize: 12 }} onClick={() => setForm(b)} disabled={busy}>Edit</button>
                     {!b.isDefault && (
                       <>
-                        <button style={{ ...ghostButton, flex: 1.4, padding: '6px 10px', minHeight: 0, fontSize: 12 }} onClick={() => act(b.id, () => api.setDefaultBrand(b.id), `${b.name} is now the default`)} disabled={busy}>Make default</button>
-                        <button style={{ ...ghostButton, flex: 1, padding: '6px 10px', minHeight: 0, fontSize: 12, color: 'var(--danger)' }} onClick={() => remove(b)} disabled={busy}>Delete</button>
+                        <button style={{ ...ghostButton, flex: 1.4, padding: '8px 12px', minHeight: 0, fontSize: 12 }} onClick={() => act(b.id, () => api.setDefaultBrand(b.id), `${b.name} is now the default`)} disabled={busy}>Make default</button>
+                        <button style={{ ...ghostButton, flex: 1, padding: '8px 12px', minHeight: 0, fontSize: 12, color: 'var(--danger)' }} onClick={() => remove(b)} disabled={busy}>Delete</button>
                       </>
                     )}
                   </div>

@@ -5,8 +5,8 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import * as api from '@/api.js';
 export { DashboardHome } from './home/index.jsx';
 import { card, inputStyle, ghostButton, primaryButton, StatusBadge, TypeBadge, Avatar, CountBadge } from '@/ui.jsx';
-import { Chevron, StatBig } from '@shared/dashboard-kit.jsx';
-import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, PageHeader, Pager, useDebounced } from '@shared/ui-kit.jsx';
+import { Chevron, StatBig, SkeletonList } from '@shared/dashboard-kit.jsx';
+import { sideHead, StatusAge, EnvBadge, statusSince, relativeTime, PageHeader, Pager, useDebounced, filterInput, filterSelect, pressable } from '@shared/ui-kit.jsx';
 import {
   STATUSES,
   STATUS_ORDER,
@@ -38,7 +38,7 @@ function StatChip({ label, value, color, active, onClick }) {
     <button
       onClick={onClick}
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 12,
+        display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 12,
         cursor: 'pointer', fontFamily: 'inherit', boxShadow: 'var(--shadow-sm)',
         background: active ? 'var(--brand)' : 'var(--color-background-primary)',
         color: active ? '#fff' : 'var(--color-text-primary)',
@@ -46,8 +46,8 @@ function StatChip({ label, value, color, active, onClick }) {
       }}
     >
       <span style={{ width: 8, height: 8, borderRadius: 999, background: active ? '#fff' : color, flexShrink: 0 }} />
-      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</span>
-      <span className="tnum" style={{ fontSize: 12.5, fontWeight: 700, color: active ? '#fff' : 'var(--color-text-secondary)' }}>{value}</span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+      <span className="tnum" style={{ fontSize: 13, fontWeight: 700, color: active ? '#fff' : 'var(--color-text-secondary)' }}>{value}</span>
     </button>
   );
 }
@@ -129,14 +129,14 @@ export function ReleasesPage({
           {openBugTotal > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{openBugTotal}</strong> open bug{openBugTotal === 1 ? '' : 's'}</>}
         </>}
         actions={canSubmit && (
-          <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={onSubmit}>
+          <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={onSubmit}>
             <IconUpload size={15} /> Submit release
           </button>
         )}
       />
 
       {/* status summary chips (click to filter by status) */}
-      <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         {chips.map(([key, label, color]) => (
           <StatChip
             key={key}
@@ -149,8 +149,21 @@ export function ReleasesPage({
         ))}
       </div>
 
-      {/* toolbar: dropdown filters + text search */}
-      <div style={{ ...card, padding: 12, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* toolbar (the shared .filter-bar): search, dropdown filters, count */}
+      <div className="filter-bar">
+        <div className="filter-search" style={{ position: 'relative' }}>
+          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none', display: 'inline-flex' }}>
+            <IconSearch size={15} />
+          </span>
+          <input
+            type="search"
+            value={q}
+            placeholder="Search version, project, notes…"
+            aria-label="Search releases"
+            onChange={(e) => setQ(e.target.value)}
+            style={{ ...filterInput, paddingLeft: 34 }}
+          />
+        </div>
         <FilterBar
           projects={projects}
           projectFilter={projectFilter}
@@ -163,43 +176,30 @@ export function ReleasesPage({
           onStatus={onStatus}
           count={loadingFirst ? null : total}
         />
-        <span style={{ flex: 1 }} />
-        <div style={{ position: 'relative', flex: '0 1 260px' }}>
-          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>
-            <IconSearch size={15} />
-          </span>
-          <input
-            value={q}
-            placeholder="Search version, project, notes…"
-            aria-label="Search releases"
-            onChange={(e) => setQ(e.target.value)}
-            style={{ ...inputStyle, paddingLeft: 34, height: 38, width: '100%' }}
-          />
-        </div>
       </div>
 
       {/* list */}
       {listQ.isError ? (
-        <div style={{ ...card, padding: 40, textAlign: 'center' }}>
+        <div style={{ ...card, padding: 48, textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Couldn’t load releases</div>
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>{listQ.error?.message}</div>
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>{listQ.error?.message}</div>
           <button style={ghostButton} onClick={() => listQ.refetch()}>Try again</button>
         </div>
       ) : loadingFirst ? (
-        <div style={{ ...card, padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading releases…</div>
+        <SkeletonList rows={5} height={72} card label="Loading releases" />
       ) : rows.length === 0 ? (
         <div style={{ ...card, padding: 48, textAlign: 'center' }}>
-          <div style={{ display: 'inline-flex', marginBottom: 10, color: 'var(--color-text-tertiary)' }}><IconPackage size={30} /></div>
+          <div style={{ display: 'inline-flex', marginBottom: 12, color: 'var(--color-text-tertiary)' }}><IconPackage size={30} /></div>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
             {scopedCount === 0 ? 'No releases yet' : 'No releases match your filters'}
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
             {scopedCount === 0 ? 'Submit your first build to get started.' : 'Try clearing a filter or the search box.'}
           </div>
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: listQ.isPlaceholderData ? 0.6 : 1, transition: 'opacity .15s' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, opacity: listQ.isPlaceholderData ? 0.6 : 1, transition: 'opacity .15s' }}>
             {rows.map((r) => (
               <ReleaseCard
                 key={r.id}
@@ -232,8 +232,8 @@ export function StatCards({ counts }) {
     tone: STATUS_TONE[key],
   }));
   return (
-    <div style={{ marginBottom: 18 }}>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+    <div style={{ marginBottom: 16 }}>
+      <div className="stat-row big" style={{ marginBottom: 12 }}>
         <StatBig label="Awaiting QA" value={awaiting} accent="var(--warning)" sub="releases in the queue" />
         <StatBig label="In QA" value={inQa} accent="var(--brand)" sub="releases being reviewed" />
         <StatBig label="QA Approved" value={approved} accent="var(--success)" sub="releases shipped clean" />
@@ -261,18 +261,11 @@ export function FilterBar({
   onStatus,
   count,
 }) {
-  const s = { ...inputStyle, width: 'auto', padding: '7px 10px' };
+  const s = filterSelect;
+  // children join the parent .filter-bar row
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 14,
-        flexWrap: 'wrap',
-      }}
-    >
-      <select style={s} value={projectFilter} onChange={(e) => onProject(e.target.value)}>
+    <div style={{ display: 'contents' }}>
+      <select aria-label="Project" style={s} value={projectFilter} onChange={(e) => onProject(e.target.value)}>
         <option value="all">All projects</option>
         {projects.map((p) => (
           <option key={p.id} value={p.id}>
@@ -280,7 +273,7 @@ export function FilterBar({
           </option>
         ))}
       </select>
-      <select style={s} value={platformFilter} onChange={(e) => onPlatform(e.target.value)}>
+      <select aria-label="Platform" style={s} value={platformFilter} onChange={(e) => onPlatform(e.target.value)}>
         <option value="all">All platforms</option>
         {RELEASE_PLATFORMS.map((pl) => (
           <option key={pl} value={pl}>
@@ -288,7 +281,7 @@ export function FilterBar({
           </option>
         ))}
       </select>
-      <select style={s} value={typeFilter} onChange={(e) => onType(e.target.value)}>
+      <select aria-label="Release type" style={s} value={typeFilter} onChange={(e) => onType(e.target.value)}>
         <option value="all">All types</option>
         {RELEASE_TYPE_ORDER.map((t) => (
           <option key={t} value={t}>
@@ -296,7 +289,7 @@ export function FilterBar({
           </option>
         ))}
       </select>
-      <select style={s} value={statusFilter} onChange={(e) => onStatus(e.target.value)}>
+      <select aria-label="Status" style={s} value={statusFilter} onChange={(e) => onStatus(e.target.value)}>
         <option value="all">All statuses</option>
         {STATUS_ORDER.map((st) => (
           <option key={st} value={st}>
@@ -305,7 +298,7 @@ export function FilterBar({
         ))}
       </select>
       {count != null && (
-        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+        <span className="filter-count">
           {count.toLocaleString()} release{count === 1 ? '' : 's'}
         </span>
       )}
@@ -322,12 +315,14 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
   const notesPreview = (release.releaseNotes || '').split('\n')[0].trim();
   return (
     <div
-      onClick={onClick}
+      {...pressable(onClick, `Open build ${formatVersion(release.version)}${project ? ` · ${project.name}` : ''}`)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
       style={{
         ...card,
-        padding: 15,
+        padding: 16,
         cursor: 'pointer',
         borderColor: hover ? 'var(--brand)' : 'var(--color-border-tertiary)',
         transform: hover ? 'translateY(-2px)' : 'none',
@@ -337,7 +332,7 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <TypeBadge type={release.releaseType} />
-        <span className="tnum" style={{ fontSize: 13.5, fontWeight: 600 }}>
+        <span className="tnum" style={{ fontSize: 14, fontWeight: 600 }}>
           {formatVersion(release.version)}
         </span>
         <StatusBadge status={release.status} />
@@ -350,7 +345,7 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
               color: 'var(--color-text-secondary)',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 5,
+              gap: 4,
             }}
           >
             <IconFolder size={13} />
@@ -359,12 +354,12 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
         )}
         <span
           style={{
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             color: 'var(--color-text-secondary)',
             background: 'var(--color-background-secondary)',
             border: '1px solid var(--color-border-tertiary)',
-            padding: '1px 7px',
+            padding: '1px 8px',
             borderRadius: 999,
           }}
         >
@@ -372,14 +367,14 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
         </span>
         <EnvBadge environment={release.environment} />
         {openBugs > 0 && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <CountBadge count={openBugs} />
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--danger)' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--danger)' }}>
               open bug{openBugs === 1 ? '' : 's'}
             </span>
           </span>
         )}
-        <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--color-text-tertiary)' }}>
+        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-tertiary)' }}>
           {assignedName ? `QA: ${assignedName}` : 'Unassigned'}
         </span>
 
@@ -387,46 +382,24 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
           <Avatar name={release.submittedBy} size={28} />
           <div style={{ lineHeight: 1.2, textAlign: 'right' }}>
             <div style={{ fontSize: 12, fontWeight: 600 }}>{release.submittedBy}</div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
               {release.submittedByRole} · {release.date}
             </div>
           </div>
         </div>
       </div>
 
-      {notesPreview && !release.qaNote ? (
-        <div
-          style={{
-            marginTop: 9,
-            fontSize: 12,
-            color: 'var(--color-text-secondary)',
-            lineHeight: 1.45,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            maxWidth: '100%',
-          }}
-        >
-          {notesPreview}
-        </div>
-      ) : null}
-
-      {release.qaNote ? (
-        <div
-          style={{
-            marginTop: 11,
-            padding: '9px 11px',
-            background: 'var(--color-background-secondary)',
-            borderRadius: 9,
-            fontSize: 12,
-            color: 'var(--color-text-secondary)',
-            lineHeight: 1.45,
-          }}
-        >
-          <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>QA note </span>
-          {release.qaNote}
-        </div>
-      ) : null}
+      {/* always exactly one line under the header (QA note, else the release
+          notes, else a placeholder) so every build card is the same height */}
+      <div
+        className="clamp-1"
+        title={release.qaNote || notesPreview || undefined}
+        style={{ marginTop: 8, fontSize: 12, lineHeight: 1.45, color: notesPreview || release.qaNote ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)' }}
+      >
+        {release.qaNote ? (
+          <><span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>QA note: </span>{release.qaNote}</>
+        ) : notesPreview || 'No release notes'}
+      </div>
     </div>
   );
 }
@@ -436,10 +409,10 @@ export function ReleaseCard({ release, project, openBugs, assignedName, onClick 
 /* ================================================================== */
 
 const PLAT_COLORS = {
-  Android: '#10b981',
-  iOS: '#3b82f6',
-  Web: '#f59e0b',
-  Both: '#0c5cab',
+  Android: 'var(--c-green)',
+  iOS: 'var(--c-blue)',
+  Web: 'var(--c-amber)',
+  Both: 'var(--c-blue)',
 };
 
 function NavRow({ label, count, active, onClick }) {
@@ -450,7 +423,7 @@ function NavRow({ label, count, active, onClick }) {
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '8px 10px',
+        padding: '8px 12px',
         borderRadius: 9,
         cursor: 'pointer',
         background: active ? 'var(--brand-soft)' : 'transparent',
@@ -473,7 +446,7 @@ function NavRow({ label, count, active, onClick }) {
       </span>
       <span
         style={{
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           color: active ? 'var(--brand)' : 'var(--color-text-tertiary)',
           fontFamily: 'var(--font-mono)',
@@ -510,10 +483,10 @@ export function Sidebar({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '6px 0',
+        padding: '8px 0',
       }}
     >
-      <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{label}</span>
+      <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{label}</span>
       <span
         style={{
           fontFamily: 'var(--font-display)',
@@ -528,25 +501,25 @@ export function Sidebar({
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ ...card, padding: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ ...card, padding: 16 }}>
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            marginBottom: 10,
+            marginBottom: 12,
           }}
         >
           <span style={{ ...sideHead, marginBottom: 0 }}>Projects</span>
           {teamName && (
             <span
               style={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 700,
                 color: 'var(--brand)',
                 background: 'var(--brand-soft)',
-                padding: '2px 7px',
+                padding: '2px 8px',
                 borderRadius: 999,
               }}
             >
@@ -555,7 +528,7 @@ export function Sidebar({
           )}
         </div>
         <input
-          style={{ ...inputStyle, padding: '7px 10px', marginBottom: 8 }}
+          style={{ ...inputStyle, padding: '8px 12px', marginBottom: 8 }}
           value={q}
           placeholder="Search projects…"
           onChange={(e) => setQ(e.target.value)}
@@ -596,20 +569,20 @@ export function Sidebar({
             );
           })}
           {shown.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '6px 10px' }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 12px' }}>
               {projects.length === 0 ? 'No projects yet.' : 'No matches.'}
             </div>
           )}
         </div>
       </div>
 
-      <div style={{ ...card, padding: 14 }}>
+      <div style={{ ...card, padding: 16 }}>
         <div style={sideHead}>At a glance</div>
         {stat('Releases', releases.length)}
         {stat('Projects', projects.length)}
-        {stat('Open bugs', openBugTotal, openBugTotal ? '#dc2626' : undefined)}
-        {stat('Needs clarification', disputedTotal, disputedTotal ? '#7c3aed' : undefined)}
-        {stat('Needs attention', atRisk, atRisk ? '#dc2626' : undefined)}
+        {stat('Open bugs', openBugTotal, openBugTotal ? 'var(--c-red)' : undefined)}
+        {stat('Needs clarification', disputedTotal, disputedTotal ? 'var(--c-violet)' : undefined)}
+        {stat('Needs attention', atRisk, atRisk ? 'var(--c-red)' : undefined)}
       </div>
     </div>
   );
@@ -665,9 +638,9 @@ export function RightPanel({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* quick actions */}
-      <div style={{ ...card, padding: 14 }}>
+      <div style={{ ...card, padding: 16 }}>
         <div style={sideHead}>Quick actions</div>
         {canSubmit && (
           <button
@@ -677,7 +650,7 @@ export function RightPanel({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 6,
+              gap: 8,
             }}
             onClick={onSubmit}
           >
@@ -698,12 +671,12 @@ export function RightPanel({
       </div>
 
       {/* platform mix */}
-      <div style={{ ...card, padding: 14 }}>
+      <div style={{ ...card, padding: 16 }}>
         <div style={sideHead}>Platform mix</div>
         {platRows.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No releases yet.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {platRows.map(([k, v]) => (
               <div key={k}>
                 <div
@@ -743,7 +716,7 @@ export function RightPanel({
       </div>
 
       {/* recent activity */}
-      <div style={{ ...card, padding: 14 }}>
+      <div style={{ ...card, padding: 16 }}>
         <div style={sideHead}>Recent activity</div>
         {recent.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Nothing yet.</div>
@@ -753,7 +726,7 @@ export function RightPanel({
               <div
                 key={a.id}
                 onClick={() => a.releaseId && onOpenRelease(a.releaseId)}
-                style={{ display: 'flex', gap: 9, cursor: a.releaseId ? 'pointer' : 'default' }}
+                style={{ display: 'flex', gap: 8, cursor: a.releaseId ? 'pointer' : 'default' }}
               >
                 <span
                   style={{
@@ -773,7 +746,7 @@ export function RightPanel({
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, lineHeight: 1.4 }}>{a.text}</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
                     {relativeTime(a.t)}
                   </div>
                 </div>

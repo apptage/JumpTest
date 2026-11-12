@@ -18,7 +18,7 @@ import {
   passRate30, turnaround30, projectHealth, peopleWorkload, bugOwnerId, releaseLabel, ageDays, ageText,
   attentionForAdmin, attentionForLead, attentionForDeveloper, attentionForQa, STATUS_LABEL,
 } from './metrics.js';
-import { Kpi, KpiRow, AttentionList, WhereWorkWaits, WeeklyBars, ProjectHealth, PeopleWorkload, ItemList } from './widgets.jsx';
+import { Kpi, KpiRow, AttentionList, WhereWorkWaits, WeeklyBars, ProjectHealth, PeopleWorkload, ItemList, HomeLoading } from './widgets.jsx';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const RELEASE_TONE = { qa_pending: 'warning', qa_in_progress: 'info', qa_done: 'info', approved: 'success', sent_back: 'danger', closed: 'neutral' };
@@ -28,8 +28,9 @@ const ROLE_LABEL = { Admin: 'Admin', Manager: 'Manager', 'Team Lead': 'Team Lead
 function passCaption(p) {
   if (p.pct == null) return 'No builds decided in the last 30 days';
   const vs = p.change == null ? '' : ` · ${p.change >= 0 ? '▲' : '▼'} ${Math.abs(p.change)} pts vs previous 30 days`;
-  return `Builds approved first time, last 30 days. Target 75%${vs}`;
+  return `Target 75%${vs}`;
 }
+const PASS_TIP = 'Builds approved first time (without being sent back), last 30 days. Target 75%.';
 const passTone = (p) => (p.pct == null ? 'neutral' : p.pct >= 75 ? 'success' : p.pct >= 55 ? 'warning' : 'danger');
 
 /* ---------- list item builders ---------- */
@@ -117,7 +118,7 @@ function AdminView({ header, ctx, me, teams, go, onOpenRelease, onOpenProject, o
           <Kpi label="Projects at risk" value={`${atRisk} of ${ctx.projects.length}`} caption={atRisk ? 'Have critical or major bugs open' : 'No project has blocking bugs'} tone={atRisk ? 'danger' : 'success'} onClick={() => onNavigate('projecthub')} />
           <Kpi label="Builds in QA" value={waiting} caption={overdueQa ? `${overdueQa} waiting longer than they should` : 'All within the QA time limit'} tone={overdueQa ? 'warning' : 'success'} onClick={() => onNavigate('releases')} />
           <Kpi label="Open bugs" value={ctx.activeBugs.length} caption={blocking ? `${blocking} blocking (critical or major)` : 'None blocking'} tone={blocking ? 'danger' : 'success'} onClick={() => onNavigate('bugs')} />
-          <Kpi label="First-time pass rate" value={pass.pct == null ? '–' : `${pass.pct}%`} caption={passCaption(pass)} tone={passTone(pass)} onClick={() => onNavigate('analytics')} />
+          <Kpi label="First-time pass rate" value={pass.pct == null ? '–' : `${pass.pct}%`} caption={passCaption(pass)} title={PASS_TIP} tone={passTone(pass)} onClick={() => onNavigate('analytics')} />
           <Kpi label="QA turnaround" value={turn == null ? '–' : `${turn} days`} caption="Average from submit to QA decision, last 30 days" tone={turn == null ? 'neutral' : turn <= 3 ? 'success' : turn <= 5 ? 'warning' : 'danger'} />
         </KpiRow>
         <div className="home-2col">
@@ -161,7 +162,7 @@ function LeadView({ header, ctx, me, go, onOpenRelease, onOpenProject, onNavigat
           <Kpi label="Team builds in QA" value={waiting} caption={overdueQa ? `${overdueQa} past the QA time limit` : 'All within the QA time limit'} tone={overdueQa ? 'warning' : 'success'} onClick={() => onNavigate('releases')} />
           <Kpi label="Open bugs" value={ctx.activeBugs.length} caption={blocking ? `${blocking} blocking approval` : 'None blocking'} tone={blocking ? 'danger' : 'success'} onClick={() => onNavigate('bugs')} />
           <Kpi label="Overdue tasks" value={overdueTasks} caption={overdueTasks ? 'Past their estimated date' : 'Everything on schedule'} tone={overdueTasks ? 'warning' : 'success'} onClick={() => onNavigate('wbs')} />
-          <Kpi label="First-time pass rate" value={pass.pct == null ? '–' : `${pass.pct}%`} caption={passCaption(pass)} tone={passTone(pass)} onClick={() => onNavigate('analytics')} />
+          <Kpi label="First-time pass rate" value={pass.pct == null ? '–' : `${pass.pct}%`} caption={passCaption(pass)} title={PASS_TIP} tone={passTone(pass)} onClick={() => onNavigate('analytics')} />
         </KpiRow>
         <div className="home-2col">
           <AttentionList items={attention} onAction={go} />
@@ -283,7 +284,9 @@ export function DashboardHome({
   const View = role === 'Admin' || role === 'Project Manager' ? AdminView : role === 'Team Lead' ? LeadView : role === 'QA' ? QaView : DeveloperView;
   return (
     <div className="anim-in home" style={{ maxWidth: 1460, margin: '0 auto' }}>
-      <View {...props} header={header} />
+      <HomeLoading.Provider value={!!data.loading}>
+        <View {...props} header={header} />
+      </HomeLoading.Provider>
     </div>
   );
 }
@@ -298,27 +301,28 @@ function HomeHeader({ user, teamName, canSubmit, onSubmit, onNavigate, attention
       ? `${plural(urgent, 'urgent item')}${total - urgent ? ` and ${plural(total - urgent, 'other item')}` : ''} ${total === 1 ? 'needs' : 'need'} your attention.`
       : `${plural(total, 'item')} ${total === 1 ? 'needs' : 'need'} your attention. Nothing urgent.`;
   return (
-      <header className="glass" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <header className="glass" style={{ padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <Avatar name={user?.name} size={44} />
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
               {greeting()}, {firstName}
             </h1>
-            <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)', padding: '2px 9px', borderRadius: 999 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)', padding: '2px 8px', borderRadius: 999 }}>
               {ROLE_LABEL[user?.role] || user?.role}{teamName ? ` · ${teamName}` : ''}
             </span>
           </div>
           <p style={{ fontSize: 13, margin: '4px 0 0', color: urgent ? 'var(--danger)' : 'var(--color-text-secondary)', fontWeight: urgent ? 600 : 400 }}>
-            {summary}{loading ? <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}> Loading…</span> : null}
+            {/* no "nothing needs your attention" until the numbers are in */}
+            {loading ? <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}>Checking what needs your attention…</span> : summary}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button style={{ ...ghostButton, display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={() => onNavigate('releases')}>
+          <button style={{ ...ghostButton, display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={() => onNavigate('releases')}>
             <IconPackage size={15} /> All releases
           </button>
           {canSubmit && (
-            <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 7 }} onClick={onSubmit}>
+            <button style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={onSubmit}>
               <IconUpload size={15} /> Submit release
             </button>
           )}

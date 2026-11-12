@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react';
 import * as api from '@/api.js';
 import { card, inputStyle, ghostButton, Wordmark, CenteredMessage } from '@/ui.jsx';
-import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER, WBS_TRACK_ORDER, wbsTrackLabel } from '@/constants.js';
+import { formatVersion, WBS_STATUSES, WBS_STATUS_ORDER, WBS_TRACK_ORDER, wbsTrackLabel, tint } from '@/constants.js';
 import { capPct, computeWorkCompletion } from '@shared/wbsMetrics.js';
 import { sideHead } from '@shared/ui-kit.jsx';
 import { WbsBadge, TrackBreakdown, ProjectProgress, latestEst } from '@features/wbs';
 import { BrandLogo, MiaroLogo } from '@/brand.jsx';
+import { Skeleton, SkeletonList } from '@shared/dashboard-kit.jsx';
 
 // relative "updated Xm ago" — coarse, no external dep
 function relTime(iso) {
@@ -26,12 +27,12 @@ function relTime(iso) {
 // Client-facing labels — accurate about the QA stage. Notably "Approved" means
 // it PASSED QA (not that it's been delivered), so it isn't labelled "Completed".
 const CLIENT_STATUS = {
-  qa_pending: { label: 'Awaiting QA', color: '#d97706' },
-  qa_in_progress: { label: 'In testing', color: '#6366F1' },
-  qa_done: { label: 'In review', color: '#7c3aed' },
-  approved: { label: 'QA approved', color: '#16a34a' },
-  sent_back: { label: 'Resolving issues', color: '#dc2626' },
-  closed: { label: 'Superseded', color: '#64748b' },
+  qa_pending: { label: 'Awaiting QA', color: 'var(--tone-warning-fg)' },
+  qa_in_progress: { label: 'In testing', color: 'var(--c-indigo)' },
+  qa_done: { label: 'In review', color: 'var(--c-violet)' },
+  approved: { label: 'QA approved', color: 'var(--tone-success-fg)' },
+  sent_back: { label: 'Resolving issues', color: 'var(--c-red)' },
+  closed: { label: 'Superseded', color: 'var(--c-slate)' },
 };
 
 function publicWbsPct(items) {
@@ -75,12 +76,12 @@ function WbsReadGuide() {
     </div>
   );
   return (
-    <div style={{ ...card, padding: 20 }}>
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>How to read this page</div>
+    <div style={{ ...card, padding: 24 }}>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>How to read this page</div>
         <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>What each number, status and date on this work breakdown means.</div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '10px 20px', fontSize: 12.5, lineHeight: 1.5 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '10px 20px', fontSize: 13, lineHeight: 1.5 }}>
         {WBS_STATUS_ORDER.map((k) => row(k, WBS_STATUS_HELP[k], <WbsBadge status={k} />))}
         {WBS_READ_HELP.map(([term, text]) => row(term, text))}
       </div>
@@ -113,8 +114,8 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
     { key: 'total', label: 'Total items', value: allWork.length },
     { key: 'not_started', label: 'Not started', value: byStatus('not_started') },
     { key: 'in_progress', label: 'In progress', value: byStatus('in_progress'), color: 'var(--brand)' },
-    { key: 'in_qa', label: 'In QA', value: byStatus('in_qa'), color: 'var(--warning)' },
-    { key: 'completed', label: 'Completed', value: byStatus('completed'), color: 'var(--success)' },
+    { key: 'in_qa', label: 'In QA', value: byStatus('in_qa'), color: 'var(--tone-warning-fg)' },
+    { key: 'completed', label: 'Completed', value: byStatus('completed'), color: 'var(--tone-success-fg)' },
     ...(byStatus('blocked') ? [{ key: 'blocked', label: 'Blocked', value: byStatus('blocked'), color: 'var(--danger)' }] : []),
   ];
 
@@ -138,15 +139,15 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '9px 0',
+        gap: 12,
+        padding: '8px 0',
         borderBottom: i === arr.length - 1 ? 'none' : '1px solid var(--color-border-primary)',
         flexWrap: 'wrap',
       }}
     >
       <span style={{ fontSize: 13, flex: 1, minWidth: 140 }}>{t.name}</span>
       <WbsBadge status={t.status} />
-      {t.est && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t.est}</span>}
+      {t.est && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{t.est}</span>}
     </div>
   );
 
@@ -156,8 +157,8 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
       <div className="portal-stats">
         {stats.map((s) => (
           <div key={s.key} style={{ ...card, padding: 16 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: s.color || 'var(--color-text-primary)' }}>{s.value}</div>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{s.label}</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: s.color || 'var(--color-text-primary)' }}>{s.value}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -168,7 +169,7 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
           overall={{ pct, done: itemCompletion.done + resolvedBugs, total: itemCompletion.total + bugTotal }}
         />
         {ongoingSupport && (
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 10 }}>Ongoing support is active: new requests are added here as they come in.</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 12 }}>Ongoing support is active: new requests are added here as they come in.</div>
         )}
         <TrackBreakdown byTrack={itemCompletion.byTrack} />
       </div>
@@ -223,8 +224,8 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
               {showName ? <div style={{ ...sideHead }}>{pk}</div> : <span />}
               {showDates && (
                 <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                  {comp && <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{comp}</strong></span>}
-                  {dep && <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{dep}</strong></span>}
+                  {comp && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{comp}</strong></span>}
+                  {dep && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{dep}</strong></span>}
                 </div>
               )}
             </div>
@@ -236,16 +237,16 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    padding: '11px 0 6px',
+                    padding: '12px 0 8px',
                     borderBottom: '1px solid var(--color-border-primary)',
                   }}
                 >
-                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{sk}</span>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{sk}</span>
                   <span style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
                     {latestEst(ts) && (
-                      <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Target {latestEst(ts)}</span>
+                      <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Target {latestEst(ts)}</span>
                     )}
-                    <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{publicWbsPct(ts)}%</span>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{publicWbsPct(ts)}%</span>
                   </span>
                 </div>
                 {ts.map(taskRow)}
@@ -267,11 +268,11 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
                   display: 'flex',
                   justifyContent: 'space-between',
                   gap: 12,
-                  padding: '10px 0',
+                  padding: '12px 0',
                 }}
               >
                 <span style={{ fontSize: 13, fontWeight: 500 }}>{m.name}</span>
-                {m.est && <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{m.est}</span>}
+                {m.est && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{m.est}</span>}
               </div>
             ))}
           </div>
@@ -284,17 +285,17 @@ function ClientWbsView({ wbs, platformTargets = [], bugCounts, showBugCounts, on
 // Client-safe severity + status labels for the public bug report. No internal
 // wording, no reporter identities — just what a client/PM needs to read the QA log.
 const BUG_SEV = {
-  critical: { label: 'Critical', color: '#dc2626' },
-  major: { label: 'Major', color: '#d97706' },
-  minor: { label: 'Minor', color: '#64748b' },
+  critical: { label: 'Critical', color: 'var(--c-red)' },
+  major: { label: 'Major', color: 'var(--tone-warning-fg)' },
+  minor: { label: 'Minor', color: 'var(--c-slate)' },
 };
 const BUG_STATE = {
-  open: { label: 'Open', color: '#dc2626' },
-  in_progress: { label: 'In progress', color: '#d97706' },
-  fixed: { label: 'Fixed — awaiting QA', color: '#6366F1' },
-  disputed: { label: 'Needs clarification', color: '#7c3aed' },
-  pending_tl: { label: 'Pending review', color: '#6366F1' },
-  verified: { label: 'Resolved', color: '#16a34a' },
+  open: { label: 'Open', color: 'var(--c-red)' },
+  in_progress: { label: 'In progress', color: 'var(--tone-warning-fg)' },
+  fixed: { label: 'Fixed — awaiting QA', color: 'var(--c-indigo)' },
+  disputed: { label: 'Needs clarification', color: 'var(--c-violet)' },
+  pending_tl: { label: 'Pending review', color: 'var(--c-indigo)' },
+  verified: { label: 'Resolved', color: 'var(--tone-success-fg)' },
 };
 // format an ISO timestamp → short date (reported/resolved dates)
 function fmtTs(iso) {
@@ -321,12 +322,12 @@ function ClientBugReport({ report }) {
   const critical = allBugs.filter((b) => b.severity === 'critical').length;
 
   const pill = (label, color) => (
-    <span style={{ fontSize: 10.5, fontWeight: 700, color, background: `${color}1a`, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>{label}</span>
+    <span style={{ fontSize: 12, fontWeight: 700, color, background: tint(color, 10), padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>{label}</span>
   );
   const stat = (label, value, color) => (
     <div style={{ ...card, padding: 16 }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
-      <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
     </div>
   );
 
@@ -334,7 +335,7 @@ function ClientBugReport({ report }) {
     <section className="portal-stack">
       <div>
         <div style={{ ...sideHead, marginBottom: 4 }}>QA bug report</div>
-        <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: 0 }}>
+        <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', margin: 0 }}>
           Every issue found by QA across all builds of this project.
         </p>
       </div>
@@ -357,49 +358,49 @@ function ClientBugReport({ report }) {
           ].filter(Boolean);
           return (
             <div key={bi} style={{ ...card, padding: '4px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '11px 0 6px', borderBottom: '1px solid var(--color-border-primary)', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '12px 0 8px', borderBottom: '1px solid var(--color-border-primary)', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>
                   {formatVersion(b.version)}{' '}
-                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+                  <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
                     {b.platform}{b.component ? ` · ${b.component}` : ''}{b.environment ? ` · ${b.environment}` : ''}
                   </span>
                 </span>
-                <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
                   {bugs.length} bug{bugs.length === 1 ? '' : 's'}{parts.length ? ` · ${parts.join(' · ')}` : ''}
                 </span>
               </div>
               {bugs.map((bug, i) => {
-                const sev = BUG_SEV[bug.severity] || { label: bug.severity, color: '#64748b' };
-                const st = BUG_STATE[bug.status] || { label: bug.status, color: '#64748b' };
+                const sev = BUG_SEV[bug.severity] || { label: bug.severity, color: 'var(--c-slate)' };
+                const st = BUG_STATE[bug.status] || { label: bug.status, color: 'var(--c-slate)' };
                 return (
                   <div key={i} style={{ padding: '12px 0', borderBottom: i === bugs.length - 1 ? 'none' : '1px solid var(--color-border-primary)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 160 }}>
                         {bug.title}
-                        {bug.carriedForward && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>· carried forward</span>}
+                        {bug.carriedForward && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>· carried forward</span>}
                       </span>
                       {pill(sev.label, sev.color)}
                       {pill(st.label, st.color)}
-                      <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', minWidth: 92, textAlign: 'right' }}>
+                      <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', minWidth: 92, textAlign: 'right' }}>
                         {bug.status === 'verified' && bug.resolvedAt
                           ? `Resolved ${fmtTs(bug.resolvedAt)}`
                           : `Reported ${fmtTs(bug.reportedAt)}`}
                       </span>
                     </div>
                     {bug.description && (
-                      <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 8, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                         {bug.description}
                       </div>
                     )}
                     {(bug.feature || (bug.reportedAt && bug.status === 'verified' && bug.resolvedAt)) && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 7 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
                         {bug.feature && (
-                          <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-tertiary)', background: 'var(--color-background-secondary)', padding: '2px 8px', borderRadius: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-tertiary)', background: 'var(--color-background-secondary)', padding: '2px 8px', borderRadius: 6 }}>
                             {bug.feature}
                           </span>
                         )}
                         {bug.status === 'verified' && bug.resolvedAt && (
-                          <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>Reported {fmtTs(bug.reportedAt)}</span>
+                          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Reported {fmtTs(bug.reportedAt)}</span>
                         )}
                       </div>
                     )}
@@ -466,11 +467,17 @@ export function ClientDashboard({ token }) {
     };
   }, [token]);
 
-  if (data === undefined && !error) return <CenteredMessage>Loading project status…</CenteredMessage>;
+  if (data === undefined && !error) return (
+    <div className="portal-wrap portal-body" role="status" aria-label="Loading project status">
+      <Skeleton width="40%" height={28} />
+      <div className="portal-stats">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} height={88} radius={14} />)}</div>
+      <SkeletonList rows={4} height={64} card />
+    </div>
+  );
   if (error || data === null)
     return (
       <CenteredMessage>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>Link not found</div>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Link not found</div>
         <div>This client link is invalid or has been revoked.</div>
       </CenteredMessage>
     );
@@ -484,7 +491,7 @@ export function ClientDashboard({ token }) {
   const inProgress = releases.filter((r) => r.status !== 'approved');
   const pct = total ? Math.round((completed.length / total) * 100) : 0;
   const current = inProgress[0]; // most recent non-complete
-  const cs = (s) => CLIENT_STATUS[s] || { label: s, color: '#64748b' };
+  const cs = (s) => CLIENT_STATUS[s] || { label: s, color: 'var(--c-slate)' };
 
   // QA report tab is only offered when the link opted in (RPC returned builds).
   const reportBuilds = (bugReport?.builds || []).filter((b) => (b.bugs || []).length > 0);
@@ -504,7 +511,7 @@ export function ClientDashboard({ token }) {
 
   const statCard = (label, value, color) => (
     <div style={{ ...card, padding: 16, flex: '1 1 150px' }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>
         {value}
       </div>
       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
@@ -518,27 +525,27 @@ export function ClientDashboard({ token }) {
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '11px 0',
+        padding: '12px 0',
       }}
     >
       <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>
           {formatVersion(r.version)}{' '}
-          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+          <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
             {r.platform}
             {r.component ? ` · ${r.component}` : ''} · {r.environment}
           </span>
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
       </div>
       <span
         style={{
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           color: cs(r.status).color,
-          background: `${cs(r.status).color}1a`,
-          padding: '3px 10px',
+          background: tint(cs(r.status).color, 10),
+          padding: '4px 12px',
           borderRadius: 999,
         }}
       >
@@ -553,14 +560,14 @@ export function ClientDashboard({ token }) {
         style={{
           background: 'var(--ink)',
           borderBottom: '1px solid var(--ink-border)',
-          padding: '14px 0',
+          padding: '16px 0',
         }}
       >
-        <div className="portal-wrap" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="portal-wrap" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {/* the project's brand runs this portal; Miaro Verify is the platform underneath */}
           {brand ? <BrandLogo brand={brand} size={26} /> : <Wordmark size={26} />}
           <span style={{ width: 1, height: 20, background: 'var(--color-border-primary)', margin: '0 4px' }} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>Client portal</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>Client portal</span>
           <span className="portal-header-note" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>Live project tracking</span>
         </div>
       </header>
@@ -568,7 +575,7 @@ export function ClientDashboard({ token }) {
       <div className="portal-wrap portal-body">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{data.project.name}</h1>
+            <h1 style={{ fontSize: 25, fontWeight: 700, margin: 0 }}>{data.project.name}</h1>
             <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', margin: '4px 0 0' }}>
               {showWbs ? 'Live work breakdown · read-only' : 'Project status overview'}
             </p>
@@ -578,8 +585,8 @@ export function ClientDashboard({ token }) {
             title="This page auto-refreshes"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600,
-              color: 'var(--success)', background: '#16a34a1a', border: '1px solid #16a34a33',
-              padding: '6px 12px', borderRadius: 999,
+              color: 'var(--tone-success-fg)', background: tint('var(--c-green)', 10), border: '1px solid color-mix(in srgb, var(--c-green) 20%, transparent)',
+              padding: '8px 12px', borderRadius: 999,
             }}
           >
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--success)' }} />
@@ -601,7 +608,7 @@ export function ClientDashboard({ token }) {
                 key={k}
                 onClick={() => setTab(k)}
                 style={{
-                  padding: '10px 16px', fontSize: 13.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  padding: '12px 16px', fontSize: 14, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
                   background: 'none', border: 'none', borderBottom: `2px solid ${effectiveTab === k ? 'var(--brand)' : 'transparent'}`,
                   color: effectiveTab === k ? 'var(--brand)' : 'var(--color-text-secondary)', marginBottom: -1,
                 }}
@@ -637,7 +644,7 @@ export function ClientDashboard({ token }) {
                     <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--brand)' }} />
                   </div>
                   {current && (
-                    <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 12 }}>
+                    <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 12 }}>
                       Current: <strong>v{current.version}</strong> — {cs(current.status).label}
                     </div>
                   )}
@@ -681,11 +688,11 @@ export function ClientDashboard({ token }) {
         {effectiveTab === 'releases' && (
           <section>
             <div style={{ ...sideHead, marginBottom: 4 }}>All releases</div>
-            <p style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', margin: '0 0 16px' }}>
+            <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', margin: '0 0 16px' }}>
               Every build submitted for this project — including superseded iterations.
             </p>
             {allReleases.length === 0 ? (
-              <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No releases yet.</div>
+              <div style={{ ...card, padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No releases yet.</div>
             ) : (
               <div className="portal-rows" style={{ ...card, padding: '4px 16px' }}>
                 {allReleases.map((r, i) => (
@@ -693,20 +700,20 @@ export function ClientDashboard({ token }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       <span style={{ width: 8, height: 8, borderRadius: 999, background: cs(r.status).color, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>
                           {formatVersion(r.version)}{' '}
-                          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
+                          <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>
                             {r.platform}{r.component ? ` · ${r.component}` : ''}{r.environment ? ` · ${r.environment}` : ''}
                           </span>
                         </div>
-                        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.date}</div>
                       </div>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: cs(r.status).color, background: `${cs(r.status).color}1a`, padding: '3px 10px', borderRadius: 999 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: cs(r.status).color, background: tint(cs(r.status).color, 10), padding: '4px 12px', borderRadius: 999 }}>
                         {cs(r.status).label}
                       </span>
                     </div>
                     {r.notes && r.notes.trim() && (
-                      <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginTop: 8, paddingLeft: 20 }}>
+                      <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginTop: 8, paddingLeft: 24 }}>
                         {r.notes}
                       </div>
                     )}
@@ -719,7 +726,7 @@ export function ClientDashboard({ token }) {
 
         {effectiveTab === 'qa' && <ClientBugReport report={bugReport} />}
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
           {brand ? `Live project tracking & client status reviews by ${brand.name}` : 'Read-only project status'} · powered by
           <MiaroLogo size={14} color="var(--color-text-secondary)" />
         </div>

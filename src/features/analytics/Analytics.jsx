@@ -12,7 +12,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import * as api from '@/api.js';
 import { card, ghostButton, inputStyle, Avatar, StatusBadge, SeverityBadge, ModalShell } from '@/ui.jsx';
-import { PageHeader, sideHead, avgDaysBetween, statusSince } from '@shared/ui-kit.jsx';
+import { PageHeader, sideHead, avgDaysBetween, statusSince, filterSelect } from '@shared/ui-kit.jsx';
 import {
   StatCard, PassRing, TrendChart, Donut, StackedBar, SegmentedTimeline, StageBars,
   DataTable, SubTabs, Segmented, Pill, AlertCard, Chevron, passTone,
@@ -89,11 +89,11 @@ function monthKeys(n = 6) {
 }
 const ym = (iso) => (iso || '').slice(0, 7);
 
-const fSel = { ...inputStyle, width: 'auto', minHeight: 36, padding: '0 10px', fontSize: 12 };
-const explain = { fontSize: 12.5, color: 'var(--color-text-secondary)', margin: '0 0 14px', lineHeight: 1.55 };
+const fSel = filterSelect;
+const explain = { fontSize: 13, color: 'var(--color-text-secondary)', margin: '0 0 16px', lineHeight: 1.55 };
 const sectionTitle = (t, sub) => (
   <div style={{ marginBottom: 12 }}>
-    <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>{t}</div>
+    <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' }}>{t}</div>
     {sub && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{sub}</div>}
   </div>
 );
@@ -254,25 +254,25 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <Segmented options={[['historical', 'All history'], ['current', 'Active only']]} value={mode} onChange={setMode} />
             {isAdmin && (
-              <select style={fSel} value={f.team} onChange={(e) => set('team', e.target.value)}>
+              <select aria-label="Team" style={fSel} value={f.team} onChange={(e) => set('team', e.target.value)}>
                 <option value="all">All teams</option>{teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             )}
-            <select style={fSel} value={f.project} onChange={(e) => set('project', e.target.value)}>
+            <select aria-label="Project" style={fSel} value={f.project} onChange={(e) => set('project', e.target.value)}>
               <option value="all">All projects</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <select style={fSel} value={f.platform} onChange={(e) => set('platform', e.target.value)}>
+            <select aria-label="Platform" style={fSel} value={f.platform} onChange={(e) => set('platform', e.target.value)}>
               <option value="all">All platforms</option>{RELEASE_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-            <select style={fSel} value={f.environment} onChange={(e) => set('environment', e.target.value)}>
+            <select aria-label="Environment" style={fSel} value={f.environment} onChange={(e) => set('environment', e.target.value)}>
               <option value="all">All environments</option>{ENVIRONMENTS.map((e) => <option key={e} value={e}>{e}</option>)}
             </select>
-            <select style={fSel} value={memberValue} onChange={(e) => onMember(e.target.value)}>
+            <select aria-label="Person" style={fSel} value={memberValue} onChange={(e) => onMember(e.target.value)}>
               <option value="all">Everyone</option>
               <optgroup label="Developers">{devs.map((p) => <option key={p.id} value={`dev:${p.id}`}>{p.name}</option>)}</optgroup>
               <optgroup label="QA">{qas.map((p) => <option key={p.id} value={`qa:${p.id}`}>{p.name}</option>)}</optgroup>
             </select>
-            <input style={{ ...fSel, width: 110 }} value={f.version} placeholder="Version…" onChange={(e) => set('version', e.target.value)} />
+            <input aria-label="Version" style={{ ...fSel, width: 110 }} value={f.version} placeholder="Version…" onChange={(e) => set('version', e.target.value)} />
             {mode !== 'current' || period === 'custom' ? (
               <select style={fSel} aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
                 {PERIODS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
@@ -294,9 +294,9 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
       />
 
       {glossary && (
-        <div style={{ ...card, padding: 18, marginBottom: 18 }}>
+        <div style={{ ...card, padding: 16, marginBottom: 16 }}>
           {sectionTitle('How to read this page', 'Every number is defined the same way everywhere in the app.')}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '8px 20px', fontSize: 12.5 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '8px 20px', fontSize: 13 }}>
             {Object.keys(WORDS).map((k) => (
               <div key={k}><strong>{L(k)}</strong> <span style={{ color: 'var(--color-text-secondary)' }}>— {HELP(k)}</span></div>
             ))}
@@ -312,13 +312,13 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
       {/* ======================= OVERVIEW ======================= */}
       {tab === 'overview' && (
         <>
-          <div style={{ ...card, padding: 18, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderLeft: `4px solid var(--${health.tone === 'success' ? 'success' : health.tone === 'warning' ? 'warning' : 'danger'})` }}>
+          <div style={{ ...card, padding: 16, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderLeft: `4px solid var(--${health.tone === 'success' ? 'success' : health.tone === 'warning' ? 'warning' : 'danger'})` }}>
             <Pill label={health.label} tone={health.tone} />
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700 }}>Overall: {health.label.toLowerCase()}</div>
-              <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{health.why}</div>
+              <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{health.why}</div>
             </div>
-            <div style={{ display: 'flex', gap: 18, fontSize: 12, color: 'var(--color-text-secondary)', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--color-text-secondary)', flexWrap: 'wrap' }}>
               <span><b className="tnum" style={{ color: 'var(--text)' }}>{passRate == null ? '—' : `${passRate}%`}</b> approval</span>
               <span><b className="tnum" style={{ color: activeBugs.length ? 'var(--danger)' : 'var(--text)' }}>{activeBugs.length}</b> open problems</span>
               <span><b className="tnum" style={{ color: critical ? 'var(--danger)' : 'var(--text)' }}>{critical}</b> critical</span>
@@ -326,19 +326,19 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
             </div>
           </div>
 
-          <div className="dash-kpis" style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', marginBottom: 16 }}>
-            <StatCard accent="slate" label={L('submitted')} value={num(m.submitted)} foot={HELP('submitted')} />
-            <StatCard accent="teal" label={L('approved')} value={num(m.approved)} foot={HELP('approved')} />
-            <StatCard accent="indigo" label={L('passRate')} value={passRate == null ? '—' : `${passRate}%`} foot={m.decided ? `of ${m.decided} judged builds` : 'no builds judged yet'} />
-            <StatCard accent="rose" label={L('active')} value={num(activeBugs.length)} foot={`${critical} critical · ${wf.awaitingQa} awaiting QA`} />
-            <StatCard accent="amber" label={L('cycle')} value={m.cycleDays ? `${num(m.cycleDays, 1)}d` : '—'} foot={HELP('cycle')} />
-            <StatCard accent="rose" label={L('prod')} value={num(m.prodBugs)} foot={HELP('prod')} />
+          <div className="dash-kpis" style={{ '--cols': 6, marginBottom: 16 }}>
+            <StatCard label={L('submitted')} value={num(m.submitted)} foot={HELP('submitted')} />
+            <StatCard label={L('approved')} value={num(m.approved)} foot={HELP('approved')} />
+            <StatCard label={L('passRate')} value={passRate == null ? '—' : `${passRate}%`} foot={m.decided ? `of ${m.decided} judged builds` : 'no builds judged yet'} />
+            <StatCard tone={critical ? 'danger' : activeBugs.length ? 'warning' : 'neutral'} label={L('active')} value={num(activeBugs.length)} foot={`${critical} critical · ${wf.awaitingQa} awaiting QA`} />
+            <StatCard label={L('cycle')} value={m.cycleDays ? `${num(m.cycleDays, 1)}d` : '—'} foot={HELP('cycle')} />
+            <StatCard tone={m.prodBugs ? 'danger' : 'neutral'} label={L('prod')} value={num(m.prodBugs)} foot={HELP('prod')} />
           </div>
 
-          <div style={{ ...card, padding: 18, marginBottom: 16 }}>
+          <div style={{ ...card, padding: 16, marginBottom: 16 }}>
             {sectionTitle(
               'Story points across all projects',
-              wbsCounts.loading ? 'Loading work breakdowns…' : `${wbs.total} story points across ${wbs.projects} project${wbs.projects === 1 ? '' : 's'} with a work breakdown`
+              wbsCounts.loading ? 'Counting story points across projects' : `${wbs.total} story points across ${wbs.projects} project${wbs.projects === 1 ? '' : 's'} with a work breakdown`
             )}
             {!wbsCounts.loading && wbs.total === 0 ? (
               <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No work breakdown items in this scope yet.</div>
@@ -346,11 +346,11 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
               <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
                 {[['completed', 'Completed'], ['not_started', 'Not started']].map(([k, label]) => (
                   <div key={k} style={{ minWidth: 130 }}>
-                    <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 700, color: WBS_STATUSES[k].color }}>
+                    <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: WBS_STATUSES[k].color }}>
                       {wbsCounts.loading ? '…' : `${wbs.pct(wbs.by[k])}%`}
                     </div>
-                    <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</div>
-                    <div className="tnum" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{label}</div>
+                    <div className="tnum" style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                       {wbsCounts.loading ? '' : `${wbs.by[k]} of ${wbs.total} points`}
                     </div>
                   </div>
@@ -363,16 +363,16 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
           </div>
 
           <div className="dash-mid">
-            <div style={{ ...card, padding: 18 }}>
+            <div style={{ ...card, padding: 16 }}>
               {sectionTitle('Needs a decision', 'The things slowing delivery down right now, in order of urgency.')}
               {attention.length === 0
                 ? <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Nothing is blocked. Everything is moving.</div>
                 : <div style={{ display: 'grid', gap: 8 }}>{attention.map((a, i) => <AlertCard key={i} level={a.level}>{a.text}</AlertCard>)}</div>}
             </div>
-            <div style={{ ...card, padding: 18 }}>
+            <div style={{ ...card, padding: 16 }}>
               {sectionTitle('Where builds are right now', `${relF.length} builds, by stage`)}
               <Chevron stages={pipeline.filter((s) => s.label !== 'Superseded').map((s) => ({ label: s.label, count: s.count, tone: s.tone }))} />
-              <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 10 }}>{pipeline.find((s) => s.label === 'Superseded')?.count || 0} older builds were replaced by a newer one.</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 12 }}>{pipeline.find((s) => s.label === 'Superseded')?.count || 0} older builds were replaced by a newer one.</div>
             </div>
           </div>
         </>
@@ -382,37 +382,37 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
       {tab === 'delivery' && (
         <>
           <p style={explain}>How many builds went to QA, how many passed, and how that is trending.</p>
-          <div className="dash-kpis" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', marginBottom: 16 }}>
-            <StatCard accent="slate" label={L('submitted')} value={num(m.submitted)} foot={HELP('submitted')} />
-            <StatCard accent="teal" label={L('approved')} value={num(m.approved)} foot={HELP('approved')} />
-            <StatCard accent="rose" label={L('rejected')} value={num(m.rejected)} foot={m.decided ? `${m.rejRate}% of judged builds` : HELP('rejected')} />
-            <StatCard accent="indigo" label={L('passRate')} value={passRate == null ? '—' : `${passRate}%`} foot={HELP('passRate')} />
+          <div className="dash-kpis" style={{ '--cols': 4, marginBottom: 16 }}>
+            <StatCard label={L('submitted')} value={num(m.submitted)} foot={HELP('submitted')} />
+            <StatCard label={L('approved')} value={num(m.approved)} foot={HELP('approved')} />
+            <StatCard tone={m.rejected ? 'warning' : 'neutral'} label={L('rejected')} value={num(m.rejected)} foot={m.decided ? `${m.rejRate}% of judged builds` : HELP('rejected')} />
+            <StatCard label={L('passRate')} value={passRate == null ? '—' : `${passRate}%`} foot={HELP('passRate')} />
           </div>
           <div className="dash-mid" style={{ marginBottom: 16 }}>
-            <div style={{ ...card, padding: 18, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ ...card, padding: 16, display: 'flex', flexDirection: 'column' }}>
               {sectionTitle('Builds per month', 'Solid = approved by QA · dashed = submitted')}
               <TrendChart data={perMonth.map((x) => x.approved)} target={perMonth.map((x) => x.submitted)} xLabels={months.map((x) => x.label)} height={240} />
               {/* the numbers behind the chart — real detail in the space under the plot */}
-              <div style={{ marginTop: 'auto', paddingTop: 14, borderTop: '1px solid var(--color-border-primary)', display: 'grid', gridTemplateColumns: `96px repeat(${months.length}, minmax(0, 1fr))`, gap: '7px 8px', fontSize: 12, alignItems: 'center' }}>
+              <div style={{ marginTop: 'auto', paddingTop: 16, borderTop: '1px solid var(--color-border-primary)', display: 'grid', gridTemplateColumns: `96px repeat(${months.length}, minmax(0, 1fr))`, gap: '7px 8px', fontSize: 12, alignItems: 'center' }}>
                 <span />
                 {months.map((mo) => <b key={mo.key} style={{ textAlign: 'center', color: 'var(--color-text-secondary)', fontWeight: 600 }}>{mo.label}</b>)}
                 <span style={{ color: 'var(--color-text-secondary)' }}>Submitted</span>
                 {perMonth.map((x, i) => <span key={i} className="tnum" style={{ textAlign: 'center' }}>{x.submitted}</span>)}
                 <span style={{ color: 'var(--color-text-secondary)' }}>Approved</span>
-                {perMonth.map((x, i) => <span key={i} className="tnum" style={{ textAlign: 'center', color: 'var(--success)', fontWeight: 600 }}>{x.approved}</span>)}
+                {perMonth.map((x, i) => <span key={i} className="tnum" style={{ textAlign: 'center', color: 'var(--tone-success-fg)', fontWeight: 600 }}>{x.approved}</span>)}
                 <span style={{ color: 'var(--color-text-secondary)' }}>Problems found</span>
                 {perMonth.map((x, i) => <span key={i} className="tnum" style={{ textAlign: 'center', color: x.bugs ? 'var(--danger)' : 'var(--color-text-tertiary)' }}>{x.bugs}</span>)}
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <PassRing pct={passRate ?? 0} label={L('passRate')} sub={m.decided ? `${m.approved} approved of ${m.decided} judged` : 'No builds judged yet'} />
-              <div style={{ ...card, padding: 18, flex: 1 }}>
+              <div style={{ ...card, padding: 16, flex: 1 }}>
                 {sectionTitle('Builds by stage')}
                 <StageBars stages={pipeline.map((s) => ({ label: s.label, count: s.count, color: s.color }))} totalLabel="All builds" />
               </div>
             </div>
           </div>
-          <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...card, padding: 16 }}>
             {sectionTitle('Every build', 'Click a row to open it. “Left over” = problems inherited from the previous build.')}
             <ReleaseHistory releases={relF} projectsById={projectsById} profilesById={profilesById} pageSize={12} onRowClick={(r) => (onOpenRelease ? onOpenRelease(r.id) : onOpenHistory && onOpenHistory(projectsById[r.projectId]))} />
           </div>
@@ -423,39 +423,39 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
       {tab === 'quality' && (
         <>
           <p style={explain}>Every problem QA reported, where each one stands, and how serious they are. One problem is one record — it moves between builds, it is never counted twice.</p>
-          <div className="dash-kpis" style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', marginBottom: 16 }}>
-            <StatCard accent="slate" label="Problems reported" value={num(bm.total)} foot="in the current scope" />
-            <StatCard accent="rose" label={L('needsDev')} value={num(wf.needsDev)} foot={HELP('needsDev')} />
-            <StatCard accent="amber" label={L('awaitingQa')} value={num(wf.awaitingQa)} foot={HELP('awaitingQa')} />
-            <StatCard accent="teal" label={L('verified')} value={num(wf.verified)} foot={HELP('verified')} />
-            <StatCard accent="amber" label={L('carried')} value={num(m.carriedBugs)} foot={`${m.carryRate}% of problems${m.avgIterations ? ` · ~${m.avgIterations} ${L('rounds').toLowerCase()}` : ''}`} />
-            <StatCard accent="rose" label={L('prod')} value={num(m.prodBugs)} foot={HELP('prod')} />
+          <div className="dash-kpis" style={{ '--cols': 6, marginBottom: 16 }}>
+            <StatCard label="Problems reported" value={num(bm.total)} foot="in the current scope" />
+            <StatCard tone={wf.needsDev ? 'warning' : 'neutral'} label={L('needsDev')} value={num(wf.needsDev)} foot={HELP('needsDev')} />
+            <StatCard label={L('awaitingQa')} value={num(wf.awaitingQa)} foot={HELP('awaitingQa')} />
+            <StatCard label={L('verified')} value={num(wf.verified)} foot={HELP('verified')} />
+            <StatCard tone={m.carriedBugs ? 'warning' : 'neutral'} label={L('carried')} value={num(m.carriedBugs)} foot={`${m.carryRate}% of problems${m.avgIterations ? ` · ~${m.avgIterations} ${L('rounds').toLowerCase()}` : ''}`} />
+            <StatCard tone={m.prodBugs ? 'danger' : 'neutral'} label={L('prod')} value={num(m.prodBugs)} foot={HELP('prod')} />
           </div>
           <div className="dash-mid" style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ ...card, padding: 18 }}>
+              <div style={{ ...card, padding: 16 }}>
                 {sectionTitle('Problems reported per month')}
                 <TrendChart data={perMonth.map((x) => x.bugs)} xLabels={months.map((x) => x.label)} height={220} />
               </div>
-              <div style={{ ...card, padding: 18 }}>
+              <div style={{ ...card, padding: 16 }}>
                 {sectionTitle('Where each problem stands')}
                 <StackedBar segments={BUG_STATUS_ORDER.map((s) => ({ label: BUG_WORD[s] || BUG_STATUSES[s]?.label || s, value: bm.byStatus[s] || 0, color: BUG_STATUSES[s]?.color || 'var(--color-text-tertiary)' }))} />
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ ...card, padding: 18 }}>
+              <div style={{ ...card, padding: 16 }}>
                 {sectionTitle('How serious', 'Critical and major block a release; minor does not.')}
                 <Donut segments={SEVERITY_ORDER.map((s) => ({ label: SEVERITIES[s].label, value: bm.bySeverity[s] || 0, color: SEVERITIES[s].color }))} centerValue={bm.total} centerLabel="problems" />
               </div>
-              <div style={{ ...card, padding: 18 }}>
+              <div style={{ ...card, padding: 16 }}>
                 {sectionTitle(L('invalid'), HELP('invalid'))}
                 {BUG_RESOLUTIONS.map((r) => (
-                  <div key={r} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--color-border-primary)', fontSize: 13 }}>
+                  <div key={r} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--color-border-primary)', fontSize: 13 }}>
                     <span style={{ color: 'var(--color-text-secondary)' }}>{r}</span>
-                    <span className="tnum"><b>{resCounts[r]}</b> <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{bm.total ? Math.round((resCounts[r] / bm.total) * 100) : 0}%</span></span>
+                    <span className="tnum"><b>{resCounts[r]}</b> <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>{bm.total ? Math.round((resCounts[r] / bm.total) * 100) : 0}%</span></span>
                   </div>
                 ))}
-                <div style={{ fontSize: 12.5, marginTop: 10, color: invalidPct >= 30 ? 'var(--tone-warning-fg)' : 'var(--color-text-secondary)' }}>
+                <div style={{ fontSize: 13, marginTop: 12, color: invalidPct >= 30 ? 'var(--tone-warning-fg)' : 'var(--color-text-secondary)' }}>
                   <b>{invalidPct}%</b> of reports were closed without a code change.{invalidPct >= 30 ? ' That is high — it usually means requirements were unclear when the work started.' : ''}
                 </div>
               </div>
@@ -468,22 +468,22 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
       {tab === 'speed' && (
         <>
           <p style={explain}>How long a build waits for a verdict, where that time goes, and what is overdue. Averages only include builds with complete timestamps.</p>
-          <div className="dash-kpis" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', marginBottom: 16 }}>
-            <StatCard accent="amber" label={L('cycle')} value={m.cycleDays ? `${num(m.cycleDays, 1)}d` : '—'} foot={HELP('cycle')} />
-            <StatCard accent="slate" label={L('waitTime')} value={m.assignTime ? `${num(m.assignTime, 1)}d` : '—'} foot={HELP('waitTime')} />
-            <StatCard accent="teal" label={L('testTime')} value={m.qaTime ? `${num(m.qaTime, 1)}d` : '—'} foot={HELP('testTime')} />
-            <StatCard accent="rose" label={L('overdue')} value={num(overdue)} foot={HELP('overdue')} />
-            <StatCard accent="indigo" label={L('rounds')} value={m.avgIterations ?? '—'} foot={HELP('rounds')} />
+          <div className="dash-kpis" style={{ '--cols': 5, marginBottom: 16 }}>
+            <StatCard label={L('cycle')} value={m.cycleDays ? `${num(m.cycleDays, 1)}d` : '—'} foot={HELP('cycle')} />
+            <StatCard label={L('waitTime')} value={m.assignTime ? `${num(m.assignTime, 1)}d` : '—'} foot={HELP('waitTime')} />
+            <StatCard label={L('testTime')} value={m.qaTime ? `${num(m.qaTime, 1)}d` : '—'} foot={HELP('testTime')} />
+            <StatCard tone={overdue ? 'danger' : 'neutral'} label={L('overdue')} value={num(overdue)} foot={HELP('overdue')} />
+            <StatCard label={L('rounds')} value={m.avgIterations ?? '—'} foot={HELP('rounds')} />
           </div>
           <div className="dash-mid" style={{ marginBottom: 16 }}>
             {/* left: time split + per-project speed table (fills the column) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ ...card, padding: 18 }}>
+              <div style={{ ...card, padding: 16 }}>
                 {sectionTitle('Where the time goes', `${m.cycleDays ? `${num(m.cycleDays, 1)} days` : '—'} from submit to QA done`)}
-                <SegmentedTimeline segments={[{ label: L('waitTime'), value: m.assignTime, color: '#94A3B8' }, { label: L('testTime'), value: m.qaTime, color: '#14B8A6' }]} />
+                <SegmentedTimeline segments={[{ label: L('waitTime'), value: m.assignTime, color: 'var(--c-slate)' }, { label: L('testTime'), value: m.qaTime, color: 'var(--c-teal)' }]} />
               </div>
               <div style={{ ...card, padding: 0, flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <div style={{ padding: '14px 14px 0' }}>{sectionTitle('Speed by project', 'Where builds wait longest and what is overdue.')}</div>
+                <div style={{ padding: '16px 16px 0' }}>{sectionTitle('Speed by project', 'Where builds wait longest and what is overdue.')}</div>
                 <DataTable columns={[
                   { label: 'Project', render: (r) => <b>{r.p.name}</b> },
                   { label: 'Builds', render: (r) => r.n },
@@ -494,13 +494,13 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
               </div>
             </div>
             {/* right: the overdue list */}
-            <div style={{ ...card, padding: 18 }}>
+            <div style={{ ...card, padding: 16 }}>
               {sectionTitle('Oldest open problems', 'Open longer than the agreed limit, oldest first.')}
               {aging.length === 0 ? <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No problems are overdue.</div> : aging.map((b) => (
-                <div key={b.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 6px', borderRadius: 8, cursor: onOpenRelease ? 'pointer' : 'default' }} onClick={() => onOpenRelease && onOpenRelease(b.releaseId)}>
+                <div key={b.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', borderRadius: 8, cursor: onOpenRelease ? 'pointer' : 'default' }} onClick={() => onOpenRelease && onOpenRelease(b.releaseId)}>
                   <SeverityBadge severity={b.severity} />
-                  <span style={{ flex: 1, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</span>
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{Math.round((Date.now() - new Date(b.createdAt)) / 86400000)}d</span>
+                  <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</span>
+                  <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{Math.round((Date.now() - new Date(b.createdAt)) / 86400000)}d</span>
                 </div>
               ))}
             </div>
@@ -524,7 +524,7 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
           />
           {peopleTab === 'teams' && isAdmin && teamRows.length > 0 && (
             <div style={{ ...card, padding: 0, marginBottom: 16 }}>
-              <div style={{ padding: '14px 14px 0' }}>{sectionTitle('By team')}</div>
+              <div style={{ padding: '16px 16px 0' }}>{sectionTitle('By team')}</div>
               <DataTable columns={[
                 { label: 'Team', render: (r) => <b>{r.t.name}</b> },
                 { label: 'Projects', render: (r) => r.projects },
@@ -538,7 +538,7 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
           )}
           {peopleTab === 'developers' && (
           <div style={{ ...card, padding: 0, marginBottom: 16 }}>
-            <div style={{ padding: '14px 14px 0' }}>{sectionTitle('Developers', 'Sorted by who has the most problems waiting on them.')}</div>
+            <div style={{ padding: '16px 16px 0' }}>{sectionTitle('Developers', 'Sorted by who has the most problems waiting on them.')}</div>
             <DataTable columns={[
               { label: 'Developer', render: (r) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Avatar name={r.p.name} size={24} />{r.p.name}</span> },
               { label: 'Builds submitted', render: (r) => r.submitted },
@@ -551,7 +551,7 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
           )}
           {peopleTab === 'qa' && (
           <div style={{ ...card, padding: 0, marginBottom: 16 }}>
-            <div style={{ padding: '14px 14px 0' }}>{sectionTitle('QA engineers', 'Sorted by who has the most builds waiting.')}</div>
+            <div style={{ padding: '16px 16px 0' }}>{sectionTitle('QA engineers', 'Sorted by who has the most builds waiting.')}</div>
             <DataTable columns={[
               { label: 'QA engineer', render: (r) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Avatar name={r.p.name} size={24} />{r.p.name}</span> },
               { label: 'Builds tested', render: (r) => r.tested },
@@ -565,7 +565,7 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
           )}
           {peopleTab === 'workload' && (
           <div style={{ ...card, padding: 0 }}>
-            <div style={{ padding: '14px 14px 0' }}>{sectionTitle('Workload right now', 'Everyone with something on their plate.')}</div>
+            <div style={{ padding: '16px 16px 0' }}>{sectionTitle('Workload right now', 'Everyone with something on their plate.')}</div>
             <DataTable columns={[
               { label: 'Person', render: (r) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Avatar name={r.m.name} size={24} />{r.m.name}</span> },
               { label: 'Role', render: (r) => <Pill label={r.m.role} tone={r.m.role === 'QA' ? 'info' : 'neutral'} /> },
@@ -594,7 +594,7 @@ export function Analytics({ scopeProjectIds = null, projects, releases, bugs, pr
               { label: L('passRate'), render: (r) => (r.pass == null ? '—' : <Pill label={`${r.pass}%`} tone={passTone(r.pass)} />) },
               { label: L('cycle'), render: (r) => (r.cycle ? `${num(r.cycle, 1)}d` : '—') },
               { label: 'Health', render: (r) => <Pill label={r.health.label} tone={r.health.tone} /> },
-              { label: '', render: (r) => (onOpenHistory ? <button style={{ ...ghostButton, padding: '3px 9px', minHeight: 0, fontSize: 11 }} onClick={(e) => { e.stopPropagation(); onOpenHistory(r.p); }}>History</button> : null) },
+              { label: '', render: (r) => (onOpenHistory ? <button style={{ ...ghostButton, padding: '4px 8px', minHeight: 0, fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onOpenHistory(r.p); }}>History</button> : null) },
             ]} rows={projectRows} rowKey={(r) => r.p.id} searchText={(r) => r.p.name} searchPlaceholder="Search projects…" pageSize={15} />
           </div>
         </>
@@ -613,14 +613,14 @@ function MemberDetail({ p, releases, bugs, projectsById, releaseById, onOpenRele
   const theirBugs = isQa ? bugs.filter((b) => b.createdById === p.id) : bugs.filter((b) => ids.has(b.releaseId));
   const pm = computeReleaseMetrics(mine, isQa ? bugs.filter((b) => ids.has(b.releaseId)) : theirBugs, { releaseById });
   const stat = (l, v, c) => (
-    <div style={{ ...card, padding: '10px 14px', flex: '1 1 120px' }}>
+    <div style={{ ...card, padding: '12px 16px', flex: '1 1 120px' }}>
       <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: c || 'var(--text)' }}>{v}</div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)' }}>{l}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>{l}</div>
     </div>
   );
   return (
     <ModalShell onClose={onClose} title={p.name} subtitle={`${p.role}${p.email ? ` · ${p.email}` : ''}`} maxWidth={680}>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         {stat(isQa ? 'Builds tested' : 'Builds submitted', mine.length)}
         {stat('Approved', pm.approved, 'var(--success)')}
         {stat('Sent back', pm.rejected, pm.rejected ? 'var(--danger)' : undefined)}
@@ -628,22 +628,22 @@ function MemberDetail({ p, releases, bugs, projectsById, releaseById, onOpenRele
       </div>
       <div style={{ ...sideHead }}>{isQa ? 'Builds they tested' : 'Builds they submitted'}</div>
       <div style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 16 }}>
-        {mine.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>None in this scope.</div> : mine.slice(0, 40).map((r) => (
-          <div key={r.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 6px', borderRadius: 8, cursor: onOpenRelease ? 'pointer' : 'default', fontSize: 12.5 }} onClick={() => onOpenRelease && onOpenRelease(r.id)}>
+        {mine.length === 0 ? <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>None in this scope.</div> : mine.slice(0, 40).map((r) => (
+          <div key={r.id} className="mgr-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', borderRadius: 8, cursor: onOpenRelease ? 'pointer' : 'default', fontSize: 13 }} onClick={() => onOpenRelease && onOpenRelease(r.id)}>
             <span className="tnum" style={{ fontWeight: 600 }}>v{formatVersion(r.version)}</span>
             <span style={{ flex: 1, color: 'var(--color-text-secondary)' }}>{projectsById[r.projectId]?.name || '—'}</span>
             <StatusBadge status={r.status} />
-            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{r.date}</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.date}</span>
           </div>
         ))}
       </div>
       <div style={{ ...sideHead }}>{isQa ? 'Problems they reported' : 'Problems on their builds'}</div>
       <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-        {theirBugs.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>None in this scope.</div> : theirBugs.slice(0, 40).map((b) => (
-          <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 6px', fontSize: 12.5 }}>
+        {theirBugs.length === 0 ? <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>None in this scope.</div> : theirBugs.slice(0, 40).map((b) => (
+          <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', fontSize: 13 }}>
             <SeverityBadge severity={b.severity} />
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{BUG_WORD[b.status] || b.status}</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{BUG_WORD[b.status] || b.status}</span>
           </div>
         ))}
       </div>
