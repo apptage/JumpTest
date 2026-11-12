@@ -688,6 +688,7 @@ export default function ReleaseTracker() {
             module: n.module || '',
             platformType,
             position: 1000 + i,
+            track: n.track || 'scope',
           });
           pickedItems.push({ id, name: n.title });
         }

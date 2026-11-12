@@ -172,7 +172,7 @@ const FIELDS = [
 
 /* Import wizard: upload → detect columns → map fields → preview → confirm.
    Does not depend on fixed column positions. */
-function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
+function WbsImportModal({ headers, rows, trackLabel, onCancel, onConfirm }) {
   // auto-guess a mapping from header names
   const guess = () => {
     const m = {};
@@ -270,7 +270,7 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
     <ModalShell
       onClose={onCancel}
       title="Import WBS from spreadsheet"
-      subtitle="Map each field to a column. Only Title is required — this adds new items, never overwrites."
+      subtitle={`Adds to the ${trackLabel} tab. Map each field to a column — only Title is required. This adds new items, never overwrites.`}
       maxWidth={720}
       footer={footer}
     >
@@ -324,7 +324,7 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
 
 /* Bulk Add: paste a list / outline (or drop in a preset pack) → many items at once.
    Reuses parseWbsBulk; the live preview shows exactly what will be created. */
-function WbsBulkModal({ onCancel, onConfirm }) {
+function WbsBulkModal({ trackLabel, onCancel, onConfirm }) {
   const [platform, setPlatform] = useState('');
   const [module, setModule] = useState('');
   const [text, setText] = useState('');
@@ -365,7 +365,7 @@ function WbsBulkModal({ onCancel, onConfirm }) {
     <ModalShell
       onClose={onCancel}
       title="Bulk add items"
-      subtitle="Paste raw feature lists or load a preset pack to create WBS items fast."
+      subtitle={`Adds to the ${trackLabel} tab. Paste raw feature lists or load a preset pack to create WBS items fast.`}
       maxWidth={720}
       footer={footer}
     >
@@ -646,7 +646,13 @@ function WbsQaCell({ qa, role, profiles, onApprove }) {
   return <span title={title} aria-label={`QA status: ${s.label}. ${title}`}><Pill label={s.label} tone={s.tone} /></span>;
 }
 
-function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], onSave, onDelete, onReorder, onApproveQa }) {
+/* Tabs a manager can move work onto (support only while ongoing support is on,
+   unless the work is already there). */
+function moveTargets(current, ongoingSupport) {
+  return WBS_TRACK_ORDER.filter((t) => t !== 'support' || ongoingSupport || current === 'support');
+}
+
+function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], modules = [], ongoingSupport, onSave, onDelete, onReorder, onApproveQa }) {
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState(item);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -668,15 +674,24 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
           </select>
         </div>
         <textarea style={{ ...inputStyle, marginTop: 8, resize: 'vertical', fontSize: 12 }} rows={2} value={f.description} placeholder="Description (optional)" onChange={(e) => set('description', e.target.value)} />
+        {/* move the story point to another module or another WBS tab */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+          <input style={inputStyle} list={`wbs-modules-${item.id}`} value={f.module || ''} placeholder="Module" aria-label="Module" onChange={(e) => set('module', e.target.value)} />
+          <datalist id={`wbs-modules-${item.id}`}>{modules.map((m) => <option key={m} value={m} />)}</datalist>
+          <select aria-label="WBS tab" title="Move to another WBS tab" style={inputStyle} value={f.track} onChange={(e) => set('track', e.target.value)}>
+            {moveTargets(item.track, ongoingSupport).map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+          </select>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button style={ghostButton} onClick={() => { setF(item); setEditing(false); }}>Cancel</button>
           <button
             style={primaryButton(!f.title.trim())}
             disabled={!f.title.trim()}
             onClick={() => {
-              onSave(item, {
-                title: f.title.trim(), description: f.description, priority: f.priority || null,
-              });
+              const patch = { title: f.title.trim(), description: f.description, priority: f.priority || null };
+              if ((f.module || '').trim() !== (item.module || '')) patch.module = (f.module || '').trim();
+              if (f.track !== item.track) patch.track = f.track;
+              onSave(item, patch);
               setEditing(false);
             }}
           >
@@ -843,7 +858,7 @@ function PlatformHeader({ platform, track, items, target, canManage, open, onTog
 /* One module = one (platform, module) group. Holds the shared metadata (target
    date, assignee) once in its header; tasks below only carry title/status/priority.
    A fast inline adder appends tasks that inherit the module's metadata. */
-function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll, profiles, bugsByItem, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll, onApproveQa }) {
+function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll, profiles, bugsByItem, modules = [], ongoingSupport, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll, onApproveQa }) {
   const { platform, module, items } = group;
   // SQA's button approves what's only waiting on sign-off, not everything
   const sqaSignsOff = role === 'QA';
@@ -862,8 +877,9 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
   const moduleAssignee = assigneeIds.length === 1 ? profiles.find((p) => p.id === assigneeIds[0]) : null;
   const assigneeLabel = moduleAssignee ? moduleAssignee.name : assigneeIds.length > 1 ? 'Mixed' : 'Unassigned';
 
-  const [meta, setMeta] = useState({ module: moduleLabel === 'General' ? '' : module, platform, est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '' });
-  const openMeta = () => { setMeta({ module: module || '', platform: platform || '', est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '' }); setMetaOpen(true); };
+  const track = items[0]?.track || 'scope';
+  const [meta, setMeta] = useState({ module: moduleLabel === 'General' ? '' : module, platform, est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '', track });
+  const openMeta = () => { setMeta({ module: module || '', platform: platform || '', est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '', track }); setMetaOpen(true); };
 
   const add = async () => {
     const t = text.trim();
@@ -897,6 +913,12 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
               <option value="">Unassigned</option>
               {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              WBS tab
+              <select aria-label="WBS tab" style={{ ...inputStyle, flex: 1 }} value={meta.track} onChange={(e) => setMeta((m) => ({ ...m, track: e.target.value }))}>
+                {moveTargets(track, ongoingSupport).map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+              </select>
+            </label>
             <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button style={ghostButton} onClick={() => setMetaOpen(false)}>Cancel</button>
               <button
@@ -907,6 +929,7 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
                     platform_type: meta.platform.trim(),
                     estimated_completion_date: meta.est.trim(),
                     assigned_to: meta.assignee || null,
+                    ...(meta.track !== track ? { track: meta.track } : {}),
                   });
                   setMetaOpen(false);
                 }}
@@ -981,9 +1004,11 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
                   canEdit={canEdit}
                   profiles={profiles}
                   bugs={bugsByItem[it.id] || []}
+                  modules={modules}
+                  ongoingSupport={ongoingSupport}
                   onSave={onSaveItem}
                   onDelete={onDeleteItem}
-                  onReorder={onReorderItem}
+                  onReorder={(item, dir) => onReorderItem(item, dir, items)}
                 />
               ))}
               </>
@@ -1108,16 +1133,22 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
 
   // patch keys are DB columns; map the ones we render back to camelCase for the
   // optimistic local update
-  const OPTIMISTIC_KEYS = { status: 'status', title: 'title', description: 'description', priority: 'priority', dev_comments: 'devComments' };
+  const OPTIMISTIC_KEYS = { status: 'status', title: 'title', description: 'description', priority: 'priority', dev_comments: 'devComments', module: 'module', track: 'track' };
+  // Moving Completed work onto an SQA-tested tab would claim SQA's sign-off, so
+  // (unless SQA moves it) it lands In QA for SQA to approve — same rule as import.
+  const holdsForSqa = (item, toTrack) =>
+    toTrack && toTrack !== item.track && isSqaTrack(toTrack) && item.status === 'completed' && user.role !== 'QA';
   // single-item field edits (status / note / title / priority) update local state
   // immediately and persist in the background — no refetch, no page flash
   const save = async (item, patch) => {
+    if (holdsForSqa(item, patch.track)) patch = { ...patch, status: 'in_qa' };
     const local = {};
     for (const [k, v] of Object.entries(patch)) if (k in OPTIMISTIC_KEYS) local[OPTIMISTIC_KEYS[k]] = v;
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...local } : i)));
     try {
       await api.updateWbsItem(item.id, patch);
-      if (patch.status) refresh(); // the database may have stamped SQA's sign-off
+      if (patch.status || patch.track) refresh(); // the database may have stamped SQA's sign-off
+      if (patch.track) showToast(`Moved to ${wbsTrackLabel(patch.track)}${patch.status === 'in_qa' ? ' · In QA until SQA approves it' : ''}`);
     } catch (e) {
       showToast(e.message, 'error');
       refresh(); // resync from server on failure
@@ -1126,14 +1157,17 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   const del = async (item) => {
     if (await confirmAction(`Delete "${item.title}"? Release history keeps its name.`)) run(() => api.deleteWbsItem(item.id), 'Item deleted');
   };
-  // reorder within the flat position order (swap with the adjacent item)
-  const reorder = (item, dir) => {
-    const ordered = items.filter((x) => x.track === item.track).sort((a, b) => a.position - b.position);
-    const idx = ordered.findIndex((x) => x.id === item.id);
-    const j = idx + dir;
-    if (j < 0 || j >= ordered.length) return;
-    const ids = ordered.map((x) => x.id);
-    [ids[idx], ids[j]] = [ids[j], ids[idx]];
+  // reorder: swap with the neighbour shown in the same module card (the flat
+  // track order interleaves modules, so its neighbour is often in another card
+  // and ▲/▼ appeared to do nothing)
+  const reorder = (item, dir, siblings) => {
+    const k = siblings.findIndex((x) => x.id === item.id);
+    const other = siblings[k + dir];
+    if (!other) return;
+    const ids = items.filter((x) => x.track === item.track).sort((a, b) => a.position - b.position).map((x) => x.id);
+    const a = ids.indexOf(item.id);
+    const b = ids.indexOf(other.id);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
     run(() => api.reorderWbsItems(ids));
   };
   const addItem = () => {
@@ -1147,10 +1181,15 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
     );
     setForm({ title: '', platformType: form.platformType, module: form.module, est: '', priority: '' });
   };
+  // every item of a module card's module, not just the rows a filter/search left
+  // visible — module edits and "mark all" must not split a module in two
+  const wholeModule = (group) =>
+    items.filter((i) => i.track === track && (i.platformType || '') === group.platform && (i.module || '') === group.module);
   // add a task to an existing module — inherits the module's shared metadata
   const addTaskToGroup = (group, title) => {
-    const est = latestEst(group.items);
-    const assigneeIds = [...new Set(group.items.map((i) => i.assignedTo).filter(Boolean))];
+    const all = wholeModule(group);
+    const est = latestEst(all);
+    const assigneeIds = [...new Set(all.map((i) => i.assignedTo).filter(Boolean))];
     return run(() => api.createWbsItem(projectId, {
       title,
       platformType: group.platform,
@@ -1163,11 +1202,18 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   };
   // edit module-level metadata → apply to every item in the group at once
   const saveModuleMeta = (group, patch) =>
-    run(() => api.updateWbsItems(group.items.map((i) => i.id), patch), 'Module updated');
+    run(async () => {
+      const all = wholeModule(group);
+      const held = all.filter((i) => holdsForSqa(i, patch.track)).map((i) => i.id);
+      const rest = all.map((i) => i.id).filter((id) => !held.includes(id));
+      await api.updateWbsItems(rest, patch);
+      if (held.length) await api.updateWbsItems(held, { ...patch, status: 'in_qa', actual_completion_date: null });
+    }, patch.track ? `Module moved to ${wbsTrackLabel(patch.track)}` : 'Module updated');
   // mark every task in a module completed — optimistic + background bulk update
   const completeModule = async (group) => {
     const isQa = user.role === 'QA';
-    const eligible = isQa ? group.items.filter((i) => qaByItem[i.id]?.canBulkApprove) : group.items;
+    const all = wholeModule(group);
+    const eligible = isQa ? all.filter((i) => qaByItem[i.id]?.canBulkApprove) : all;
     const open = eligible.filter((i) => i.status !== 'completed').map((i) => i.id);
     const unsigned = isQa ? eligible.filter((i) => i.status === 'completed').map((i) => i.id) : [];
     const n = open.length + unsigned.length;
@@ -1278,6 +1324,8 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   });
 
   const byStatus = (s) => trackItems.filter((i) => i.status === s).length;
+  const trackModules = [...new Set(trackItems.map((i) => i.module).filter(Boolean))];
+  const trackPlatforms = [...new Set(items.map((i) => i.platformType).filter(Boolean))];
   const fSel = filterSelect;
 
   // collapse-all operates on the platform sections
@@ -1286,7 +1334,7 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
 
   return (
     <>
-      <datalist id="wbs-platforms">{WBS_PLATFORM_TYPES.map((p) => <option key={p} value={p} />)}</datalist>
+      <datalist id="wbs-platforms">{[...new Set([...trackPlatforms, ...WBS_PLATFORM_TYPES])].map((p) => <option key={p} value={p} />)}</datalist>
       <PageHeader title="WBS Builder" subtitle="Flexible work breakdown — group by platform & module, one status per item" />
 
       <div className="filter-bar">
@@ -1379,6 +1427,10 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
           <input style={inputStyle} value={form.est} placeholder="Target date" onChange={(e) => setForm((f) => ({ ...f, est: e.target.value }))} />
           <input style={inputStyle} value={form.title} placeholder="First task title *" onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
           <button style={primaryButton(!form.title.trim() || !form.module.trim())} disabled={!form.title.trim() || !form.module.trim()} onClick={addItem}>Create module</button>
+          <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+            Adding to <strong style={{ color: 'var(--color-text-secondary)' }}>{wbsTrackLabel(track)}</strong>.
+            {isSqaTrack(track) && !form.platformType.trim() && ' Set a platform so developers can link this work when they submit that platform’s build' + (track === 'scope' ? '.' : ' (without one it is offered on every build).')}
+          </div>
         </div>
       )}
 
@@ -1405,7 +1457,12 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
           )}
         </Empty>
       ) : trackItems.length === 0 ? (
-        <Empty>{canManage ? `Nothing under ${wbsTrackLabel(track)} yet — create a module above, or use Bulk add or Import in the ⋯ menu.` : `Nothing under ${wbsTrackLabel(track)} yet.`}</Empty>
+        <Empty>
+          <div>{canAdd ? `Nothing under ${wbsTrackLabel(track)} yet — add a module, or use Bulk add or Import in the ⋯ menu.` : `Nothing under ${wbsTrackLabel(track)} yet.`}</div>
+          {canAdd && !adding && (
+            <button style={{ ...primaryButton(false), marginTop: 12 }} onClick={() => setAdding(true)}>+ New module</button>
+          )}
+        </Empty>
       ) : filtered.length === 0 ? (
         <Empty>No items match the filter.</Empty>
       ) : (
@@ -1445,6 +1502,8 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
                           canCompleteAll={canCompleteAll}
                           profiles={profiles}
                           bugsByItem={bugsByItem}
+                          modules={trackModules}
+                          ongoingSupport={!!project?.ongoingSupport}
                           collapsed={isCol(g.key)}
                           onToggle={() => toggleCol(g.key)}
                           onAddTask={addTaskToGroup}
@@ -1470,12 +1529,13 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
         <WbsImportModal
           headers={importData.headers}
           rows={importData.rows}
+          trackLabel={wbsTrackLabel(track)}
           onCancel={() => setImportData(null)}
           onConfirm={confirmImport}
         />
       )}
 
-      {bulkOpen && <WbsBulkModal onCancel={() => setBulkOpen(false)} onConfirm={confirmBulk} />}
+      {bulkOpen && <WbsBulkModal trackLabel={wbsTrackLabel(track)} onCancel={() => setBulkOpen(false)} onConfirm={confirmBulk} />}
 
       {shareOpen && project && <WbsShareModal project={project} onClose={() => setShareOpen(false)} showToast={showToast} />}
     </>

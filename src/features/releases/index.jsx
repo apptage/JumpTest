@@ -46,44 +46,65 @@ import {
   bugSlaLevel,
   humanizeSince,
   formatVersion,
-  isSqaTrack, tint } from '@/constants.js';
+  isSqaTrack,
+  wbsTrackLabel,
+  WBS_TRACK_ORDER, tint } from '@/constants.js';
 import { IconDownload, IconExternal } from '@/icons.jsx';
 import { SkeletonList } from '@shared/dashboard-kit.jsx';
 
 /* Inline "add new WBS task" list used inside the Submit modal — each row is a
-   title + module (existing modules offered via datalist). New items are created
-   under the release's WBS platform, linked, and set to In QA on submit. */
-function NewTaskList({ title, items, modules = [], onAdd, onSet, onRemove, requireModule }) {
-  const hasModules = modules.length > 0;
+   title + WBS tab (Original scope, Improvements, Upsell, Support) + module. New
+   items are created under the release's WBS platform on that tab, linked, and
+   set to In QA on submit. */
+function NewTaskList({ title, items, modulesByTrack = {}, tracks = ['scope'], onAdd, onSet, onRemove, requireModule }) {
   return (
     <Field label={title}>
       {items.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {items.map((it, i) => {
             const moduleBad = requireModule && it.title.trim() && !it.module.trim();
+            const modules = modulesByTrack[it.track || 'scope'] || [];
+            const hasModules = modules.length > 0;
             return (
-              <div key={i} style={{ display: 'flex', gap: 8 }}>
+              <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <input
-                  style={{ ...inputStyle, flex: 2 }}
+                  style={{ ...inputStyle, flex: '2 1 180px' }}
                   value={it.title}
                   placeholder="Task title *"
                   onChange={(e) => onSet(i, 'title', e.target.value)}
                 />
+                {tracks.length > 1 && (
+                  <select
+                    aria-label="WBS tab"
+                    title="Which WBS tab this work belongs to"
+                    style={{ ...inputStyle, flex: '1 1 140px' }}
+                    value={it.track || 'scope'}
+                    onChange={(e) => { onSet(i, 'track', e.target.value); onSet(i, 'module', ''); }}
+                  >
+                    {tracks.map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+                  </select>
+                )}
                 {hasModules ? (
                   <select
-                    style={{ ...inputStyle, flex: 1, borderColor: moduleBad ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
+                    style={{ ...inputStyle, flex: '1 1 120px', borderColor: moduleBad ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
                     value={it.module}
-                    onChange={(e) => onSet(i, 'module', e.target.value)}
+                    onChange={(e) => {
+                      if (e.target.value !== '__new__') return onSet(i, 'module', e.target.value);
+                      const name = window.prompt('New module name')?.trim();
+                      if (name) onSet(i, 'module', name);
+                    }}
                   >
                     <option value="">Module…</option>
                     {modules.map((m) => (
                       <option key={m} value={m}>{m}</option>
                     ))}
+                    {it.module && !modules.includes(it.module) && <option value={it.module}>{it.module}</option>}
+                    <option value="__new__">+ New module…</option>
                   </select>
                 ) : (
                   // no existing modules (creating a fresh WBS) → free-text module
                   <input
-                    style={{ ...inputStyle, flex: 1, borderColor: moduleBad ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
+                    style={{ ...inputStyle, flex: '1 1 120px', borderColor: moduleBad ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
                     value={it.module}
                     placeholder={requireModule ? 'Module *' : 'Module'}
                     onChange={(e) => onSet(i, 'module', e.target.value)}
@@ -97,7 +118,7 @@ function NewTaskList({ title, items, modules = [], onAdd, onSet, onRemove, requi
       )}
       <button type="button" onClick={onAdd} style={{ ...ghostButton, padding: '8px 12px', fontSize: 12 }}>+ Add task</button>
       <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 8 }}>
-        Created under this platform, linked to the release, and set to <strong>In QA</strong>.
+        Created under this platform on the chosen tab, linked to the release, and set to <strong>In QA</strong>.
       </div>
     </Field>
   );
@@ -127,7 +148,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
   const [wbsItems, setWbsItems] = useState([]);
   const [selectedTasks, setSelectedTasks] = useState([]); // item ids
-  const [newItems, setNewItems] = useState([]); // inline new tasks: [{title, module}]
+  const [newItems, setNewItems] = useState([]); // inline new tasks: [{title, module, track}]
   const [creatingWbs, setCreatingWbs] = useState(false); // no-WBS branch: user chose "Create WBS"
 
   const project = projectById(form.projectId);
@@ -198,11 +219,23 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
   const derivedWbsPlatform = wbsPlatformForRelease(form.platform, resolvedComponent);
   const wbsEnabled = !!project?.wbsEnabled;
   const norm = (s) => String(s || '').trim().toLowerCase();
-  // design / marketing items aren't built into releases
-  const matchingItems = wbsItems.filter((i) => isSqaTrack(i.track) && norm(i.platformType) === norm(derivedWbsPlatform) && derivedWbsPlatform);
+  // design / marketing items aren't built into releases. Work on the extra tabs
+  // (improvements / upsell / support) may carry no platform — it can ship in any
+  // build, so it's offered on every platform instead of never being linkable.
+  const matchingItems = wbsItems.filter(
+    (i) => isSqaTrack(i.track) && derivedWbsPlatform &&
+      (norm(i.platformType) === norm(derivedWbsPlatform) || (i.track !== 'scope' && !norm(i.platformType)))
+  );
   const hasMatchingWbs = matchingItems.length > 0;
-  // existing modules under this platform (for the new-task module picker)
-  const platformModules = [...new Set(matchingItems.map((i) => i.module).filter(Boolean))];
+  // tabs a build can add new work to (SQA-tested ones; support only when it's on)
+  const newItemTracks = WBS_TRACK_ORDER.filter((t) => isSqaTrack(t) && (t !== 'support' || project?.ongoingSupport));
+  // existing modules under this platform, per tab (for the new-task module picker)
+  const modulesByTrack = {};
+  matchingItems.forEach((i) => {
+    if (!i.module) return;
+    const list = (modulesByTrack[i.track] = modulesByTrack[i.track] || []);
+    if (!list.includes(i.module)) list.push(i.module);
+  });
   // selectable existing tasks: non-milestone, not already in QA/completed
   const wbsTasks = matchingItems.filter(
     (t) => t.type !== 'milestone' && !['in_qa', 'completed'].includes(t.status)
@@ -216,7 +249,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     setCreatingWbs(false);
   }, [derivedWbsPlatform, project?.id]);
 
-  const addNewItem = () => setNewItems((n) => [...n, { title: '', module: '' }]);
+  const addNewItem = () => setNewItems((n) => [...n, { title: '', module: '', track: 'scope' }]);
   const setNewItem = (i, k, v) => setNewItems((n) => n.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
   const removeNewItem = (i) => setNewItems((n) => n.filter((_, idx) => idx !== i));
 
@@ -266,7 +299,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         : [];
     const newWbsItems =
       wbsMode === 'link' || wbsMode === 'create'
-        ? validNewItems.map((n) => ({ title: n.title.trim(), module: n.module.trim() }))
+        ? validNewItems.map((n) => ({ title: n.title.trim(), module: n.module.trim(), track: n.track || 'scope' }))
         : [];
     onSubmit({
       ...form,
@@ -478,6 +511,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
                   <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px', cursor: 'pointer', fontSize: 13 }}>
                     <input type="checkbox" checked={selectedTasks.includes(t.id)} onChange={() => toggleTask(t.id)} />
                     <span style={{ flex: 1 }}>{t.title}</span>
+                    {t.track !== 'scope' && <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--tone-info-fg)', background: 'var(--tone-info-bg)', borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap' }}>{wbsTrackLabel(t.track)}</span>}
                     {t.module && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{t.module}</span>}
                   </label>
                 ))}
@@ -488,7 +522,8 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
           <NewTaskList
             title="Completed work not yet in the WBS (optional)"
             items={newItems}
-            modules={platformModules}
+            modulesByTrack={modulesByTrack}
+            tracks={newItemTracks}
             onAdd={addNewItem}
             onSet={setNewItem}
             onRemove={removeNewItem}
@@ -533,7 +568,8 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
             <NewTaskList
               title={`New WBS items for ${derivedWbsPlatform}`}
               items={newItems}
-              modules={platformModules}
+              modulesByTrack={modulesByTrack}
+              tracks={newItemTracks}
               onAdd={addNewItem}
               onSet={setNewItem}
               onRemove={removeNewItem}
