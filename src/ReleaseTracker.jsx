@@ -48,6 +48,7 @@ import {
   emailDomainOk,
   normalizeVersion,
   formatVersion,
+  isActiveBug,
 } from './constants.js';
 import {
   card,
@@ -431,7 +432,8 @@ export default function ReleaseTracker() {
   const legacy = listsMode === 'legacy';
   const paged = listsMode === 'paged';
   const legacyOpenBugTotal = useMemo(
-    () => scopedActiveBugs.filter((b) => b.status === 'open').length,
+    // "open" = anything not yet Verified (isActiveBug), same as every other page
+    () => scopedActiveBugs.filter(isActiveBug).length,
     [scopedActiveBugs]
   );
   const disputedTotal = useMemo(
@@ -446,7 +448,7 @@ export default function ReleaseTracker() {
   // open bugs on live releases, for the Releases page header
   const openBugTotalQ = useQuery({
     queryKey: ['bugs', 'liveCount', 'open', scopeKey],
-    queryFn: () => api.countLiveBugs({ projectIds: releasesScopeIds, status: 'open' }),
+    queryFn: () => api.countLiveBugs({ projectIds: releasesScopeIds, status: 'active' }),
     enabled: paged,
   });
   const openBugTotal = paged ? openBugTotalQ.data ?? 0 : legacyOpenBugTotal;

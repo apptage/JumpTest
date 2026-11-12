@@ -46,7 +46,7 @@ function ProjectTypeTag({ type }) {
 }
 
 /* ---- Overview tab ---- */
-function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, openBugs, critical, active, passRate, health, profilesById, onOpenRelease, onTab }) {
+function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, relFailed = false, wbsFailed = false, totals, openBugs, critical, active, passRate, health, profilesById, onOpenRelease, onTab }) {
   const ms = milestoneLabel(wh.milestoneRisk);
   return (
     <div>
@@ -54,7 +54,7 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, 
       <div style={{ ...card, padding: 16, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <HealthDot tone={health.tone} size={14} />
         <div style={{ flex: 1, minWidth: 180 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{relLoading ? <Skeleton width={120} height={18} /> : health.label}</div>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{relLoading ? <Skeleton width={120} height={18} /> : relFailed ? 'Health unavailable' : health.label}</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Composite health — WBS progress, open bugs & QA pass rate combined</div>
         </div>
         <Pill label={ms.label} tone={ms.tone} />
@@ -62,11 +62,11 @@ function OverviewTab({ project, rel, pbugs, wh, wbsLoading, relLoading = false, 
 
       {/* KPI row */}
       <div className="dash-kpis" style={{ marginBottom: 16 }}>
-        <StatCard label="Project completion" loading={wbsLoading || relLoading} value={wbsLoading || relLoading ? '…' : wh.hasWbs ? `${wh.pct}%` : '—'} foot={wh.hasWbs ? `${wh.completion.done}/${wh.completion.total} incl. bugs` : 'NO WBS YET'} />
-        <StatCard label="Open bugs" loading={relLoading} tone={critical ? 'danger' : 'neutral'} value={relLoading ? '…' : openBugs.length.toLocaleString()} foot={`${critical} critical`} />
-        <StatCard label="Builds" loading={relLoading} value={relLoading ? '…' : rel.length.toLocaleString()} foot="All time" />
-        <StatCard label="Pass rate" loading={relLoading} value={relLoading ? '…' : passRate != null ? `${passRate}%` : '—'} foot="Of QA decisions" />
-        <StatCard label="Blocked tasks" loading={wbsLoading} tone={wh.blocked ? 'warning' : 'neutral'} value={wbsLoading ? '…' : (wh.blocked || 0).toLocaleString()} foot="Marked blocked in the WBS" />
+        <StatCard label="Project completion" loading={wbsLoading || relLoading} value={wbsLoading || relLoading ? '…' : relFailed || wbsFailed ? '—' : wh.hasWbs ? `${wh.pct}%` : '—'} foot={relFailed || wbsFailed ? 'Couldn’t load' : wh.hasWbs ? `${wh.completion.done}/${wh.completion.total} incl. bugs` : 'NO WBS YET'} />
+        <StatCard label="Open bugs" loading={relLoading} tone={critical ? 'danger' : 'neutral'} value={relLoading ? '…' : relFailed ? '—' : totals.openBugs.toLocaleString()} foot={relFailed ? 'Couldn’t load' : `${critical} critical`} />
+        <StatCard label="Builds" loading={relLoading} value={relLoading ? '…' : relFailed ? '—' : totals.builds.toLocaleString()} foot="All time" />
+        <StatCard label="Pass rate" loading={relLoading} value={relLoading ? '…' : !relFailed && passRate != null ? `${passRate}%` : '—'} foot="Of QA decisions" />
+        <StatCard label="Blocked tasks" loading={wbsLoading} tone={wh.blocked ? 'warning' : 'neutral'} value={wbsLoading ? '…' : wbsFailed ? '—' : (wh.blocked || 0).toLocaleString()} foot="Marked blocked in the WBS" />
       </div>
 
       <div className="dash-mid">
@@ -413,9 +413,18 @@ export function ProjectHub({
     queryFn: () => api.fetchProjectBugs(selId),
     enabled: !!selId,
   });
+  // the same server-side totals the project cards show (builds, open/resolved
+  // bugs), so the card and this page can't disagree. null = RPC not deployed.
+  const summaryQ = useQuery({
+    queryKey: ['releases', 'projectSummaries', selId || ''],
+    queryFn: () => api.fetchProjectSummaries([selId]),
+    enabled: !!selId,
+    staleTime: 0,
+  });
   const setSel = onSelectProject || setLocalSel;
   const [tab, setTab] = useState('overview');
-  const [wbs, setWbs] = useState({ items: [], targets: [], loading: false });
+  const [wbs, setWbs] = useState({ items: [], targets: [], loading: false, error: null });
+  const [wbsReload, setWbsReload] = useState(0);
   const [timeLogs, setTimeLogs] = useState({ list: [], loading: false });
 
   const project = selId ? projectsById[selId] : null;
@@ -425,17 +434,17 @@ export function ProjectHub({
   const cms = useCmsData(isCms ? selId : null);
 
   useEffect(() => {
-    if (!selId || isCms) { setWbs({ items: [], targets: [], loading: false }); return; }
+    if (!selId || isCms) { setWbs({ items: [], targets: [], loading: false, error: null }); return; }
     let cancelled = false;
-    setWbs((w) => ({ ...w, loading: true }));
+    setWbs((w) => ({ ...w, loading: true, error: null }));
     Promise.all([
       api.fetchWbsItemsForProjects([selId]),
       api.fetchWbsPlatformTargetsForProjects([selId]),
     ])
-      .then(([items, targets]) => { if (!cancelled) setWbs({ items, targets, loading: false }); })
-      .catch(() => { if (!cancelled) setWbs({ items: [], targets: [], loading: false }); });
+      .then(([items, targets]) => { if (!cancelled) setWbs({ items, targets, loading: false, error: null }); })
+      .catch((e) => { if (!cancelled) setWbs({ items: [], targets: [], loading: false, error: e }); });
     return () => { cancelled = true; };
-  }, [selId, isCms]);
+  }, [selId, isCms, wbsReload]);
 
   // time: totals from the database (project_time_totals) and one page of
   // entries; until that migration is applied, every entry is loaded as before
@@ -524,12 +533,33 @@ export function ProjectHub({
 
   // ---- per-project rollup (mirrors Command Center projRows) ----
   const nowMs = Date.now();
+  // A failed load must never read as "0 bugs / 95% done": every number that
+  // depends on it shows "—" and a banner says what didn't load.
+  const loadFailed = [
+    projRelQ.isError && 'builds',
+    projBugsQ.isError && 'bugs',
+    wbs.error && 'the WBS',
+  ].filter(Boolean);
   const relLoading = projRelQ.isPending || projBugsQ.isPending;
+  const relFailed = projRelQ.isError || projBugsQ.isError;
+  const retryLoad = () => {
+    if (projRelQ.isError) projRelQ.refetch();
+    if (projBugsQ.isError) projBugsQ.refetch();
+    if (wbs.error) setWbsReload((n) => n + 1);
+    summaryQ.refetch();
+  };
   const rel = projRelQ.data || [];
   const pbugs = projBugsQ.data || [];
   const projReleaseById = Object.fromEntries(rel.map((r) => [r.id, r]));
   const wh = computeProjectWbsHealth(wbs.items, wbs.targets, nowMs, liveBugs(pbugs, projReleaseById));
   const openBugs = pbugs.filter(isActiveBug);
+  // headline totals: the server summary (same as the project card) when it's
+  // available, else counted from the lists just loaded — the same definitions
+  const summary = summaryQ.data?.[selId] || null;
+  const totals = {
+    builds: summary ? summary.builds : rel.length,
+    openBugs: summary ? summary.openBugs : openBugs.length,
+  };
   const critical = openBugs.filter((b) => b.severity === 'critical').length;
   const active = rel.find((r) => !isClosedStatus(r.status)) || null;
   const m = computeReleaseMetrics(rel, pbugs, { releaseById: projReleaseById });
@@ -557,7 +587,7 @@ export function ProjectHub({
     ['builds', 'Builds'],
     ['time', 'Time'],
     ['team', `Team${members.length ? ` (${members.length})` : ''}`],
-    ['bugs', `Bugs${openBugs.length ? ` (${openBugs.length})` : ''}`],
+    ['bugs', `Bugs${!relFailed && totals.openBugs ? ` (${totals.openBugs})` : ''}`],
   ];
 
   return (
@@ -571,12 +601,21 @@ export function ProjectHub({
           {isCms ? <Pill label={`CMS · ${cmsKindLabel(project.cmsKind)}`} tone="info" /> : project.type && <ProjectTypeTag type={project.type} />}
         </span>}
         subtitle={isCms ? 'Website work, tracked as tasks and a development journey (no WBS)' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          {relLoading ? <Skeleton width={96} height={12} /> : <><HealthDot tone={health.tone} />{health.label}</>}
+          {relLoading ? <Skeleton width={96} height={12} /> : relFailed ? <span style={{ color: 'var(--color-text-tertiary)' }}>Health unavailable</span> : <><HealthDot tone={health.tone} />{health.label}</>}
         </span>}
         actions={<button style={{ ...primaryButton(false) }} onClick={onSubmit}>Submit release</button>}
       />
 
       <SubTabs tabs={tabs} active={tab} onChange={setTab} />
+
+      {loadFailed.length > 0 && (
+        <div role="alert" style={{ ...card, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+          <span style={{ flex: 1, minWidth: 200, fontSize: 13 }}>
+            Couldn’t load {loadFailed.join(' and ')} for this project, so the numbers that depend on {loadFailed.length === 1 ? 'it' : 'them'} are hidden rather than shown as zero.
+          </span>
+          <button style={ghostButton} onClick={retryLoad}>Retry</button>
+        </div>
+      )}
 
       {isCms && tab === 'overview' && (
         <CmsOverview project={project} tasks={cms.tasks} stages={cms.stages} loading={cms.loading} missing={cms.missing} profilesById={profilesById} onTab={setTab} />
@@ -596,6 +635,7 @@ export function ProjectHub({
       {!isCms && tab === 'overview' && (
         <OverviewTab
           project={project} rel={rel} pbugs={pbugs} wh={wh} wbsLoading={wbs.loading} relLoading={relLoading}
+          relFailed={relFailed} wbsFailed={!!wbs.error} totals={totals}
           openBugs={openBugs} critical={critical} active={active} passRate={passRate}
           health={health} profilesById={profilesById} onOpenRelease={onOpenRelease} onTab={setTab}
         />
@@ -614,7 +654,7 @@ export function ProjectHub({
       {tab === 'builds' && (
         relLoading ? (
           <SkeletonList rows={4} height={64} card label="Loading builds" />
-        ) : rel.length === 0 ? (
+        ) : relFailed ? null : rel.length === 0 ? (
           <div style={{ ...card, padding: 48, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>No builds submitted for this project yet.</div>
         ) : (
           <ReleaseHistory releases={rel} projectsById={projectsById} profilesById={profilesById} onRowClick={(r) => onOpenRelease(r.id)} />
@@ -636,6 +676,7 @@ export function ProjectHub({
       )}
       {tab === 'bugs' && (
         relLoading ? <SkeletonList rows={4} height={64} card label="Loading bugs" />
+          : relFailed ? null
           : <BugsTab projectId={selId} bugs={pbugs} releaseById={projReleaseById} projectsById={projectsById} onOpenRelease={onOpenRelease} />
       )}
     </div>

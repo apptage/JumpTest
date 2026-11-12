@@ -1336,6 +1336,12 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
     <>
       <datalist id="wbs-platforms">{[...new Set([...trackPlatforms, ...WBS_PLATFORM_TYPES])].map((p) => <option key={p} value={p} />)}</datalist>
       <PageHeader title="WBS Builder" subtitle="Flexible work breakdown — group by platform & module, one status per item" />
+      {own && (relQ.isError || bugQ.isError) && (
+        <div role="alert" style={{ ...card, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--danger)', color: 'var(--danger)', fontSize: 13 }}>
+          <span style={{ flex: 1, minWidth: 200 }}>Couldn’t load this project’s {relQ.isError ? 'builds' : 'bugs'}, so completion below leaves bugs out.</span>
+          <button style={ghostButton} onClick={() => { relQ.refetch(); bugQ.refetch(); }}>Retry</button>
+        </div>
+      )}
 
       <div className="filter-bar">
         <select style={fSel} aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
