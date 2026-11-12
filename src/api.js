@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { normalizeWbsStatus } from './constants.js';
+import { normalizeWbsStatus, CLOSED_BUG_STATUSES } from './constants.js';
 import { makeTimeLogApi, mapTimeLog as mapTimeLogRow } from './api/timeLogs.js';
 
 /* ------------------------------------------------------------------ */
@@ -43,6 +43,9 @@ export function mapProject(p) {
     ongoingSupport: !!p.ongoing_support,
     cmsKind: p.type === 'cms' ? p.cms_kind || 'website' : null,
     createdAt: p.created_at,
+    // 'YYYY-MM-DD' or null (202611120001_project_dates.sql)
+    startDate: p.start_date ?? null,
+    targetCompletionDate: p.target_completion_date ?? null,
   };
 }
 
@@ -1716,7 +1719,9 @@ export async function fetchProjectReleases(projectId) {
 export async function fetchProjectBugs(projectId) {
   const data = await selectEvery(() => supabase
     .from('bugs')
-    .select('*, releases!inner(project_id)')
+    // bugs link to releases three ways (current / carried-from / origin): name
+    // the one we mean, or PostgREST rejects the join as ambiguous (PGRST201)
+    .select('*, releases!bugs_release_id_fkey!inner(project_id)')
     .eq('releases.project_id', projectId)
     .order('created_at', { ascending: false })
     .order('id'));
@@ -1826,13 +1831,14 @@ export async function fetchStreamVersions(projectId, platform, component) {
     .map((r) => r.version);
 }
 
-// bugs with this status on releases that aren't closed, in these projects (null = all)
+// bugs on releases that aren't closed, in these projects (null = all).
+// status: a bug status, or 'active' = every bug not yet Verified (isActiveBug)
 export async function countLiveBugs({ projectIds = null, status }) {
   let q = supabase
     .from('bugs')
-    .select('id, releases!inner(status, project_id)', { count: 'exact', head: true })
-    .eq('status', status)
+    .select('id, releases!bugs_release_id_fkey!inner(status, project_id)', { count: 'exact', head: true })
     .neq('releases.status', 'closed');
+  q = status === 'active' ? q.not('status', 'in', `(${CLOSED_BUG_STATUSES.join(',')})`) : q.eq('status', status);
   if (projectIds) q = q.in('releases.project_id', projectIds.length ? projectIds : ['00000000-0000-0000-0000-000000000000']);
   const { count, error } = await q;
   if (error) throw error;
@@ -1850,7 +1856,7 @@ export async function searchReleasesAndBugs({ term, projectIds = null, projectNa
   const [rel, bug] = await Promise.all([
     scope(supabase.from('releases').select('*'), 'project_id').or(relOr).order('created_at', { ascending: false }).limit(5),
     tt
-      ? scope(supabase.from('bugs').select('*, releases!inner(project_id)'), 'releases.project_id').ilike('title', `%${tt}%`).order('created_at', { ascending: false }).limit(5)
+      ? scope(supabase.from('bugs').select('*, releases!bugs_release_id_fkey!inner(project_id)'), 'releases.project_id').ilike('title', `%${tt}%`).order('created_at', { ascending: false }).limit(5)
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (rel.error) throw rel.error;

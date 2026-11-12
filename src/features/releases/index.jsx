@@ -47,6 +47,7 @@ import {
   humanizeSince,
   formatVersion,
   isSqaTrack,
+  isActiveBug,
   wbsTrackLabel,
   WBS_TRACK_ORDER, tint } from '@/constants.js';
 import { IconDownload, IconExternal } from '@/icons.jsx';
@@ -815,7 +816,7 @@ export function DetailModal({
     }
   }
 
-  const openBugs = bugs.filter((b) => b.status === 'open').length;
+  const openBugs = bugs.filter(isActiveBug).length; // not yet Verified, as everywhere else
   // QA testers assignable to this release: QA role only (never Admin),
   // limited to the release's project team.
   // QA testers assignable to this release = active QA members of the project

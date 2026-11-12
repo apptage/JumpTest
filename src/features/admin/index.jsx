@@ -8,7 +8,7 @@ import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, Modal
 import { Field, Pager, filterSelect, filterInput, ActionMenu, onTabListKeyDown } from '@shared/ui-kit.jsx';
 import { StatSmall, Pill, passColor, SkeletonCards, SkeletonList, Skeleton } from '@shared/dashboard-kit.jsx';
 import { computeProjectSummaries, computeUserSummaries, projectSummaryFromCounts } from '@shared/releaseMetrics.js';
-import { computeWorkCompletion, liveBugs } from '@shared/wbsMetrics.js';
+import { computeProjectWbsHealth, liveBugs } from '@shared/wbsMetrics.js';
 import {
   ALLOWED_EMAIL_DOMAIN,
   PROJECT_TYPES,
@@ -810,19 +810,31 @@ export function ProjectsTab({
     enabled: pageIds.length > 0,
     staleTime: 30_000,
   });
-  const completions = useMemo(() => {
+  const targetsQ = useQuery({
+    queryKey: ['projectsWbsTargets', pageIdsKey],
+    queryFn: () => api.fetchWbsPlatformTargetsForProjects(pageIdsKey.split(',').filter((id) => pageRows.find((r) => r.p.id === id)?.p.type !== 'cms')),
+    enabled: pageIds.length > 0,
+    staleTime: 30_000,
+  });
+  // per project: the SAME rollup the project page's Overview uses
+  // (computeProjectWbsHealth), so interfaces / modules / story points /
+  // completion on a card always match the page it opens
+  const wbsHealth = useMemo(() => {
     const releaseById = Object.fromEntries(live.releases.map((r) => [r.id, r]));
     const itemsBy = {};
     (wbsQ.data || []).forEach((i) => (itemsBy[i.projectId] = itemsBy[i.projectId] || []).push(i));
+    const targetsBy = {};
+    (targetsQ.data || []).forEach((t) => (targetsBy[t.projectId] = targetsBy[t.projectId] || []).push(t));
     const bugsBy = {};
     liveBugs(live.bugs, releaseById).forEach((b) => {
       const pid = releaseById[b.releaseId]?.projectId;
       if (pid) (bugsBy[pid] = bugsBy[pid] || []).push(b);
     });
     const out = {};
-    Object.keys(itemsBy).forEach((pid) => { out[pid] = computeWorkCompletion(itemsBy[pid], bugsBy[pid]); });
+    const now = Date.now();
+    Object.keys(itemsBy).forEach((pid) => { out[pid] = computeProjectWbsHealth(itemsBy[pid], targetsBy[pid] || [], now, bugsBy[pid]); });
     return out;
-  }, [wbsQ.data, live.bugs, live.releases]);
+  }, [wbsQ.data, targetsQ.data, live.bugs, live.releases]);
   const cmsIds = pageRows.filter((r) => r.p.type === 'cms').map((r) => r.p.id).sort();
   const cmsQ = useQuery({
     queryKey: ['cmsTaskCounts', cmsIds.join(',')],
@@ -1006,7 +1018,9 @@ export function ProjectsTab({
                 brands={brands}
                 summary={summary}
                 summaryLoading={loading}
-                completion={completions[p.id]}
+                completion={wbsHealth[p.id]?.completion}
+                wbs={wbsHealth[p.id] || null}
+                wbsLoading={wbsQ.isPending}
                 cmsCounts={p.type === 'cms' ? (cmsQ.isError ? null : cmsQ.data ? cmsQ.data[p.id] || { open: 0, done: 0, total: 0 } : undefined) : undefined}
                 items={checklistItems.filter((c) => c.projectId === p.id)}
                 profiles={profiles}
@@ -1094,23 +1108,52 @@ function cmsStatus(c) {
   return c.open ? { label: 'Work ongoing', tone: 'info' } : { label: 'All done', tone: 'success' };
 }
 
-/* Bird's-eye strip on each project tile: three number boxes, then two one-line
-   rows (completion, QA status). Every row is always there, so every card has
-   the same layout whatever the project holds.
-   isCms: task totals instead of builds (cmsCounts: undefined = loading, null = unavailable). */
+/* Bird's-eye strip on each project tile. Fixed rows in a fixed order, so every
+   card has the same layout whatever the project holds:
+     dates · builds / open bugs / latest build · interfaces / modules / story
+     points (WBS) · progress bar · QA status · unit lead + team.
+   Numbers come from the same sources as the project page: the project_summaries
+   RPC for builds and bugs, computeProjectWbsHealth for the WBS rows.
+   isCms: task totals instead of builds / WBS (cmsCounts: undefined = loading, null = unavailable). */
 const ROW = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)', minWidth: 0, height: 18, whiteSpace: 'nowrap', overflow: 'hidden' };
-function ProjectSummary({ s, completion, loading = false, isCms = false, cmsCounts }) {
+const fmtDay = (d) => {
+  if (!d) return null;
+  const dt = new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00` : d);
+  return Number.isNaN(dt.getTime()) ? null : dt.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+};
+// the latest WBS platform Completion milestone, used until a target date is set
+const latestMilestone = (wbs) =>
+  (wbs?.byPlatform || []).map((p) => p.target?.completionDate).filter(Boolean).sort().pop() || null;
+
+function ProjectSummary({ project, s, wbs, wbsLoading = false, completion, loading = false, isCms = false, cmsCounts, lead, team }) {
   const qa = s.latest ? STATUSES[s.latest.status] : null;
-  const cell = (label, value, color) => (
-    <div title={label} style={{ flex: 1, minWidth: 0, padding: '8px', borderRadius: 8, background: 'var(--color-background-secondary)' }}>
-      <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: value ? color : 'var(--color-text-primary)' }}>{value}</div>
+  const cell = (label, value, color, title) => (
+    <div title={title || label} style={{ flex: 1, minWidth: 0, padding: '8px', borderRadius: 8, background: 'var(--color-background-secondary)' }}>
+      <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: value && value !== '—' ? color : 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
       {/* two lines at most, same height in every box, so labels are never cut off */}
       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2, lineHeight: 1.25, height: 30, overflow: 'hidden', overflowWrap: 'anywhere' }}>{label}</div>
     </div>
   );
   const dash = <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>;
+  const strong = { fontWeight: 600, color: 'var(--color-text-primary)' };
+
+  // dates: the project's own, else created date / latest WBS milestone (marked)
+  const start = fmtDay(project.startDate) || fmtDay(project.createdAt);
+  const startGuess = !project.startDate;
+  const target = fmtDay(project.targetCompletionDate) || fmtDay(latestMilestone(wbs));
+  const targetGuess = !project.targetCompletionDate;
+  const wbsNum = (n) => (wbsLoading ? '…' : wbs?.hasWbs ? n : '—');
+  const pct = completion?.pct ?? null;
+  const done = pct === 100;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={ROW}>
+        <span>Start <span style={strong} title={startGuess ? 'No start date set — showing when the project was created' : undefined}>{start || '—'}{start && startGuess ? '*' : ''}</span></span>
+        <span style={{ color: 'var(--color-text-tertiary)' }}>→</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Est. completion <span style={strong} title={target && targetGuess ? 'No target date set — showing the latest WBS completion milestone' : undefined}>{target || '—'}{target && targetGuess ? '*' : ''}</span></span>
+      </div>
+
       {isCms ? (
         <div style={{ display: 'flex', gap: 8 }}>
           {cell(`Open task${cmsCounts?.open === 1 ? '' : 's'}`, cmsCounts == null ? '…' : cmsCounts.open, 'var(--color-text-primary)')}
@@ -1118,25 +1161,43 @@ function ProjectSummary({ s, completion, loading = false, isCms = false, cmsCoun
           {cell('Open bugs', loading ? '…' : s.openBugs, 'var(--danger)')}
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: 8 }}>
-          {cell(`Build${s.builds === 1 ? '' : 's'} submitted`, loading ? '…' : s.builds, 'var(--color-text-primary)')}
-          {cell('Open bugs', loading ? '…' : s.openBugs, 'var(--danger)')}
-          {cell('Resolved bugs', loading ? '…' : s.resolvedBugs, 'var(--success)')}
-        </div>
+        <>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {cell(`Build${s.builds === 1 ? '' : 's'} submitted`, loading ? '…' : s.builds, 'var(--color-text-primary)')}
+            {cell('Open bugs', loading ? '…' : s.openBugs, 'var(--danger)', `${s.openBugs} open · ${s.resolvedBugs} resolved`)}
+            {cell('Latest build', loading ? '…' : s.latest ? formatVersion(s.latest.version) : '—', 'var(--color-text-primary)')}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {cell(`Interface${wbs?.byPlatform?.length === 1 ? '' : 's'}`, wbsNum(wbs?.byPlatform?.length), 'var(--color-text-primary)', 'Interfaces (platforms) in the WBS')}
+            {cell(`Module${wbs?.byModule?.length === 1 ? '' : 's'}`, wbsNum(wbs?.byModule?.length), 'var(--color-text-primary)', 'Modules in the WBS')}
+            {cell(`Story point${wbs?.total === 1 ? '' : 's'}`, wbsNum(wbs?.total), 'var(--color-text-primary)', 'Story points in the WBS, every tab')}
+          </div>
+        </>
       )}
-      <div style={ROW}>
-        <span style={{ fontWeight: 600 }}>Completion</span>
-        {completion ? (
-          <>
-            <span className="tnum" style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{completion.pct}%</span>
-            {completion.open > 0 && <span style={{ color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>· {completion.open} still open</span>}
-          </>
-        ) : isCms ? (
-          cmsCounts == null ? dash : cmsCounts.total ? (
-            <span className="tnum" style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{Math.round((cmsCounts.done / cmsCounts.total) * 100)}% of tasks done</span>
-          ) : <span style={{ color: 'var(--color-text-tertiary)' }}>No tasks yet</span>
-        ) : dash}
+
+      {/* progress: the same completion % as the project page (story points + bugs) */}
+      <div>
+        <div style={{ ...ROW, marginBottom: 4 }}>
+          <span style={{ fontWeight: 600 }}>Progress</span>
+          {pct != null ? (
+            <>
+              <span className="tnum" style={{ fontWeight: 600, color: done ? 'var(--success)' : 'var(--color-text-primary)' }}>{pct}%</span>
+              {completion.open > 0 && <span style={{ color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>· {completion.open} still open</span>}
+            </>
+          ) : isCms && cmsCounts?.total ? (
+            <span className="tnum" style={strong}>{Math.round((cmsCounts.done / cmsCounts.total) * 100)}% of tasks done</span>
+          ) : wbsLoading ? <span style={{ color: 'var(--color-text-tertiary)' }}>…</span> : <span style={{ color: 'var(--color-text-tertiary)' }}>{isCms ? 'No tasks yet' : 'No WBS yet'}</span>}
+        </div>
+        {(() => {
+          const w = pct != null ? pct : isCms && cmsCounts?.total ? Math.round((cmsCounts.done / cmsCounts.total) * 100) : 0;
+          return (
+            <div role="progressbar" aria-label="Project progress" aria-valuenow={w} aria-valuemin={0} aria-valuemax={100} style={{ height: 6, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden' }}>
+              <div style={{ width: `${w}%`, height: '100%', borderRadius: 999, background: w === 100 ? 'var(--success)' : 'var(--brand)' }} />
+            </div>
+          );
+        })()}
       </div>
+
       <div style={ROW}>
         <span style={{ fontWeight: 600 }}>{isCms ? 'Tasks' : 'QA status'}</span>
         {isCms ? (
@@ -1155,6 +1216,21 @@ function ProjectSummary({ s, completion, loading = false, isCms = false, cmsCoun
           <span style={{ color: 'var(--color-text-tertiary)' }}>No builds yet</span>
         )}
       </div>
+
+      {/* unit lead + team members */}
+      <div style={ROW} title={[lead.length ? `Unit lead: ${lead.map((p) => p.name).join(', ')}` : 'No unit lead', team.length ? `Team: ${team.map((p) => p.name).join(', ')}` : 'No team members'].join('\n')}>
+        <span style={{ fontWeight: 600 }}>Lead</span>
+        <span style={{ ...strong, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%' }}>{lead.length ? lead.map((p) => p.name).join(', ') : '—'}</span>
+        <span style={{ fontWeight: 600, marginLeft: 4 }}>Team</span>
+        {team.length ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0 }}>
+            {team.slice(0, 4).map((p, i) => (
+              <span key={p.id} style={{ marginLeft: i ? -6 : 0, borderRadius: 999, boxShadow: '0 0 0 2px var(--color-background-primary, #fff)', display: 'inline-flex' }}><Avatar name={p.name} size={18} /></span>
+            ))}
+            <span style={{ marginLeft: 6, ...strong }}>{team.length}</span>
+          </span>
+        ) : <span style={{ color: 'var(--color-text-tertiary)' }}>None</span>}
+      </div>
     </div>
   );
 }
@@ -1162,7 +1238,7 @@ function ProjectSummary({ s, completion, loading = false, isCms = false, cmsCoun
 /* Every card is the same height: one-line title and subtitle, the summary strip,
    one line of labels (extra ones fold into "+N") and the buttons pinned at the
    bottom. Nothing on the card expands: Edit and Manage open a modal. */
-export const PROJECT_CARD_HEIGHT = 320;
+export const PROJECT_CARD_HEIGHT = 450;
 const cardBtn = { padding: '8px 12px', minHeight: 0, fontSize: 12, flex: 1 };
 
 function ProjectRow({
@@ -1178,6 +1254,8 @@ function ProjectRow({
   summary,
   summaryLoading = false,
   completion,
+  wbs = null,
+  wbsLoading = false,
   cmsCounts,
   onOpen = null,
   items,
@@ -1209,8 +1287,11 @@ function ProjectRow({
     projectBrand && { label: projectBrand.name, tone: 'neutral' },
     project.ongoingSupport && { label: 'Ongoing support', tone: 'info' },
     { label: `${items.length} checklist item${items.length === 1 ? '' : 's'}`, tone: 'neutral' },
-    { label: `${members.length} member${members.length === 1 ? '' : 's'}`, tone: 'neutral' },
   ].filter(Boolean);
+  // unit lead = the Team Lead(s) of the project's team; team = its members
+  const byId = Object.fromEntries((profiles || []).map((p) => [p.id, p]));
+  const lead = project.teamId ? (profiles || []).filter((p) => p.role === 'Team Lead' && p.teamId === project.teamId) : [];
+  const team = [...new Map(members.filter(api.membershipActive).map((m) => byId[m.userId]).filter(Boolean).map((p) => [p.id, p])).values()];
   const MAX_TAGS = 3;
   const shownTags = tags.slice(0, MAX_TAGS);
   const moreTags = tags.slice(MAX_TAGS);
@@ -1237,7 +1318,7 @@ function ProjectRow({
           <span style={{ flexShrink: 0, minWidth: 0, maxWidth: 120, overflow: 'hidden' }}>{pill && <Pill label={pill.label} tone={pill.tone} />}</span>
         </div>
 
-        <ProjectSummary s={s} completion={completion} loading={summaryLoading} isCms={isCms} cmsCounts={cmsCounts} />
+        <ProjectSummary project={project} s={s} wbs={wbs} wbsLoading={wbsLoading} completion={completion} loading={summaryLoading} isCms={isCms} cmsCounts={cmsCounts} lead={lead} team={team} />
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', overflow: 'hidden', height: 22, flexShrink: 0 }}>
           {shownTags.map((tg) => <Pill key={tg.label} label={tg.label} tone={tg.tone} />)}
@@ -1297,9 +1378,12 @@ function EditProjectModal({ project, canMoveTeam, teams, brands, isSubmitting, o
     cmsKind: project.cmsKind || 'website',
     team: project.teamId || '',
     brand: project.brandId || '',
+    startDate: project.startDate || '',
+    targetDate: project.targetCompletionDate || '',
   });
   const set = (k, v) => setEdit((e) => ({ ...e, [k]: v }));
-  const invalid = !edit.name.trim() || isSubmitting;
+  const datesBad = !!(edit.startDate && edit.targetDate && edit.targetDate < edit.startDate);
+  const invalid = !edit.name.trim() || datesBad || isSubmitting;
   async function save() {
     if (invalid) return;
     const patch = { name: edit.name.trim(), type: edit.type, platform: projectTypeLabel(edit.type) };
@@ -1308,6 +1392,9 @@ function EditProjectModal({ project, canMoveTeam, teams, brands, isSubmitting, o
       !await confirmAction('CMS projects have no WBS. This project’s WBS will be hidden (its items are kept). Continue?')) return;
     if (canMoveTeam) patch.team_id = edit.team || null;
     if (brands.length) patch.brand_id = edit.brand || null;
+    // only sent when changed, so saving other details never depends on the dates migration
+    if ((edit.startDate || null) !== (project.startDate || null)) patch.start_date = edit.startDate || null;
+    if ((edit.targetDate || null) !== (project.targetCompletionDate || null)) patch.target_completion_date = edit.targetDate || null;
     const ok = await onUpdate(project.id, patch);
     if (ok) onClose();
   }
@@ -1356,6 +1443,19 @@ function EditProjectModal({ project, canMoveTeam, teams, brands, isSubmitting, o
             <BrandSelect brands={brands} value={edit.brand} onChange={(v) => set('brand', v)} />
           </div>
         )}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={labelStyle} htmlFor="edit-project-start">Start date</label>
+            <input id="edit-project-start" type="date" style={inputStyle} value={edit.startDate} onChange={(e) => set('startDate', e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle} htmlFor="edit-project-target">Estimated completion</label>
+            <input id="edit-project-target" type="date" style={{ ...inputStyle, borderColor: datesBad ? 'var(--c-red)' : undefined }} value={edit.targetDate} min={edit.startDate || undefined} onChange={(e) => set('targetDate', e.target.value)} />
+          </div>
+          <div style={{ gridColumn: '1 / -1', fontSize: 12, color: datesBad ? 'var(--c-red)' : 'var(--color-text-tertiary)' }}>
+            {datesBad ? 'Estimated completion can’t be before the start date.' : 'Shown on the project card. Left empty, the card uses the created date and the latest WBS completion milestone (marked *).'}
+          </div>
+        </div>
       </div>
     </ModalShell>
   );
