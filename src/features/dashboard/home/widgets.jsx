@@ -255,7 +255,7 @@ function ProjectHealthView({ health, onOpenProject, onNavigate, limit = 8, title
 }
 
 /* ---- People and workload ---- */
-function PeopleWorkloadView({ rows, title = 'Team workload', subtitle, teamsById, limit = 8, onNavigate }) {
+function PeopleWorkloadView({ rows, title = 'Team Workload Overview', subtitle, teamsById, limit = 8, onNavigate }) {
   const [all, setAll] = useState(false);
   const shown = all ? rows : rows.slice(0, limit);
   const th = { fontSize: 12, fontWeight: 600, color: 'var(--color-text-tertiary)', textAlign: 'right', padding: '0 0 8px 12px', whiteSpace: 'nowrap' };
@@ -266,7 +266,7 @@ function PeopleWorkloadView({ rows, title = 'Team workload', subtitle, teamsById
       size="lg"
       head={<PanelHead
         title={title}
-        subtitle={subtitle || 'Busiest first. Workload counts builds in QA, bugs to fix, reviews and active tasks, compared with the typical person here.'}
+        subtitle={subtitle || 'Team members ranked by pending workload. Overview of team members\' pending builds, bugs, QA send-backs, reviews and active tasks to help managers identify outstanding work and resource availability.'}
         right={onNavigate && <LinkButton onClick={() => onNavigate('users')}>All users</LinkButton>}
       />}
       footer={rows.length > limit && <LinkButton onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${rows.length} people`}</LinkButton>}
@@ -282,7 +282,7 @@ function PeopleWorkloadView({ rows, title = 'Team workload', subtitle, teamsById
                 <th style={th} title="Builds they must test">Reviews</th>
                 <th style={th} title="WBS / CMS tasks in progress">Tasks</th>
                 <th style={th} title="Tasks past their due date">Overdue</th>
-                <th style={th}>Workload</th>
+                <th style={th} title="Pending work compared with the typical person here">Workload Status</th>
               </tr>
             </thead>
             <tbody>
@@ -365,5 +365,5 @@ export const AttentionList = withLoading(AttentionListView, () => 'Needs your at
 export const WhereWorkWaits = withLoading(WhereWorkWaitsView, () => 'Where work is waiting');
 export const WeeklyBars = withLoading(WeeklyBarsView, (p) => (p.mode === 'bugs' ? 'Are we keeping up with bugs?' : 'Are builds getting through QA?'), 'sm');
 export const ProjectHealth = withLoading(ProjectHealthView, (p) => p.title || 'Project health');
-export const PeopleWorkload = withLoading(PeopleWorkloadView, (p) => p.title || 'Team workload');
+export const PeopleWorkload = withLoading(PeopleWorkloadView, (p) => p.title || 'Team Workload Overview');
 export const ItemList = withLoading(ItemListView, (p) => p.title, 'md');

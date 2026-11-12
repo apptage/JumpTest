@@ -127,7 +127,7 @@ function AdminView({ header, ctx, me, teams, go, onOpenRelease, onOpenProject, o
         </div>
         <div className="home-2col">
           <ProjectHealth health={health} onOpenProject={onOpenProject} onNavigate={onNavigate} />
-          <PeopleWorkload rows={people} teamsById={teamsById} onNavigate={peoplePages ? onNavigate : null} title="Who is busy" />
+          <PeopleWorkload rows={people} teamsById={teamsById} onNavigate={peoplePages ? onNavigate : null} title="Team Workload Overview" />
         </div>
         <div className="home-2col">
           <WeeklyBars trend={trend} mode="bugs" />
@@ -166,7 +166,7 @@ function LeadView({ header, ctx, me, go, onOpenRelease, onOpenProject, onNavigat
         </KpiRow>
         <div className="home-2col">
           <AttentionList items={attention} onAction={go} />
-          <PeopleWorkload rows={people} title="Your team" subtitle="Who is busy and who has room, compared with the typical load on your team." />
+          <PeopleWorkload rows={people} title="Team Workload Overview" subtitle="Team members ranked by pending workload, compared with the typical person on your team, to help you see outstanding work and who is available for assignment." />
         </div>
         <div className="home-2col">
           <WhereWorkWaits releaseFlow={rf} bugFlow={bf} onNavigate={onNavigate} />

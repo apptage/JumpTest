@@ -211,11 +211,11 @@ export function projectHealth(ctx, projects = ctx.projects) {
 /* Workload is graded against the group's typical (median) load, so the labels
    stay meaningful whether the whole org is quiet or flat out. */
 export const LOAD_LEVELS = {
-  available: { label: 'Available', tone: 'success' },
-  light: { label: 'Light', tone: 'success' },
-  normal: { label: 'Normal', tone: 'neutral' },
-  heavy: { label: 'Heavy', tone: 'warning' },
-  overloaded: { label: 'Overloaded', tone: 'danger' },
+  available: { key: 'available', label: 'Available for Assignment', tone: 'success' },
+  light: { key: 'light', label: 'Low Pending Work', tone: 'success' },
+  normal: { key: 'normal', label: 'Moderate Pending Work', tone: 'neutral' },
+  heavy: { key: 'heavy', label: 'Significant Pending Work', tone: 'warning' },
+  overloaded: { key: 'overloaded', label: 'High Pending Work', tone: 'danger' },
 };
 export function loadLevel(score, median) {
   if (score <= 0) return LOAD_LEVELS.available;
@@ -286,7 +286,7 @@ export function attentionForAdmin(ctx, { teams = [], health, people }) {
   const atRisk = health.rows.filter((r) => r.status.label === 'At risk');
   const agingBugs = ctx.activeBugs.filter((b) => bugSlaLevel(b.status, b.createdAt) === 'over');
   const pendingTl = ctx.activeBugs.filter((b) => b.status === 'pending_tl');
-  const overloaded = people.filter((p) => p.level.label === 'Overloaded');
+  const overloaded = people.filter((p) => p.level.key === 'overloaded');
   const qaByTeam = new Set(ctx.profiles.filter((p) => p.role === 'QA').map((p) => p.teamId));
   const noQa = teams.filter((t) => !qaByTeam.has(t.id) && ctx.activeReleases.some((r) => ctx.projectById[r.projectId]?.teamId === t.id && (r.status === 'qa_pending' || r.status === 'qa_in_progress')));
   const overdueTasks = ctx.tasks.filter((t) => isOverdue(t, ctx.now));
@@ -296,7 +296,7 @@ export function attentionForAdmin(ctx, { teams = [], health, people }) {
     noQa.length && { id: 'noqa', level: 'over', count: noQa.length, title: `${plural(noQa.length, 'team')} without a QA tester`, detail: `${noQa.map((t) => t.name).join(', ')} ${noQa.length === 1 ? 'has' : 'have'} builds waiting but no one to test them.`, action: { label: 'Manage teams', page: 'teams' } },
     releaseItem(ctx, 'unassigned', 'warn', unassigned, `${plural(unassigned.length, 'build')} with no tester assigned`, 'Nobody has picked these up yet.'),
     bugItem(ctx, 'aging', 'warn', agingBugs, `${plural(agingBugs.length, 'bug')} open for more than 5 days`, 'Past the bug fix time limit.'),
-    overloaded.length && { id: 'load', level: 'warn', count: overloaded.length, title: `${plural(overloaded.length, 'person', 'people')} overloaded`, detail: `${overloaded.slice(0, 3).map((w) => w.person.name).join(', ')}${overloaded.length > 3 ? ' and others' : ''}: well over 2× the typical load. Consider moving work to someone with room.`, action: { label: 'See users', page: 'users' } },
+    overloaded.length && { id: 'load', level: 'warn', count: overloaded.length, title: `${plural(overloaded.length, 'person', 'people')} with high pending work`, detail: `${overloaded.slice(0, 3).map((w) => w.person.name).join(', ')}${overloaded.length > 3 ? ' and others' : ''}: well over 2× the typical pending work. Consider assigning new work to someone available.`, action: { label: 'See users', page: 'users' } },
     taskItem('tasks', 'warn', overdueTasks, `${plural(overdueTasks.length, 'task')} past their due date`, 'Across all projects.'),
     bugItem(ctx, 'tl', 'info', pendingTl, `${plural(pendingTl.length, 'bug decision')} waiting for Team Leads`, 'Developers marked these as not a bug, duplicate or out of scope.'),
   ]);
@@ -311,8 +311,8 @@ export function attentionForLead(ctx, { me, people }) {
   const blocking = ctx.activeBugs.filter(isBlockingBug).filter(needsDevWork);
   const overdueTasks = sortTasks(ctx.tasks.filter((t) => isOverdue(t, ctx.now)), ctx.now);
   const blockedTasks = ctx.tasks.filter((t) => t.state === 'blocked');
-  const overloaded = people.filter((p) => p.level.label === 'Overloaded' && p.person.id !== me.id);
-  const idle = people.filter((p) => p.level.label === 'Available' && p.person.id !== me.id);
+  const overloaded = people.filter((p) => p.level.key === 'overloaded' && p.person.id !== me.id);
+  const idle = people.filter((p) => p.level.key === 'available' && p.person.id !== me.id);
   return finish([
     bugItem(ctx, 'tl', 'over', pendingTl, `${plural(pendingTl.length, 'bug decision')} waiting for you`, 'A developer says these are not bugs, duplicates or out of scope. Approve or reject.'),
     bugItem(ctx, 'blocking', 'over', blocking, `${plural(blocking.length, 'blocking bug')} not fixed yet`, 'Critical or major bugs stop a build from being approved.'),
@@ -322,7 +322,7 @@ export function attentionForLead(ctx, { me, people }) {
     bugItem(ctx, 'disputed', 'warn', disputed, `${plural(disputed.length, 'bug')} need clarification`, 'Developer and QA disagree. They may need your call.'),
     taskItem('tasks', 'warn', overdueTasks, `${plural(overdueTasks.length, 'task')} overdue`, 'Past their estimated completion date.'),
     taskItem('blocked', 'warn', blockedTasks, `${plural(blockedTasks.length, 'task')} blocked`, 'Someone is stuck and may need help.'),
-    overloaded.length && { id: 'load', level: 'warn', count: overloaded.length, title: `${plural(overloaded.length, 'team member')} overloaded`, detail: `${overloaded.map((w) => w.person.name).slice(0, 3).join(', ')}${idle.length ? `. Available: ${idle.map((w) => w.person.name).slice(0, 3).join(', ')}` : ''}.`, action: { label: 'See team', page: 'users' } },
+    overloaded.length && { id: 'load', level: 'warn', count: overloaded.length, title: `${plural(overloaded.length, 'team member')} with high pending work`, detail: `${overloaded.map((w) => w.person.name).slice(0, 3).join(', ')}${idle.length ? `. Available for assignment: ${idle.map((w) => w.person.name).slice(0, 3).join(', ')}` : ''}.`, action: { label: 'See team', page: 'users' } },
   ]);
 }
 
