@@ -136,7 +136,7 @@ Deno.serve(async (req) => {
       .eq('id', callerUser.id)
       .maybeSingle();
     if (profErr) return json({ error: 'profile lookup failed: ' + profErr.message }, 500);
-    const STAFF_ROLES = ['Developer', 'QA', 'Team Lead', 'Admin', 'Manager'];
+    const STAFF_ROLES = ['Developer', 'QA', 'Team Lead', 'Project Manager', 'Admin', 'Manager'];
     if (!callerProfile || !STAFF_ROLES.includes(callerProfile.role)) {
       return json({ error: 'Not authorized to send notifications' }, 403);
     }

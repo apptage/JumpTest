@@ -8,7 +8,7 @@ import { useState, useMemo } from 'react';
 import * as api from '@/api.js';
 import { card, primaryButton, ghostButton, inputStyle } from '@/ui.jsx';
 import { Pill } from '@shared/dashboard-kit.jsx';
-import { avgDaysBetween, statusSince } from '@shared/ui-kit.jsx';
+import { avgDaysBetween, statusSince, filterSelect } from '@shared/ui-kit.jsx';
 import { buildWorkbook, downloadWorkbook } from '@shared/exportXlsx.js';
 import { computeReleaseMetrics } from '@shared/releaseMetrics.js';
 import { computeProjectWbsHealth, computeCompositeHealth, milestoneLabel, liveBugs } from '@shared/wbsMetrics.js';
@@ -746,7 +746,7 @@ export function ReportsSection(props) {
   const { isAdmin, teams, profiles, profilesById, showToast } = props;
   const [f, setF] = useState({ from: '', to: '', team: 'all', role: 'all', resource: 'all' });
   const [busy, setBusy] = useState(null);
-  const fSel = { ...inputStyle, width: 'auto', minHeight: 36, padding: '0 10px', fontSize: 12 };
+  const fSel = filterSelect;
   const fSelWide = { ...fSel, minWidth: 180, maxWidth: 260 };
 
   const resourceOptions = useMemo(
@@ -806,13 +806,13 @@ export function ReportsSection(props) {
   }
 
   return (
-    <div style={{ marginBottom: 22 }}>
+    <div style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: 'var(--tracking-tight)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <IconChart size={17} /> Reports
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 3 }}>
+          <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 }}>
             Departmental exports as clean Excel workbooks. For <b>Resource Performance</b>, choose a person, leave dates empty for all-time data, then export.
           </div>
         </div>
@@ -831,7 +831,7 @@ export function ReportsSection(props) {
             ))}
           </select>
           {isAdmin && (
-            <select style={fSel} value={f.team} onChange={(e) => setFilters({ team: e.target.value })}>
+            <select aria-label="Team" style={fSel} value={f.team} onChange={(e) => setFilters({ team: e.target.value })}>
               <option value="all">All teams</option>
               {(teams || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
@@ -855,16 +855,16 @@ export function ReportsSection(props) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
         {REPORTS.map((rep) => (
-          <div key={rep.key} className="mgr-card" style={{ ...card, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div key={rep.key} className="mgr-card" style={{ ...card, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{rep.title}</div>
-            <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.5, flex: 1 }}>{rep.desc}</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5, flex: 1 }}>{rep.desc}</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {rep.sheets.map((s) => <Pill key={s} label={s} tone="neutral" />)}
             </div>
             <button
-              style={{ ...primaryButton(busy === rep.key), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              style={{ ...primaryButton(busy === rep.key), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
               disabled={busy === rep.key || (rep.requiresResource && f.resource === 'all')}
               onClick={() => run(rep)}
             >

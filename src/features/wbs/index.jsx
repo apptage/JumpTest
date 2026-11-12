@@ -6,9 +6,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as api from '@/api.js';
 import { parseWbsFile, parseWbsBulk } from '@/wbs.js';
-import { card, inputStyle, ghostButton, primaryButton, ModalShell } from '@/ui.jsx';
-import { PageHeader, Empty, sideHead } from '@shared/ui-kit.jsx';
-import { StatSmall, SubTabs, Pill } from '@shared/dashboard-kit.jsx';
+import { card, inputStyle, ghostButton, primaryButton, ModalShell, confirmAction } from '@/ui.jsx';
+import { PageHeader, Empty, sideHead, filterSelect, filterInput, ActionMenu, pressable } from '@shared/ui-kit.jsx';
+import { StatSmall, SubTabs, Pill, SkeletonList } from '@shared/dashboard-kit.jsx';
 import { capPct, computeWorkCompletion, liveBugs, wbsQaStatus } from '@shared/wbsMetrics.js';
 import {
   WBS_STATUSES,
@@ -25,16 +25,16 @@ import {
   WBS_PRESETS,
   normalizeWbsStatus,
   SEVERITIES,
-  BUG_STATUSES,
-} from '@/constants.js';
+  BUG_STATUSES, tint } from '@/constants.js';
+import { managesProject } from '@shared/permissions.js';
 
 export function WbsBadge({ status }) {
-  const s = WBS_STATUSES[status] || { label: status, color: '#64748b' };
+  const s = WBS_STATUSES[status] || { label: status, color: 'var(--c-slate)' };
   return (
     <span
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
-        color: s.color, background: `${s.color}1a`, border: `1px solid ${s.color}33`,
+        display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600,
+        color: s.color, background: tint(s.color, 10), border: `1px solid ${tint(s.color, 20)}`,
         padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
       }}
     >
@@ -75,7 +75,7 @@ function ProgressRow({ label, done, total, pct, strong }) {
     <div style={{ minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: strong ? 8 : 6 }}>
         <span style={{ fontSize: 13, fontWeight: strong ? 700 : 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-        <span className="tnum" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{done}/{total}</span>
+        <span className="tnum" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{done}/{total}</span>
         <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: strong ? 20 : 14, fontWeight: 700, color: complete ? 'var(--success)' : 'var(--brand)' }}>{pct}%</span>
       </div>
       <div
@@ -100,7 +100,7 @@ export function ProjectProgress({ interfaces, bugs, overall }) {
   return (
     <>
       {parts.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '14px 24px', paddingBottom: 14, marginBottom: 14, borderBottom: '1px solid var(--color-border-primary)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '14px 24px', paddingBottom: 16, marginBottom: 16, borderBottom: '1px solid var(--color-border-primary)' }}>
           {parts.map((r) => <ProgressRow key={r.key} label={r.label} done={r.done} total={r.total} pct={r.pct} />)}
         </div>
       )}
@@ -114,12 +114,12 @@ export function ProjectProgress({ interfaces, bugs, overall }) {
 export function TrackBreakdown({ byTrack, bugs }) {
   const rows = byTrack.filter((t) => t.total > 0);
   const item = (key, label, value) => (
-    <span key={key} style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+    <span key={key} style={{ fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
       {label} <strong className="tnum" style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{value}</strong>
     </span>
   );
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 10 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 12 }}>
       {rows.map((t) => item(t.track, wbsTrackLabel(t.track), `${t.done}/${t.total}`))}
       {bugs && bugs.total > 0 && item('bugs', 'Bugs resolved', `${bugs.resolved}/${bugs.total}`)}
     </div>
@@ -134,9 +134,9 @@ function Ctl({ label, title, onClick, disabled, danger }) {
       disabled={disabled}
       onClick={onClick}
       style={{
-        ...ghostButton, padding: '2px 7px', fontSize: 11, opacity: disabled ? 0.4 : 1,
-        color: danger ? '#dc2626' : 'var(--color-text-secondary)',
-        borderColor: danger ? '#dc262644' : undefined,
+        ...ghostButton, padding: '2px 8px', fontSize: 12, opacity: disabled ? 0.4 : 1,
+        color: danger ? 'var(--c-red)' : 'var(--color-text-secondary)',
+        borderColor: danger ? tint('var(--c-red)', 27) : undefined,
       }}
     >
       {label}
@@ -146,15 +146,15 @@ function Ctl({ label, title, onClick, disabled, danger }) {
 
 // priority badge — High=red, Medium=amber, Low=slate
 const PRIORITY_TONE = {
-  High: { color: '#dc2626', bg: '#dc26261a', bd: '#dc262633' },
-  Medium: { color: '#d97706', bg: '#d977061a', bd: '#d9770633' },
-  Low: { color: '#64748b', bg: '#64748b1a', bd: '#64748b33' },
+  High: { color: 'var(--c-red)', bg: tint('var(--c-red)', 10), bd: tint('var(--c-red)', 20) },
+  Medium: { color: 'var(--tone-warning-fg)', bg: tint('var(--c-amber)', 10), bd: tint('var(--c-amber)', 20) },
+  Low: { color: 'var(--c-slate)', bg: tint('var(--c-slate)', 10), bd: tint('var(--c-slate)', 20) },
 };
 function PriorityTag({ value }) {
   if (!value) return null;
   const t = PRIORITY_TONE[value] || PRIORITY_TONE.Low;
   return (
-    <span style={{ fontSize: 10.5, fontWeight: 700, color: t.color, background: t.bg, border: `1px solid ${t.bd}`, borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' }}>
+    <span style={{ fontSize: 12, fontWeight: 700, color: t.color, background: t.bg, border: `1px solid ${t.bd}`, borderRadius: 6, padding: '1px 8px', whiteSpace: 'nowrap' }}>
       {value}
     </span>
   );
@@ -172,7 +172,7 @@ const FIELDS = [
 
 /* Import wizard: upload → detect columns → map fields → preview → confirm.
    Does not depend on fixed column positions. */
-function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
+function WbsImportModal({ headers, rows, trackLabel, onCancel, onConfirm }) {
   // auto-guess a mapping from header names
   const guess = () => {
     const m = {};
@@ -254,7 +254,7 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
 
   const footer = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: items.length ? 'var(--brand)' : 'var(--color-text-tertiary)' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: items.length ? 'var(--brand)' : 'var(--color-text-tertiary)' }}>
         {items.length ? `${items.length} item${items.length === 1 ? '' : 's'} ready` : 'Map a Title column to continue'}
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -270,17 +270,18 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
     <ModalShell
       onClose={onCancel}
       title="Import WBS from spreadsheet"
-      subtitle="Map each field to a column. Only Title is required — this adds new items, never overwrites."
+      subtitle={`Adds to the ${trackLabel} tab. Map each field to a column — only Title is required. This adds new items, never overwrites.`}
       maxWidth={720}
       footer={footer}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 16 }}>
         {FIELDS.map((f) => (
           <div key={f.key}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
               {f.label}{f.required ? ' *' : ''}
             </label>
             <select
+              aria-label={`Column for ${f.label}`}
               style={{ ...inputStyle, marginTop: 4 }}
               value={map[f.key] ?? -1}
               onChange={(e) => setMap((m) => ({ ...m, [f.key]: Number(e.target.value) }))}
@@ -300,18 +301,18 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
           <thead>
             <tr>
               {['Title', 'Platform', 'Module', 'Est', 'Status'].map((h) => (
-                <th key={h} style={{ textAlign: 'left', padding: '7px 10px', borderBottom: '1px solid var(--color-border-primary)', color: 'var(--color-text-secondary)', fontSize: 11 }}>{h}</th>
+                <th key={h} style={{ textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)', color: 'var(--color-text-secondary)', fontSize: 12 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {items.slice(0, 50).map((i, idx) => (
               <tr key={idx}>
-                <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--color-border-primary)', fontWeight: 500 }}>{i.title}</td>
-                <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>{i.platform_type || '—'}</td>
-                <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>{i.module || '—'}</td>
-                <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--color-border-primary)' }}>{i.est || '—'}</td>
-                <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--color-border-primary)' }}><WbsBadge status={i.status} /></td>
+                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)', fontWeight: 500 }}>{i.title}</td>
+                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>{i.platform_type || '—'}</td>
+                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>{i.module || '—'}</td>
+                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>{i.est || '—'}</td>
+                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}><WbsBadge status={i.status} /></td>
               </tr>
             ))}
           </tbody>
@@ -323,7 +324,7 @@ function WbsImportModal({ headers, rows, onCancel, onConfirm }) {
 
 /* Bulk Add: paste a list / outline (or drop in a preset pack) → many items at once.
    Reuses parseWbsBulk; the live preview shows exactly what will be created. */
-function WbsBulkModal({ onCancel, onConfirm }) {
+function WbsBulkModal({ trackLabel, onCancel, onConfirm }) {
   const [platform, setPlatform] = useState('');
   const [module, setModule] = useState('');
   const [text, setText] = useState('');
@@ -344,11 +345,11 @@ function WbsBulkModal({ onCancel, onConfirm }) {
   });
 
   const lbl = { fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' };
-  const code = { background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-primary)', borderRadius: 5, padding: '1px 5px', fontSize: 11, fontFamily: 'var(--font-mono, monospace)' };
+  const code = { background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-primary)', borderRadius: 5, padding: '1px 4px', fontSize: 12, fontFamily: 'var(--font-mono, monospace)' };
 
   const footer = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: items.length ? 'var(--brand)' : 'var(--color-text-tertiary)' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: items.length ? 'var(--brand)' : 'var(--color-text-tertiary)' }}>
         {items.length ? `${items.length} item${items.length === 1 ? '' : 's'} detected` : 'Paste a list or pick a preset to begin'}
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -364,41 +365,41 @@ function WbsBulkModal({ onCancel, onConfirm }) {
     <ModalShell
       onClose={onCancel}
       title="Bulk add items"
-      subtitle="Paste raw feature lists or load a preset pack to create WBS items fast."
+      subtitle={`Adds to the ${trackLabel} tab. Paste raw feature lists or load a preset pack to create WBS items fast.`}
       maxWidth={720}
       footer={footer}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
         <div>
           <label style={lbl}>Default platform</label>
-          <input style={{ ...inputStyle, marginTop: 6 }} list="wbs-platforms" value={platform} placeholder="e.g. Mobile App" onChange={(e) => setPlatform(e.target.value)} />
+          <input style={{ ...inputStyle, marginTop: 8 }} list="wbs-platforms" value={platform} placeholder="e.g. Mobile App" onChange={(e) => setPlatform(e.target.value)} />
         </div>
         <div>
           <label style={lbl}>Default module</label>
-          <input style={{ ...inputStyle, marginTop: 6 }} value={module} placeholder="e.g. Authentication" onChange={(e) => setModule(e.target.value)} />
+          <input style={{ ...inputStyle, marginTop: 8 }} value={module} placeholder="e.g. Authentication" onChange={(e) => setModule(e.target.value)} />
         </div>
       </div>
 
-      <div style={{ marginBottom: 18 }}>
+      <div style={{ marginBottom: 16 }}>
         <label style={lbl}>Preset packs</label>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           {WBS_PRESETS.map((p) => (
-            <button key={p.key} style={{ ...ghostButton, padding: '5px 11px', fontSize: 11.5 }} onClick={() => addPreset(p)}>
+            <button key={p.key} style={{ ...ghostButton, padding: '4px 12px', fontSize: 12 }} onClick={() => addPreset(p)}>
               + {p.name}
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
           <label style={lbl}>Item list</label>
-          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
             Use <code style={code}># Platform</code> and <code style={code}>## Module</code> to group
           </span>
         </div>
         <textarea
-          style={{ ...inputStyle, resize: 'vertical', fontSize: 12.5, fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.6, padding: 12 }}
+          style={{ ...inputStyle, resize: 'vertical', fontSize: 13, fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.6, padding: 12 }}
           rows={9}
           value={text}
           placeholder={'Onboarding Screens\nSignup with Email\nOTP Verification\n\n## User Profile\n- View Profile\n- Edit Profile'}
@@ -412,7 +413,7 @@ function WbsBulkModal({ onCancel, onConfirm }) {
           <div style={{ ...card, padding: 0, maxHeight: 200, overflow: 'auto' }}>
             {Object.entries(groups).map(([k, titles]) => (
               <div key={k} style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>
-                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 3 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
                   {k} · {titles.length}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{titles.join(' · ')}</div>
@@ -435,7 +436,7 @@ function Toggle({ on, onClick, disabled }) {
       aria-checked={on}
       style={{
         width: 38, height: 22, borderRadius: 999, border: 'none', cursor: disabled ? 'default' : 'pointer',
-        background: on ? 'var(--brand)' : 'var(--color-border-tertiary, #cbd5e1)', padding: 2,
+        background: on ? 'var(--brand)' : 'var(--color-border-tertiary)', padding: 2,
         display: 'inline-flex', alignItems: 'center', opacity: disabled ? 0.5 : 1, transition: 'background 0.15s',
         justifyContent: on ? 'flex-end' : 'flex-start',
       }}
@@ -475,7 +476,7 @@ function WbsShareModal({ project, onClose, showToast }) {
     }
   };
   const disable = async () => {
-    if (!link || !window.confirm('Turn off the public link? The shared URL will stop working immediately.')) return;
+    if (!link || !await confirmAction('Turn off the public link? The shared URL will stop working immediately.')) return;
     setBusy(true);
     try {
       await api.deleteClientLink(link.id);
@@ -533,18 +534,18 @@ function WbsShareModal({ project, onClose, showToast }) {
       maxWidth={520}
     >
       {link === undefined ? (
-        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+        <SkeletonList rows={2} height={40} />
       ) : (
         <>
           <div
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-              padding: '12px 14px', borderRadius: 'var(--r-card, 10px)', border: '1px solid var(--color-border-primary)',
+              padding: '12px 16px', borderRadius: 'var(--r-card, 10px)', border: '1px solid var(--color-border-primary)',
               background: 'var(--color-background-secondary)',
             }}
           >
             <div>
-              <div style={{ fontSize: 13.5, fontWeight: 600 }}>Enable public link</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Enable public link</div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
                 {on ? 'Anyone with the link can view live progress.' : 'Only team members can view this WBS.'}
               </div>
@@ -555,14 +556,14 @@ function WbsShareModal({ project, onClose, showToast }) {
           {on && (
             <div style={{ marginTop: 16 }}>
               <label style={lbl}>Live public view link</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <input
                   readOnly
                   value={url}
                   onFocus={(e) => e.target.select()}
-                  style={{ ...inputStyle, flex: 1, fontSize: 11.5, fontFamily: 'var(--font-mono, monospace)' }}
+                  style={{ ...inputStyle, flex: 1, fontSize: 12, fontFamily: 'var(--font-mono, monospace)' }}
                 />
-                <button style={{ ...primaryButton(false), padding: '0 14px' }} onClick={copy}>
+                <button style={{ ...primaryButton(false), padding: '0 16px' }} onClick={copy}>
                   {copied ? 'Copied!' : 'Copy'}
                 </button>
               </div>
@@ -572,43 +573,43 @@ function WbsShareModal({ project, onClose, showToast }) {
                 </a>
               </div>
 
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, cursor: 'pointer' }}>
                 <Toggle on={link.show_open_bugs} onClick={toggleBugs} />
                 <span style={{ fontSize: 13 }}>Show open bug count to viewers</span>
               </label>
 
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 12, cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginTop: 12, cursor: 'pointer' }}>
                 <Toggle on={!!link.show_bug_report} onClick={toggleReport} />
                 <span style={{ fontSize: 13 }}>
                   Include full QA bug report
-                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+                  <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
                     Every bug across all builds — title, severity, status & dates. No internal notes, screenshots or names.
                   </span>
                 </span>
               </label>
 
               {link.show_bug_report && (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 16 }}>
                   <label style={lbl}>Direct QA report link (opens on the QA tab)</label>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                     <input
                       readOnly
                       value={reportUrl}
                       onFocus={(e) => e.target.select()}
-                      style={{ ...inputStyle, flex: 1, fontSize: 11.5, fontFamily: 'var(--font-mono, monospace)' }}
+                      style={{ ...inputStyle, flex: 1, fontSize: 12, fontFamily: 'var(--font-mono, monospace)' }}
                     />
-                    <button style={{ ...primaryButton(false), padding: '0 14px' }} onClick={copyReport}>
+                    <button style={{ ...primaryButton(false), padding: '0 16px' }} onClick={copyReport}>
                       {copiedReport ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
-                  <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 8 }}>
                     Same portal — this link just lands the client on the QA report. The main link shows both tabs.
                   </div>
                 </div>
               )}
 
               {!project.wbsEnabled && (
-                <div style={{ marginTop: 14, fontSize: 12, color: 'var(--warning)', background: '#f59e0b1a', border: '1px solid #f59e0b44', borderRadius: 8, padding: '8px 10px' }}>
+                <div style={{ marginTop: 16, fontSize: 12, color: 'var(--tone-warning-fg)', background: tint('var(--c-amber)', 10), border: '1px solid color-mix(in srgb, var(--c-amber) 27%, transparent)', borderRadius: 8, padding: '8px 12px' }}>
                   This project has no WBS items yet — the public view will show the release list until you add items.
                 </div>
               )}
@@ -627,7 +628,7 @@ const fmtQaDate = (iso) => new Date(iso).toLocaleDateString(undefined, { day: '2
 /* The story point's QA status; hover for how it got there. SQA can approve an item
    that's already Completed but has nothing on record. */
 function WbsQaCell({ qa, role, profiles, onApprove }) {
-  if (!qa) return <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>—</span>;
+  if (!qa) return <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>—</span>;
   const s = WBS_QA_STATUSES[qa.key];
   const who = qa.by && profiles.find((p) => p.id === qa.by)?.name;
   const title = [qa.detail, who && `By ${who}.`, qa.at && `On ${fmtQaDate(qa.at)}.`].filter(Boolean).join(' ');
@@ -636,7 +637,7 @@ function WbsQaCell({ qa, role, profiles, onApprove }) {
       <button
         title={`${title} Approve it to record your sign-off.`}
         onClick={onApprove}
-        style={{ ...ghostButton, width: '100%', padding: '3px 8px', minHeight: 0, fontSize: 11.5 }}
+        style={{ ...ghostButton, width: '100%', padding: '4px 8px', minHeight: 0, fontSize: 12 }}
       >
         Approve
       </button>
@@ -645,7 +646,13 @@ function WbsQaCell({ qa, role, profiles, onApprove }) {
   return <span title={title} aria-label={`QA status: ${s.label}. ${title}`}><Pill label={s.label} tone={s.tone} /></span>;
 }
 
-function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], onSave, onDelete, onReorder, onApproveQa }) {
+/* Tabs a manager can move work onto (support only while ongoing support is on,
+   unless the work is already there). */
+function moveTargets(current, ongoingSupport) {
+  return WBS_TRACK_ORDER.filter((t) => t !== 'support' || ongoingSupport || current === 'support');
+}
+
+function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], modules = [], ongoingSupport, onSave, onDelete, onReorder, onApproveQa }) {
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState(item);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -658,24 +665,33 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
   if (editing) {
     // task-level fields only — platform / target date / assignee are module-level
     return (
-      <div style={{ padding: '10px 12px', borderTop: '1px solid var(--color-border-primary)', background: 'var(--color-background-secondary)' }}>
+      <div style={{ padding: '12px 12px', borderTop: '1px solid var(--color-border-primary)', background: 'var(--color-background-secondary)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
           <input style={inputStyle} value={f.title} placeholder="Task title" onChange={(e) => set('title', e.target.value)} />
-          <select style={inputStyle} value={f.priority || ''} onChange={(e) => set('priority', e.target.value)}>
+          <select aria-label="Priority" style={inputStyle} value={f.priority || ''} onChange={(e) => set('priority', e.target.value)}>
             <option value="">Priority…</option>
             {WBS_PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
         <textarea style={{ ...inputStyle, marginTop: 8, resize: 'vertical', fontSize: 12 }} rows={2} value={f.description} placeholder="Description (optional)" onChange={(e) => set('description', e.target.value)} />
+        {/* move the story point to another module or another WBS tab */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+          <input style={inputStyle} list={`wbs-modules-${item.id}`} value={f.module || ''} placeholder="Module" aria-label="Module" onChange={(e) => set('module', e.target.value)} />
+          <datalist id={`wbs-modules-${item.id}`}>{modules.map((m) => <option key={m} value={m} />)}</datalist>
+          <select aria-label="WBS tab" title="Move to another WBS tab" style={inputStyle} value={f.track} onChange={(e) => set('track', e.target.value)}>
+            {moveTargets(item.track, ongoingSupport).map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+          </select>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button style={ghostButton} onClick={() => { setF(item); setEditing(false); }}>Cancel</button>
           <button
             style={primaryButton(!f.title.trim())}
             disabled={!f.title.trim()}
             onClick={() => {
-              onSave(item, {
-                title: f.title.trim(), description: f.description, priority: f.priority || null,
-              });
+              const patch = { title: f.title.trim(), description: f.description, priority: f.priority || null };
+              if ((f.module || '').trim() !== (item.module || '')) patch.module = (f.module || '').trim();
+              if (f.track !== item.track) patch.track = f.track;
+              onSave(item, patch);
               setEditing(false);
             }}
           >
@@ -689,8 +705,8 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
   // note editor takes over the row when open
   if (noteOpen) {
     return (
-      <div style={{ padding: '9px 12px', borderTop: '1px solid var(--color-border-primary)', background: 'var(--color-background-secondary)' }}>
-        <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 6 }}>{item.title} · developer note</div>
+      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-border-primary)', background: 'var(--color-background-secondary)' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{item.title} · developer note</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <textarea style={{ ...inputStyle, resize: 'vertical', fontSize: 12 }} rows={2} value={note} placeholder="Developer comment (internal)…" onChange={(e) => setNote(e.target.value)} />
           <button style={ghostButton} onClick={() => { onSave(item, { dev_comments: note }); setNoteOpen(false); }}>Save</button>
@@ -705,16 +721,16 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ position: 'relative', padding: '6px 12px', borderTop: '1px solid var(--color-border-primary)', background: hover ? 'var(--color-background-secondary)' : 'transparent', transition: 'background 0.12s' }}
+      style={{ position: 'relative', padding: '8px 12px', borderTop: '1px solid var(--color-border-primary)', background: hover ? 'var(--color-background-secondary)' : 'transparent', transition: 'background 0.12s' }}
     >
       {/* compact primary row (~34px) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {item.title}
-          {item.type === 'milestone' && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--color-text-tertiary)' }}>◆</span>}
-          {item.devComments && <span title={item.devComments} style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>✎</span>}
+          {item.type === 'milestone' && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>◆</span>}
+          {item.devComments && <span title={item.devComments} style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>✎</span>}
           {bugs.length > 0 && (
-            <span title={`${bugs.length} open bug(s)`} style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: 'var(--danger)', background: '#dc26261a', borderRadius: 999, padding: '1px 6px' }}>
+            <span title={`${bugs.length} open bug(s)`} style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: 'var(--danger)', background: tint('var(--c-red)', 10), borderRadius: 999, padding: '1px 8px' }}>
               {bugs.length} bug{bugs.length === 1 ? '' : 's'}
             </span>
           )}
@@ -725,9 +741,10 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
             <WbsBadge status={item.status} />
           ) : (
             <select
+              aria-label={`Status of ${item.title}`}
               value={item.status}
               onChange={(e) => onSave(item, { status: e.target.value })}
-              style={{ ...inputStyle, width: '100%', padding: '4px 6px', fontSize: 11.5 }}
+              style={{ ...inputStyle, width: '100%', padding: '4px 8px', fontSize: 12 }}
             >
               {statusOptions.map((s) => <option key={s} value={s}>{WBS_STATUSES[s].label}</option>)}
             </select>
@@ -737,7 +754,7 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
           <WbsQaCell qa={qa} role={role} profiles={profiles} onApprove={() => onApproveQa([item.id])} />
         </div>
         {/* actions: float over the row's right edge on hover, so the QA column stays visible at rest */}
-        <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', gap: 3, padding: '2px 4px', borderRadius: 8, background: 'var(--color-background-secondary)', opacity: actionsVisible ? 1 : 0, transition: 'opacity 0.12s', pointerEvents: actionsVisible ? 'auto' : 'none' }}>
+        <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', gap: 4, padding: '2px 4px', borderRadius: 8, background: 'var(--color-background-secondary)', opacity: actionsVisible ? 1 : 0, transition: 'opacity 0.12s', pointerEvents: actionsVisible ? 'auto' : 'none' }}>
           {canEdit && <Ctl label="✎" title="Add / edit note" onClick={() => { setNote(item.devComments); setNoteOpen(true); }} />}
           {canManage && (
             <>
@@ -751,12 +768,12 @@ function WbsItemRow({ item, qa, role, canManage, canEdit, profiles, bugs = [], o
       </div>
       {/* open bugs listed compactly only when present */}
       {bugs.length > 0 && (
-        <div style={{ marginTop: 5, marginLeft: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <div style={{ marginTop: 4, marginLeft: 2, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {bugs.map((b) => (
-            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}>
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
               <span style={{ width: 5, height: 5, borderRadius: '50%', background: (SEVERITIES[b.severity] || {}).color || 'var(--danger)', flexShrink: 0 }} />
               <span style={{ color: 'var(--color-text-secondary)', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.title}</span>
-              <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>{(BUG_STATUSES[b.status] || {}).label || b.status}</span>
+              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{(BUG_STATUSES[b.status] || {}).label || b.status}</span>
             </div>
           ))}
         </div>
@@ -789,24 +806,24 @@ function PlatformHeader({ platform, track, items, target, canManage, open, onTog
   const label = platform || (track === 'scope' ? 'Ungrouped' : wbsTrackLabel(track));
   const done = pctDone(items);
   const showDates = track === 'scope'; // milestone dates belong to the original scope
-  const dateInput = { ...inputStyle, width: 'auto', padding: '5px 8px', fontSize: 12 };
-  const meta = { fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
+  const dateInput = { ...inputStyle, width: 'auto', padding: '4px 8px', fontSize: 12 };
+  const meta = { fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }} onClick={onToggle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div {...pressable(onToggle, `${open ? 'Collapse' : 'Expand'} ${label}`)} aria-expanded={open} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', borderRadius: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', width: 12 }}>{open ? '▾' : '▸'}</span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>{label}</span>
-          <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>{items.length} item{items.length === 1 ? '' : 's'} · {done}%</span>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>{label}</span>
+          <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{items.length} item{items.length === 1 ? '' : 's'} · {done}%</span>
         </div>
         <span style={{ flex: 1 }} />
         {editing ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <label style={{ ...meta, display: 'flex', alignItems: 'center', gap: 5 }}>Completion
+            <label style={{ ...meta, display: 'flex', alignItems: 'center', gap: 4 }}>Completion
               <input type="date" style={dateInput} value={comp} onChange={(e) => setComp(e.target.value)} />
             </label>
-            <label style={{ ...meta, display: 'flex', alignItems: 'center', gap: 5 }}>Deployment
+            <label style={{ ...meta, display: 'flex', alignItems: 'center', gap: 4 }}>Deployment
               <input type="date" style={dateInput} value={dep} onChange={(e) => setDep(e.target.value)} />
             </label>
             <button style={ghostButton} onClick={() => setEditing(false)}>Cancel</button>
@@ -818,16 +835,16 @@ function PlatformHeader({ platform, track, items, target, canManage, open, onTog
             </button>
           </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             {showDates && <span style={meta}>Completion: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.completionDate)}</strong></span>}
             {showDates && <span style={meta}>Deployment: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{fmtDate(target?.deploymentDate)}</strong></span>}
             {showDates && canManage && (
-              <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+              <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit', padding: 0 }}>
                 Edit dates
               </button>
             )}
             {canManage && onDelete && (
-              <button onClick={onDelete} title={`Delete the ${label} WBS`} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+              <button onClick={onDelete} title={`Delete the ${label} WBS`} style={{ background: 'none', border: 'none', color: 'var(--c-red)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit', padding: 0 }}>
                 Delete {label}
               </button>
             )}
@@ -841,7 +858,7 @@ function PlatformHeader({ platform, track, items, target, canManage, open, onTog
 /* One module = one (platform, module) group. Holds the shared metadata (target
    date, assignee) once in its header; tasks below only carry title/status/priority.
    A fast inline adder appends tasks that inherit the module's metadata. */
-function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll, profiles, bugsByItem, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll, onApproveQa }) {
+function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll, profiles, bugsByItem, modules = [], ongoingSupport, collapsed, onToggle, onAddTask, onSaveItem, onDeleteItem, onReorderItem, onSaveMeta, onCompleteAll, onApproveQa }) {
   const { platform, module, items } = group;
   // SQA's button approves what's only waiting on sign-off, not everything
   const sqaSignsOff = role === 'QA';
@@ -860,8 +877,9 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
   const moduleAssignee = assigneeIds.length === 1 ? profiles.find((p) => p.id === assigneeIds[0]) : null;
   const assigneeLabel = moduleAssignee ? moduleAssignee.name : assigneeIds.length > 1 ? 'Mixed' : 'Unassigned';
 
-  const [meta, setMeta] = useState({ module: moduleLabel === 'General' ? '' : module, platform, est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '' });
-  const openMeta = () => { setMeta({ module: module || '', platform: platform || '', est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '' }); setMetaOpen(true); };
+  const track = items[0]?.track || 'scope';
+  const [meta, setMeta] = useState({ module: moduleLabel === 'General' ? '' : module, platform, est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '', track });
+  const openMeta = () => { setMeta({ module: module || '', platform: platform || '', est: est || '', assignee: assigneeIds.length === 1 ? assigneeIds[0] : '', track }); setMetaOpen(true); };
 
   const add = async () => {
     const t = text.trim();
@@ -870,31 +888,37 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
     setText(''); // keep the adder focused so you can type the next one
   };
 
-  const chip = { fontSize: 10.5, fontWeight: 600, color: 'var(--tone-info-fg)', background: 'var(--tone-info-bg)', border: '1px solid var(--brand-ring)', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' };
-  const metaItem = { fontSize: 11.5, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
+  const chip = { fontSize: 12, fontWeight: 600, color: 'var(--tone-info-fg)', background: 'var(--tone-info-bg)', border: '1px solid var(--brand-ring)', borderRadius: 6, padding: '1px 8px', whiteSpace: 'nowrap' };
+  const metaItem = { fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' };
 
   return (
     <div style={{ ...card, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignSelf: 'start' }}>
       {/* module header — shared metadata lives here */}
       <div style={{ background: 'var(--color-background-secondary)', borderBottom: collapsed ? 'none' : '1px solid var(--color-border-primary)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px 6px', cursor: 'pointer', userSelect: 'none' }} onClick={() => onToggle()}>
+        <div {...pressable(() => onToggle(), `${collapsed ? 'Expand' : 'Collapse'} ${moduleLabel}`)} aria-expanded={!collapsed} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px 8px', cursor: 'pointer', userSelect: 'none' }}>
           <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', width: 12 }}>{collapsed ? '▸' : '▾'}</span>
-          <span style={{ fontSize: 13.5, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{moduleLabel}</span>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', background: 'var(--color-background-primary, #fff)', border: '1px solid var(--color-border-primary)', borderRadius: 999, padding: '1px 8px' }}>{items.length}</span>
-          <span style={{ fontSize: 11.5, fontWeight: 700, color: done === 100 ? 'var(--success)' : 'var(--brand)' }}>{done}%</span>
+          <span style={{ fontSize: 14, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{moduleLabel}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', background: 'var(--color-background-primary, #fff)', border: '1px solid var(--color-border-primary)', borderRadius: 999, padding: '1px 8px' }}>{items.length}</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: done === 100 ? 'var(--success)' : 'var(--brand)' }}>{done}%</span>
         </div>
-        <div style={{ height: 4, margin: '0 14px 8px 34px', borderRadius: 999, background: 'var(--color-border-primary)', overflow: 'hidden' }}>
+        <div style={{ height: 4, margin: '0 16px 8px 34px', borderRadius: 999, background: 'var(--color-border-primary)', overflow: 'hidden' }}>
           <div style={{ width: `${done}%`, height: '100%', borderRadius: 999, background: done === 100 ? 'var(--success)' : 'var(--brand)' }} />
         </div>
         {metaOpen ? (
-          <div style={{ padding: '4px 14px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div style={{ padding: '4px 16px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <input style={inputStyle} value={meta.module} placeholder="Module name" onChange={(e) => setMeta((m) => ({ ...m, module: e.target.value }))} />
             <input style={inputStyle} list="wbs-platforms" value={meta.platform} placeholder="Platform" onChange={(e) => setMeta((m) => ({ ...m, platform: e.target.value }))} />
             <input style={inputStyle} value={meta.est} placeholder="Target date" onChange={(e) => setMeta((m) => ({ ...m, est: e.target.value }))} />
-            <select style={inputStyle} value={meta.assignee} onChange={(e) => setMeta((m) => ({ ...m, assignee: e.target.value }))}>
+            <select aria-label="Assignee" style={inputStyle} value={meta.assignee} onChange={(e) => setMeta((m) => ({ ...m, assignee: e.target.value }))}>
               <option value="">Unassigned</option>
               {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              WBS tab
+              <select aria-label="WBS tab" style={{ ...inputStyle, flex: 1 }} value={meta.track} onChange={(e) => setMeta((m) => ({ ...m, track: e.target.value }))}>
+                {moveTargets(track, ongoingSupport).map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+              </select>
+            </label>
             <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button style={ghostButton} onClick={() => setMetaOpen(false)}>Cancel</button>
               <button
@@ -905,6 +929,7 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
                     platform_type: meta.platform.trim(),
                     estimated_completion_date: meta.est.trim(),
                     assigned_to: meta.assignee || null,
+                    ...(meta.track !== track ? { track: meta.track } : {}),
                   });
                   setMetaOpen(false);
                 }}
@@ -915,19 +940,19 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
           </div>
         ) : (
           !collapsed && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 14px 10px 26px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px 12px 24px', flexWrap: 'wrap' }}>
               {(platform || items[0]?.track === 'scope') && <span style={chip}>{platformLabel}</span>}
               <span style={metaItem}>Target: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{est || '—'}</strong></span>
               <span style={metaItem}>Lead: <strong style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{assigneeLabel}</strong></span>
               {(canManage || canCompleteAll) && (
-                <span style={{ display: 'inline-flex', gap: 14, marginLeft: 'auto' }}>
+                <span style={{ display: 'inline-flex', gap: 16, marginLeft: 'auto' }}>
                   {canCompleteAll && !allDone && (
-                    <button onClick={() => onCompleteAll(group)} style={{ background: 'none', border: 'none', color: 'var(--success)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit', padding: 0 }}>
+                    <button onClick={() => onCompleteAll(group)} style={{ background: 'none', border: 'none', color: 'var(--tone-success-fg)', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: 'inherit', padding: 0 }}>
                       {sqaSignsOff ? '✓ Approve all' : '✓ Mark all complete'}
                     </button>
                   )}
                   {canManage && (
-                    <button onClick={openMeta} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', padding: 0 }}>
+                    <button onClick={openMeta} style={{ background: 'none', border: 'none', color: 'var(--brand)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit', padding: 0 }}>
                       Edit module
                     </button>
                   )}
@@ -942,9 +967,9 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
         <>
           {/* fast inline task adder */}
           {canManage && (
-            <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>
+            <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--color-border-primary)' }}>
               <input
-                style={{ ...inputStyle, flex: 1, fontSize: 12.5, padding: '6px 10px' }}
+                style={{ ...inputStyle, flex: 1, fontSize: 13, padding: '8px 12px' }}
                 value={text}
                 placeholder="Add task & press Enter…"
                 onChange={(e) => setText(e.target.value)}
@@ -960,10 +985,10 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
           {/* task rows (scroll within the card so grid cells stay balanced) */}
           <div style={{ maxHeight: 420, overflowY: 'auto' }}>
             {items.length === 0 ? (
-              <div style={{ padding: '14px', fontSize: 12.5, color: 'var(--color-text-tertiary)', textAlign: 'center' }}>No tasks yet.</div>
+              <div style={{ padding: '16px', fontSize: 13, color: 'var(--color-text-tertiary)', textAlign: 'center' }}>No tasks yet.</div>
             ) : (
               <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
                 <span style={{ flex: 1 }}>Story point</span>
                 <span style={{ width: 124 }}>Status</span>
                 <span style={{ width: QA_COL_WIDTH }}>QA status</span>
@@ -979,9 +1004,11 @@ function ModuleCard({ group, qaByItem, role, canManage, canEdit, canCompleteAll,
                   canEdit={canEdit}
                   profiles={profiles}
                   bugs={bugsByItem[it.id] || []}
+                  modules={modules}
+                  ongoingSupport={ongoingSupport}
                   onSave={onSaveItem}
                   onDelete={onDeleteItem}
-                  onReorder={onReorderItem}
+                  onReorder={(item, dir) => onReorderItem(item, dir, items)}
                 />
               ))}
               </>
@@ -1033,7 +1060,7 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   }, [projects, projectId]);
 
   const project = projects.find((p) => p.id === projectId) || null;
-  const canManage = user.role === 'Admin' || (user.role === 'Team Lead' && project && project.teamId === user.teamId);
+  const canManage = managesProject(user, project);
   const canEdit = user.role === 'Developer' || canManage;
   // Mark-all-complete follows the same sign-off rule as a single item's status
   const canCompleteAll = isSqaTrack(track) ? user.role === 'QA' : canManage;
@@ -1106,32 +1133,41 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
 
   // patch keys are DB columns; map the ones we render back to camelCase for the
   // optimistic local update
-  const OPTIMISTIC_KEYS = { status: 'status', title: 'title', description: 'description', priority: 'priority', dev_comments: 'devComments' };
+  const OPTIMISTIC_KEYS = { status: 'status', title: 'title', description: 'description', priority: 'priority', dev_comments: 'devComments', module: 'module', track: 'track' };
+  // Moving Completed work onto an SQA-tested tab would claim SQA's sign-off, so
+  // (unless SQA moves it) it lands In QA for SQA to approve — same rule as import.
+  const holdsForSqa = (item, toTrack) =>
+    toTrack && toTrack !== item.track && isSqaTrack(toTrack) && item.status === 'completed' && user.role !== 'QA';
   // single-item field edits (status / note / title / priority) update local state
   // immediately and persist in the background — no refetch, no page flash
   const save = async (item, patch) => {
+    if (holdsForSqa(item, patch.track)) patch = { ...patch, status: 'in_qa' };
     const local = {};
     for (const [k, v] of Object.entries(patch)) if (k in OPTIMISTIC_KEYS) local[OPTIMISTIC_KEYS[k]] = v;
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...local } : i)));
     try {
       await api.updateWbsItem(item.id, patch);
-      if (patch.status) refresh(); // the database may have stamped SQA's sign-off
+      if (patch.status || patch.track) refresh(); // the database may have stamped SQA's sign-off
+      if (patch.track) showToast(`Moved to ${wbsTrackLabel(patch.track)}${patch.status === 'in_qa' ? ' · In QA until SQA approves it' : ''}`);
     } catch (e) {
       showToast(e.message, 'error');
       refresh(); // resync from server on failure
     }
   };
-  const del = (item) => {
-    if (window.confirm(`Delete "${item.title}"? Release history keeps its name.`)) run(() => api.deleteWbsItem(item.id), 'Item deleted');
+  const del = async (item) => {
+    if (await confirmAction(`Delete "${item.title}"? Release history keeps its name.`)) run(() => api.deleteWbsItem(item.id), 'Item deleted');
   };
-  // reorder within the flat position order (swap with the adjacent item)
-  const reorder = (item, dir) => {
-    const ordered = items.filter((x) => x.track === item.track).sort((a, b) => a.position - b.position);
-    const idx = ordered.findIndex((x) => x.id === item.id);
-    const j = idx + dir;
-    if (j < 0 || j >= ordered.length) return;
-    const ids = ordered.map((x) => x.id);
-    [ids[idx], ids[j]] = [ids[j], ids[idx]];
+  // reorder: swap with the neighbour shown in the same module card (the flat
+  // track order interleaves modules, so its neighbour is often in another card
+  // and ▲/▼ appeared to do nothing)
+  const reorder = (item, dir, siblings) => {
+    const k = siblings.findIndex((x) => x.id === item.id);
+    const other = siblings[k + dir];
+    if (!other) return;
+    const ids = items.filter((x) => x.track === item.track).sort((a, b) => a.position - b.position).map((x) => x.id);
+    const a = ids.indexOf(item.id);
+    const b = ids.indexOf(other.id);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
     run(() => api.reorderWbsItems(ids));
   };
   const addItem = () => {
@@ -1145,10 +1181,15 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
     );
     setForm({ title: '', platformType: form.platformType, module: form.module, est: '', priority: '' });
   };
+  // every item of a module card's module, not just the rows a filter/search left
+  // visible — module edits and "mark all" must not split a module in two
+  const wholeModule = (group) =>
+    items.filter((i) => i.track === track && (i.platformType || '') === group.platform && (i.module || '') === group.module);
   // add a task to an existing module — inherits the module's shared metadata
   const addTaskToGroup = (group, title) => {
-    const est = latestEst(group.items);
-    const assigneeIds = [...new Set(group.items.map((i) => i.assignedTo).filter(Boolean))];
+    const all = wholeModule(group);
+    const est = latestEst(all);
+    const assigneeIds = [...new Set(all.map((i) => i.assignedTo).filter(Boolean))];
     return run(() => api.createWbsItem(projectId, {
       title,
       platformType: group.platform,
@@ -1161,18 +1202,25 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   };
   // edit module-level metadata → apply to every item in the group at once
   const saveModuleMeta = (group, patch) =>
-    run(() => api.updateWbsItems(group.items.map((i) => i.id), patch), 'Module updated');
+    run(async () => {
+      const all = wholeModule(group);
+      const held = all.filter((i) => holdsForSqa(i, patch.track)).map((i) => i.id);
+      const rest = all.map((i) => i.id).filter((id) => !held.includes(id));
+      await api.updateWbsItems(rest, patch);
+      if (held.length) await api.updateWbsItems(held, { ...patch, status: 'in_qa', actual_completion_date: null });
+    }, patch.track ? `Module moved to ${wbsTrackLabel(patch.track)}` : 'Module updated');
   // mark every task in a module completed — optimistic + background bulk update
   const completeModule = async (group) => {
     const isQa = user.role === 'QA';
-    const eligible = isQa ? group.items.filter((i) => qaByItem[i.id]?.canBulkApprove) : group.items;
+    const all = wholeModule(group);
+    const eligible = isQa ? all.filter((i) => qaByItem[i.id]?.canBulkApprove) : all;
     const open = eligible.filter((i) => i.status !== 'completed').map((i) => i.id);
     const unsigned = isQa ? eligible.filter((i) => i.status === 'completed').map((i) => i.id) : [];
     const n = open.length + unsigned.length;
     if (!n) return;
     const verb = isQa ? 'Approve' : 'Mark';
     const end = isQa ? ' that are waiting for sign-off' : ' as Completed';
-    if (!window.confirm(`${verb} ${n} task${n === 1 ? '' : 's'} in "${group.module || 'General'}"${end}?`)) return;
+    if (!await confirmAction(`${verb} ${n} task${n === 1 ? '' : 's'} in "${group.module || 'General'}"${end}?`)) return;
     const idSet = new Set(open);
     setItems((prev) => prev.map((i) => (idSet.has(i.id) ? { ...i, status: 'completed' } : i)));
     try {
@@ -1196,14 +1244,14 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
       refresh();
     }
   };
-  const deleteWholeWbs = () => {
-    if (window.confirm('Delete the ENTIRE WBS for this project, across every tab (scope, improvements, upsell, design, marketing and support)? Release history is preserved. This cannot be undone.'))
+  const deleteWholeWbs = async () => {
+    if (await confirmAction('Delete the ENTIRE WBS for this project, across every tab (scope, improvements, upsell, design, marketing and support)? Release history is preserved. This cannot be undone.'))
       run(() => api.deleteWbs(projectId), 'WBS deleted');
   };
   // delete just ONE platform group (e.g. only "Admin Panel"), not the whole WBS
-  const deletePlatform = (platform, count) => {
+  const deletePlatform = async (platform, count) => {
     const label = platform || (track === 'scope' ? 'Ungrouped' : wbsTrackLabel(track));
-    if (window.confirm(`Delete the entire "${label}" WBS (${count} item${count === 1 ? '' : 's'})? Release history is preserved. This cannot be undone.`))
+    if (await confirmAction(`Delete the entire "${label}" WBS (${count} item${count === 1 ? '' : 's'})? Release history is preserved. This cannot be undone.`))
       run(() => api.deleteWbsPlatform(projectId, platform, track), `${label} WBS deleted`);
   };
 
@@ -1276,7 +1324,9 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
   });
 
   const byStatus = (s) => trackItems.filter((i) => i.status === s).length;
-  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+  const trackModules = [...new Set(trackItems.map((i) => i.module).filter(Boolean))];
+  const trackPlatforms = [...new Set(items.map((i) => i.platformType).filter(Boolean))];
+  const fSel = filterSelect;
 
   // collapse-all operates on the platform sections
   const allGroupKeys = platformOrder.map((p) => `plat:${p}`);
@@ -1284,16 +1334,16 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
 
   return (
     <>
-      <datalist id="wbs-platforms">{WBS_PLATFORM_TYPES.map((p) => <option key={p} value={p} />)}</datalist>
+      <datalist id="wbs-platforms">{[...new Set([...trackPlatforms, ...WBS_PLATFORM_TYPES])].map((p) => <option key={p} value={p} />)}</datalist>
       <PageHeader title="WBS Builder" subtitle="Flexible work breakdown — group by platform & module, one status per item" />
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
-        <select style={fSel} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+      <div className="filter-bar">
+        <select style={fSel} aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>{p.name} {p.wbsEnabled ? '• WBS' : ''}</option>
           ))}
         </select>
-        <select style={fSel} value={statusF} onChange={(e) => setStatusF(e.target.value)}>
+        <select style={fSel} aria-label="Status" value={statusF} onChange={(e) => setStatusF(e.target.value)}>
           <option value="all">All statuses</option>
           {WBS_STATUS_ORDER.map((s) => <option key={s} value={s}>{WBS_STATUSES[s].label}</option>)}
         </select>
@@ -1303,37 +1353,43 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
             {WBS_QA_STATUS_ORDER.map((s) => <option key={s} value={s}>{WBS_QA_STATUSES[s].label}</option>)}
           </select>
         )}
-        <input style={{ ...fSel, flex: '1 1 160px' }} value={q} placeholder="Search items…" onChange={(e) => setQ(e.target.value)} />
+        <input type="search" className="filter-search" style={filterInput} value={q} aria-label="Search WBS items" placeholder="Search items…" onChange={(e) => setQ(e.target.value)} />
         {allGroupKeys.length > 1 && (
           <button style={ghostButton} onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(allGroupKeys))}>
             {allCollapsed ? 'Expand all' : 'Collapse all'}
           </button>
         )}
         {canManage && (
-          <>
+          <div className="filter-actions">
             {canAdd && (
               <>
-                <button style={ghostButton} onClick={() => setAdding((v) => !v)}>{adding ? 'Close' : '+ New module'}</button>
-                <button style={primaryButton(false)} onClick={() => setBulkOpen(true)}>Bulk add</button>
+                {/* one primary action (add a module); the bulk tools, sharing and
+                    the destructive delete sit in the ⋯ menu */}
+                <button style={adding ? ghostButton : primaryButton(false)} onClick={() => setAdding((v) => !v)}>{adding ? 'Close' : '+ New module'}</button>
                 <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} />
-                <button style={ghostButton} onClick={() => fileRef.current?.click()}>Import</button>
               </>
             )}
-            {project && <button style={ghostButton} onClick={() => setShareOpen(true)}>Share</button>}
-            {items.length > 0 && (
-              <button style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644' }} onClick={deleteWholeWbs}>Delete WBS</button>
-            )}
-          </>
+            <ActionMenu
+              label="More WBS actions"
+              size={36}
+              items={[
+                canAdd && { label: 'Bulk add tasks', onSelect: () => setBulkOpen(true), hint: 'Paste many tasks at once' },
+                canAdd && { label: 'Import a spreadsheet', onSelect: () => fileRef.current?.click(), hint: '.xlsx, .xls or .csv' },
+                project && { label: 'Share with client', onSelect: () => setShareOpen(true), hint: 'A read-only public link' },
+                items.length > 0 && { label: 'Delete WBS', onSelect: deleteWholeWbs, danger: true },
+              ]}
+            />
+          </div>
         )}
       </div>
 
       {completion.total > 0 && (
-        <div style={{ ...card, padding: 16, marginBottom: 14 }}>
+        <div style={{ ...card, padding: 16, marginBottom: 16 }}>
           {project?.ongoingSupport && (
             <div style={{ marginBottom: 12 }}><Pill label="Ongoing support" tone="info" /></div>
           )}
           <ProjectProgress interfaces={completion.byInterface} bugs={completion.bugs} overall={completion} />
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 12 }}>
             {completion.open > 0
               ? `${completion.open} still open of ${completion.total}, across every tab below and reported bugs.`
               : project?.ongoingSupport
@@ -1353,8 +1409,8 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
         onChange={(t) => { setTrack(t); setAdding(false); setStatusF('all'); setQaF('all'); }}
       />
       {(WBS_TRACKS[track].hint || track === 'support') && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
             {WBS_TRACKS[track].hint}
             {isSqaTrack(track) && track !== 'scope' ? ' Completed only after SQA approval.' : ''}
           </span>
@@ -1365,18 +1421,22 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
       )}
 
       {adding && canAdd && (
-        <div style={{ ...card, padding: 12, marginBottom: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8, alignItems: 'end' }}>
+        <div style={{ ...card, padding: 12, marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8, alignItems: 'end' }}>
           <input style={inputStyle} value={form.module} placeholder="Module name *" onChange={(e) => setForm((f) => ({ ...f, module: e.target.value }))} />
           <input style={inputStyle} list="wbs-platforms" value={form.platformType} placeholder="Platform" onChange={(e) => setForm((f) => ({ ...f, platformType: e.target.value }))} />
           <input style={inputStyle} value={form.est} placeholder="Target date" onChange={(e) => setForm((f) => ({ ...f, est: e.target.value }))} />
           <input style={inputStyle} value={form.title} placeholder="First task title *" onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} onKeyDown={(e) => e.key === 'Enter' && addItem()} />
           <button style={primaryButton(!form.title.trim() || !form.module.trim())} disabled={!form.title.trim() || !form.module.trim()} onClick={addItem}>Create module</button>
+          <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+            Adding to <strong style={{ color: 'var(--color-text-secondary)' }}>{wbsTrackLabel(track)}</strong>.
+            {isSqaTrack(track) && !form.platformType.trim() && ' Set a platform so developers can link this work when they submit that platform’s build' + (track === 'scope' ? '.' : ' (without one it is offered on every build).')}
+          </div>
         </div>
       )}
 
       {trackItems.length > 0 && (
         <>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+          <div className="stat-row" style={{ marginBottom: 16 }}>
             <StatSmall label="Total Items" value={trackItems.length} />
             <StatSmall label="Not Started" value={byStatus('not_started')} />
             <StatSmall label="In Progress" value={byStatus('in_progress')} color={byStatus('in_progress') ? 'var(--brand)' : undefined} />
@@ -1388,7 +1448,7 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
       )}
 
       {loading ? (
-        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+        <SkeletonList rows={2} height={40} />
       ) : supportOff && trackItems.length === 0 ? (
         <Empty>
           <div>Ongoing support is off for this project.</div>
@@ -1397,13 +1457,18 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
           )}
         </Empty>
       ) : trackItems.length === 0 ? (
-        <Empty>{canManage ? `Nothing under ${wbsTrackLabel(track)} yet — create a module above, use Bulk add, or Import a spreadsheet.` : `Nothing under ${wbsTrackLabel(track)} yet.`}</Empty>
+        <Empty>
+          <div>{canAdd ? `Nothing under ${wbsTrackLabel(track)} yet — add a module, or use Bulk add or Import in the ⋯ menu.` : `Nothing under ${wbsTrackLabel(track)} yet.`}</div>
+          {canAdd && !adding && (
+            <button style={{ ...primaryButton(false), marginTop: 12 }} onClick={() => setAdding(true)}>+ New module</button>
+          )}
+        </Empty>
       ) : filtered.length === 0 ? (
         <Empty>No items match the filter.</Empty>
       ) : (
         // platform sections: each header carries the platform's milestone dates;
         // its module cards masonry below (short cards pack tight, no dead space)
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {platformOrder.map((platform) => {
             const mods = platformMap.get(platform);
             const platItems = mods.flatMap((m) => m.items);
@@ -1437,6 +1502,8 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
                           canCompleteAll={canCompleteAll}
                           profiles={profiles}
                           bugsByItem={bugsByItem}
+                          modules={trackModules}
+                          ongoingSupport={!!project?.ongoingSupport}
                           collapsed={isCol(g.key)}
                           onToggle={() => toggleCol(g.key)}
                           onAddTask={addTaskToGroup}
@@ -1462,12 +1529,13 @@ export function WbsPage({ user, projects, profiles = [], showToast, releases: re
         <WbsImportModal
           headers={importData.headers}
           rows={importData.rows}
+          trackLabel={wbsTrackLabel(track)}
           onCancel={() => setImportData(null)}
           onConfirm={confirmImport}
         />
       )}
 
-      {bulkOpen && <WbsBulkModal onCancel={() => setBulkOpen(false)} onConfirm={confirmBulk} />}
+      {bulkOpen && <WbsBulkModal trackLabel={wbsTrackLabel(track)} onCancel={() => setBulkOpen(false)} onConfirm={confirmBulk} />}
 
       {shareOpen && project && <WbsShareModal project={project} onClose={() => setShareOpen(false)} showToast={showToast} />}
     </>

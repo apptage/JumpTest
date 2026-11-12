@@ -18,7 +18,7 @@ import {
   TypeBadge,
   Info,
 } from '@/ui.jsx';
-import { Field, sideHead, TagChip, SlaBadge, statusSince } from '@shared/ui-kit.jsx';
+import { Field, sideHead, TagChip, SlaBadge, statusSince, onTabListKeyDown } from '@shared/ui-kit.jsx';
 import { BugActions, ProposedCloseBanner, BugTimeline } from '@shared/bug-actions.jsx';
 import {
   STATUSES,
@@ -47,57 +47,78 @@ import {
   humanizeSince,
   formatVersion,
   isSqaTrack,
-} from '@/constants.js';
+  wbsTrackLabel,
+  WBS_TRACK_ORDER, tint } from '@/constants.js';
 import { IconDownload, IconExternal } from '@/icons.jsx';
+import { SkeletonList } from '@shared/dashboard-kit.jsx';
 
 /* Inline "add new WBS task" list used inside the Submit modal — each row is a
-   title + module (existing modules offered via datalist). New items are created
-   under the release's WBS platform, linked, and set to In QA on submit. */
-function NewTaskList({ title, items, modules = [], onAdd, onSet, onRemove, requireModule }) {
-  const hasModules = modules.length > 0;
+   title + WBS tab (Original scope, Improvements, Upsell, Support) + module. New
+   items are created under the release's WBS platform on that tab, linked, and
+   set to In QA on submit. */
+function NewTaskList({ title, items, modulesByTrack = {}, tracks = ['scope'], onAdd, onSet, onRemove, requireModule }) {
   return (
     <Field label={title}>
       {items.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {items.map((it, i) => {
             const moduleBad = requireModule && it.title.trim() && !it.module.trim();
+            const modules = modulesByTrack[it.track || 'scope'] || [];
+            const hasModules = modules.length > 0;
             return (
-              <div key={i} style={{ display: 'flex', gap: 6 }}>
+              <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <input
-                  style={{ ...inputStyle, flex: 2 }}
+                  style={{ ...inputStyle, flex: '2 1 180px' }}
                   value={it.title}
                   placeholder="Task title *"
                   onChange={(e) => onSet(i, 'title', e.target.value)}
                 />
+                {tracks.length > 1 && (
+                  <select
+                    aria-label="WBS tab"
+                    title="Which WBS tab this work belongs to"
+                    style={{ ...inputStyle, flex: '1 1 140px' }}
+                    value={it.track || 'scope'}
+                    onChange={(e) => { onSet(i, 'track', e.target.value); onSet(i, 'module', ''); }}
+                  >
+                    {tracks.map((t) => <option key={t} value={t}>{wbsTrackLabel(t)}</option>)}
+                  </select>
+                )}
                 {hasModules ? (
                   <select
-                    style={{ ...inputStyle, flex: 1, borderColor: moduleBad ? '#dc2626' : 'var(--color-border-tertiary)' }}
+                    style={{ ...inputStyle, flex: '1 1 120px', borderColor: moduleBad ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
                     value={it.module}
-                    onChange={(e) => onSet(i, 'module', e.target.value)}
+                    onChange={(e) => {
+                      if (e.target.value !== '__new__') return onSet(i, 'module', e.target.value);
+                      const name = window.prompt('New module name')?.trim();
+                      if (name) onSet(i, 'module', name);
+                    }}
                   >
                     <option value="">Module…</option>
                     {modules.map((m) => (
                       <option key={m} value={m}>{m}</option>
                     ))}
+                    {it.module && !modules.includes(it.module) && <option value={it.module}>{it.module}</option>}
+                    <option value="__new__">+ New module…</option>
                   </select>
                 ) : (
                   // no existing modules (creating a fresh WBS) → free-text module
                   <input
-                    style={{ ...inputStyle, flex: 1, borderColor: moduleBad ? '#dc2626' : 'var(--color-border-tertiary)' }}
+                    style={{ ...inputStyle, flex: '1 1 120px', borderColor: moduleBad ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
                     value={it.module}
                     placeholder={requireModule ? 'Module *' : 'Module'}
                     onChange={(e) => onSet(i, 'module', e.target.value)}
                   />
                 )}
-                <button type="button" onClick={() => onRemove(i)} title="Remove" style={{ ...ghostButton, padding: '0 11px', color: '#dc2626', borderColor: '#dc262644' }}>✕</button>
+                <button type="button" onClick={() => onRemove(i)} title="Remove" style={{ ...ghostButton, padding: '0 12px', color: 'var(--c-red)', borderColor: tint('var(--c-red)', 27) }}>✕</button>
               </div>
             );
           })}
         </div>
       )}
-      <button type="button" onClick={onAdd} style={{ ...ghostButton, padding: '6px 12px', fontSize: 12 }}>+ Add task</button>
-      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
-        Created under this platform, linked to the release, and set to <strong>In QA</strong>.
+      <button type="button" onClick={onAdd} style={{ ...ghostButton, padding: '8px 12px', fontSize: 12 }}>+ Add task</button>
+      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 8 }}>
+        Created under this platform on the chosen tab, linked to the release, and set to <strong>In QA</strong>.
       </div>
     </Field>
   );
@@ -127,7 +148,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
 
   const [wbsItems, setWbsItems] = useState([]);
   const [selectedTasks, setSelectedTasks] = useState([]); // item ids
-  const [newItems, setNewItems] = useState([]); // inline new tasks: [{title, module}]
+  const [newItems, setNewItems] = useState([]); // inline new tasks: [{title, module, track}]
   const [creatingWbs, setCreatingWbs] = useState(false); // no-WBS branch: user chose "Create WBS"
 
   const project = projectById(form.projectId);
@@ -198,11 +219,23 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
   const derivedWbsPlatform = wbsPlatformForRelease(form.platform, resolvedComponent);
   const wbsEnabled = !!project?.wbsEnabled;
   const norm = (s) => String(s || '').trim().toLowerCase();
-  // design / marketing items aren't built into releases
-  const matchingItems = wbsItems.filter((i) => isSqaTrack(i.track) && norm(i.platformType) === norm(derivedWbsPlatform) && derivedWbsPlatform);
+  // design / marketing items aren't built into releases. Work on the extra tabs
+  // (improvements / upsell / support) may carry no platform — it can ship in any
+  // build, so it's offered on every platform instead of never being linkable.
+  const matchingItems = wbsItems.filter(
+    (i) => isSqaTrack(i.track) && derivedWbsPlatform &&
+      (norm(i.platformType) === norm(derivedWbsPlatform) || (i.track !== 'scope' && !norm(i.platformType)))
+  );
   const hasMatchingWbs = matchingItems.length > 0;
-  // existing modules under this platform (for the new-task module picker)
-  const platformModules = [...new Set(matchingItems.map((i) => i.module).filter(Boolean))];
+  // tabs a build can add new work to (SQA-tested ones; support only when it's on)
+  const newItemTracks = WBS_TRACK_ORDER.filter((t) => isSqaTrack(t) && (t !== 'support' || project?.ongoingSupport));
+  // existing modules under this platform, per tab (for the new-task module picker)
+  const modulesByTrack = {};
+  matchingItems.forEach((i) => {
+    if (!i.module) return;
+    const list = (modulesByTrack[i.track] = modulesByTrack[i.track] || []);
+    if (!list.includes(i.module)) list.push(i.module);
+  });
   // selectable existing tasks: non-milestone, not already in QA/completed
   const wbsTasks = matchingItems.filter(
     (t) => t.type !== 'milestone' && !['in_qa', 'completed'].includes(t.status)
@@ -216,7 +249,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
     setCreatingWbs(false);
   }, [derivedWbsPlatform, project?.id]);
 
-  const addNewItem = () => setNewItems((n) => [...n, { title: '', module: '' }]);
+  const addNewItem = () => setNewItems((n) => [...n, { title: '', module: '', track: 'scope' }]);
   const setNewItem = (i, k, v) => setNewItems((n) => n.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
   const removeNewItem = (i) => setNewItems((n) => n.filter((_, idx) => idx !== i));
 
@@ -266,7 +299,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         : [];
     const newWbsItems =
       wbsMode === 'link' || wbsMode === 'create'
-        ? validNewItems.map((n) => ({ title: n.title.trim(), module: n.module.trim() }))
+        ? validNewItems.map((n) => ({ title: n.title.trim(), module: n.module.trim(), track: n.track || 'scope' }))
         : [];
     onSubmit({
       ...form,
@@ -311,12 +344,12 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
       {priorSentBack && (
         <div
           style={{
-            padding: '10px 12px',
+            padding: '12px 12px',
             marginBottom: 12,
             borderRadius: 10,
             fontSize: 12,
             lineHeight: 1.5,
-            color: 'var(--warning)',
+            color: 'var(--tone-warning-fg)',
             background: 'var(--color-background-secondary)',
             border: '1px solid var(--color-border-tertiary)',
           }}
@@ -339,7 +372,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
                   onClick={() => selectPlatform(pl)}
                   style={{
                     flex: 1,
-                    padding: '9px 12px',
+                    padding: '8px 12px',
                     fontSize: 13,
                     fontWeight: 600,
                     borderRadius: 'var(--r-input)',
@@ -358,7 +391,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         </Field>
       )}
 
-      <div style={{ display: 'flex', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <Field label="Version">
             <input
@@ -425,7 +458,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
           style={{
             ...inputStyle,
             borderColor:
-              form.linkUrl && linkErr ? '#dc2626' : 'var(--color-border-tertiary)',
+              form.linkUrl && linkErr ? 'var(--c-red)' : 'var(--color-border-tertiary)',
           }}
           value={form.linkUrl}
           placeholder={
@@ -435,9 +468,9 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
           }
           onChange={(e) => set('linkUrl', e.target.value)}
         />
-        <div style={{ fontSize: 11, marginTop: 5, minHeight: 14, color: 'var(--color-text-tertiary)' }}>
+        <div style={{ fontSize: 12, marginTop: 4, minHeight: 14, color: 'var(--color-text-tertiary)' }}>
           {form.linkUrl && linkErr ? (
-            <span style={{ color: '#dc2626' }}>{linkErr}</span>
+            <span style={{ color: 'var(--c-red)' }}>{linkErr}</span>
           ) : form.releaseType === 'apk' ? (
             'Paste a permanent download link — WeTransfer and other expiring links are not allowed.'
           ) : (
@@ -447,11 +480,11 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
       </Field>
 
       {/* WBS platform this release maps to (derived from Platform/Component) */}
-      {!isCms && <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', margin: '-4px 0 12px' }}>
+      {!isCms && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '-4px 0 12px' }}>
         WBS platform:{' '}
         <strong style={{ color: 'var(--color-text-primary)' }}>{derivedWbsPlatform || '—'}</strong>
         {hasMatchingWbs ? (
-          <span style={{ color: 'var(--success)' }}> · matched</span>
+          <span style={{ color: 'var(--tone-success-fg)' }}> · matched</span>
         ) : (
           <span style={{ color: 'var(--color-text-tertiary)' }}> · no matching WBS</span>
         )}
@@ -461,7 +494,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
         <>
           <Field label={`WBS items (${selectedTasks.length} selected)${bugFixEligible ? ' — optional' : ''}`}>
             {bugFixEligible && (
-              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.5 }}>
                 Leave empty for a <strong>bug-fix release</strong> (only fixes carried from v
                 {priorSentBack.version}). Select tasks only if this build also completes new WBS work.
               </div>
@@ -475,10 +508,11 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
             ) : (
               <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--color-border-tertiary)', borderRadius: 'var(--r-input)', padding: 4 }}>
                 {wbsTasks.map((t) => (
-                  <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', fontSize: 12.5 }}>
+                  <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px', cursor: 'pointer', fontSize: 13 }}>
                     <input type="checkbox" checked={selectedTasks.includes(t.id)} onChange={() => toggleTask(t.id)} />
                     <span style={{ flex: 1 }}>{t.title}</span>
-                    {t.module && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.module}</span>}
+                    {t.track !== 'scope' && <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--tone-info-fg)', background: 'var(--tone-info-bg)', borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap' }}>{wbsTrackLabel(t.track)}</span>}
+                    {t.module && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{t.module}</span>}
                   </label>
                 ))}
               </div>
@@ -488,7 +522,8 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
           <NewTaskList
             title="Completed work not yet in the WBS (optional)"
             items={newItems}
-            modules={platformModules}
+            modulesByTrack={modulesByTrack}
+            tracks={newItemTracks}
             onAdd={addNewItem}
             onSet={setNewItem}
             onRemove={removeNewItem}
@@ -507,14 +542,14 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
       ) : (
         <>
           {/* No matching WBS — offer to create one inline, or continue without */}
-          {!isCms && <div style={{ padding: '10px 12px', marginBottom: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+          {!isCms && <div style={{ padding: '12px 12px', marginBottom: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
             <strong>No WBS found for {form.platform}{resolvedComponent ? ` · ${resolvedComponent}` : ''}.</strong>{' '}
             Create a new WBS for it (recommended), or continue without linking WBS items.
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
               <button
                 type="button"
                 onClick={() => { setCreatingWbs(true); if (newItems.length === 0) addNewItem(); }}
-                style={{ ...primaryButton(!derivedWbsPlatform), padding: '6px 12px', fontSize: 12 }}
+                style={{ ...primaryButton(!derivedWbsPlatform), padding: '8px 12px', fontSize: 12 }}
                 disabled={!derivedWbsPlatform}
               >
                 Create WBS
@@ -522,7 +557,7 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
               <button
                 type="button"
                 onClick={() => { setCreatingWbs(false); setNewItems([]); }}
-                style={{ ...ghostButton, padding: '6px 12px', fontSize: 12, ...(wbsMode === 'skip' ? { borderColor: 'var(--brand)', color: 'var(--brand)' } : {}) }}
+                style={{ ...ghostButton, padding: '8px 12px', fontSize: 12, ...(wbsMode === 'skip' ? { borderColor: 'var(--brand)', color: 'var(--brand)' } : {}) }}
               >
                 Continue without
               </button>
@@ -533,7 +568,8 @@ export function SubmitModal({ projects, sentBackReleases = [], bugs = [], isSubm
             <NewTaskList
               title={`New WBS items for ${derivedWbsPlatform}`}
               items={newItems}
-              modules={platformModules}
+              modulesByTrack={modulesByTrack}
+              tracks={newItemTracks}
               onAdd={addNewItem}
               onSet={setNewItem}
               onRemove={removeNewItem}
@@ -604,11 +640,11 @@ export function EditReleaseModal({ release, project, isSubmitting, onClose, onSa
     // higher z-index than the release-details modal it opens from, so it stacks
     // in front instead of behind (both otherwise share ModalShell's default 50)
     <ModalShell onClose={onClose} title="Edit release" zIndex={60}>
-      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 16 }}>
         {project ? project.name : 'Project'} · {release.platform} · {formatVersion(release.version)}
       </div>
 
-      <div style={{ display: 'flex', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <Field label="Version">
             <input style={inputStyle} value={form.version} onChange={(e) => set('version', e.target.value)} />
@@ -641,14 +677,14 @@ export function EditReleaseModal({ release, project, isSubmitting, onClose, onSa
         <input
           style={{
             ...inputStyle,
-            borderColor: form.linkUrl && linkErr ? '#dc2626' : 'var(--color-border-tertiary)',
+            borderColor: form.linkUrl && linkErr ? 'var(--c-red)' : 'var(--color-border-tertiary)',
           }}
           value={form.linkUrl}
           placeholder="https://…"
           onChange={(e) => set('linkUrl', e.target.value)}
         />
         {form.linkUrl && linkErr && (
-          <div style={{ fontSize: 11, marginTop: 5, color: '#dc2626' }}>{linkErr}</div>
+          <div style={{ fontSize: 12, marginTop: 4, color: 'var(--c-red)' }}>{linkErr}</div>
         )}
       </Field>
 
@@ -709,7 +745,8 @@ export function DetailModal({
   const [note, setNote] = useState(release.qaNote || '');
   const [checks, setChecks] = useState({}); // item_id -> checked
 
-  // a "manager" (Admin anywhere, or Team Lead in their own team) gets full rights
+  // a "manager" (Admin anywhere, Team Lead in their own team, or the project's
+  // Project Manager) gets full rights
   const isQA = user.role === 'QA' || isManager;
   const canDoQA =
     isManager ||
@@ -796,43 +833,54 @@ export function DetailModal({
   const qaList = profiles.filter((p) => p.role === 'QA' && projectQaIds.has(p.id));
 
   const tabBtn = (key, label, badge) => (
-    <div
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === key}
+      tabIndex={tab === key ? 0 : -1}
       onClick={() => setTab(key)}
       style={{
         padding: '8px 12px',
-        fontSize: 12,
-        fontWeight: 500,
+        fontSize: 13,
+        fontWeight: tab === key ? 600 : 500,
         cursor: 'pointer',
+        background: 'none',
+        border: 'none',
+        fontFamily: 'inherit',
+        marginBottom: -1,
         display: 'flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 8,
         color: tab === key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
         borderBottom: `2px solid ${tab === key ? 'var(--brand)' : 'transparent'}`,
       }}
     >
       {label}
       {badge ? badge : null}
-    </div>
+    </button>
   );
 
   return (
-    <ModalShell onClose={onClose} maxWidth={560}>
-      {/* header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-        <TypeBadge type={release.releaseType} />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 600 }}>
-          {formatVersion(release.version)}
+    /* a drawer, not a centred dialog: you look at one build next to the list it
+       came from, and the header with Close stays in view while the body scrolls */
+    <ModalShell
+      onClose={onClose}
+      variant="drawer"
+      maxWidth={600}
+      title={
+        <span style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontFamily: 'var(--font-body)', fontWeight: 400, letterSpacing: 0 }}>
+          <TypeBadge type={release.releaseType} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 600 }}>{formatVersion(release.version)}</span>
+          <StatusBadge status={release.status} />
         </span>
-        <StatusBadge status={release.status} />
-        {project && (
-          <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            {project.name}
-          </span>
-        )}
-      </div>
+      }
+      subtitle={project ? project.name : undefined}
+    >
 
       {/* tabs */}
       <div
+        role="tablist"
+        onKeyDown={onTabListKeyDown}
         style={{
           display: 'flex',
           gap: 4,
@@ -844,7 +892,7 @@ export function DetailModal({
         {tabBtn(
           'bugs',
           'Bugs',
-          bugs.length ? <CountBadge count={openBugs || bugs.length} color={openBugs ? '#dc2626' : '#64748b'} /> : null
+          bugs.length ? <CountBadge count={openBugs || bugs.length} color={openBugs ? 'var(--c-red)' : 'var(--c-slate)'} /> : null
         )}
         {tabBtn('comments', 'Comments')}
         {checklistItems.length > 0 && tabBtn('checklist', 'Checklist')}
@@ -882,6 +930,7 @@ export function DetailModal({
           bugs={bugs}
           user={user}
           isQA={isQA}
+          isManager={isManager}
           profiles={profiles}
           projectTeamId={project?.teamId}
           wbsEnabled={!!project?.wbsEnabled}
@@ -914,11 +963,6 @@ export function DetailModal({
         />
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-        <button style={ghostButton} onClick={onClose}>
-          Close
-        </button>
-      </div>
     </ModalShell>
   );
 }
@@ -973,17 +1017,17 @@ function DetailsTab({
             flexWrap: 'wrap',
             gap: 8,
             marginBottom: 12,
-            fontSize: 11.5,
+            fontSize: 12,
             color: 'var(--color-text-secondary)',
           }}
         >
           {supersedesRelease && (
-            <span style={{ padding: '3px 9px', borderRadius: 999, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+            <span style={{ padding: '4px 8px', borderRadius: 999, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
               ↩ Supersedes v{supersedesRelease.version}
             </span>
           )}
           {supersededByRelease && (
-            <span style={{ padding: '3px 9px', borderRadius: 999, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
+            <span style={{ padding: '4px 8px', borderRadius: 999, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
               ↪ Superseded by v{supersededByRelease.version}
             </span>
           )}
@@ -993,12 +1037,12 @@ function DetailsTab({
         style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
-          gap: 10,
-          padding: 14,
+          gap: 12,
+          padding: 16,
           background: 'var(--color-background-secondary)',
           border: '0.5px solid var(--color-border-primary)',
           borderRadius: 10,
-          marginBottom: 14,
+          marginBottom: 16,
         }}
       >
         <Info label="Platform" value={release.platform} />
@@ -1010,7 +1054,7 @@ function DetailsTab({
         <Info
           label="Time in status"
           value={
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <SlaBadge level={slaLevel(release.status, statusSince(release))} />
               {humanizeSince(statusSince(release))} in {STATUSES[release.status]?.label}
             </span>
@@ -1020,7 +1064,7 @@ function DetailsTab({
 
       {/* artifact */}
       {(release.fileUrl || release.linkUrl) && (
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 16 }}>
           <a
             href={release.fileUrl || release.linkUrl}
             target="_blank"
@@ -1029,7 +1073,7 @@ function DetailsTab({
               ...ghostButton,
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 7,
+              gap: 8,
               textDecoration: 'none',
             }}
           >
@@ -1059,9 +1103,9 @@ function DetailsTab({
           <div style={{ ...labelStyle, marginBottom: 8 }}>
             {wbsPlatformName ? `${wbsPlatformName} · ` : ''}Linked WBS items
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {linkedTasks.map((t) => (
-              <div key={t.id} style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 7 }}>
+              <div key={t.id} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 5, height: 5, borderRadius: 999, background: 'var(--brand)' }} />
                 {t.taskName}
               </div>
@@ -1082,8 +1126,8 @@ function DetailsTab({
         <div
           style={{
             borderTop: '0.5px solid var(--color-border-primary)',
-            paddingTop: 14,
-            marginBottom: 14,
+            paddingTop: 16,
+            marginBottom: 16,
           }}
         >
           <label style={labelStyle}>Assign QA tester</label>
@@ -1096,8 +1140,8 @@ function DetailsTab({
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 9,
-                padding: '9px 11px',
+                gap: 8,
+                padding: '8px 12px',
                 background: 'var(--color-background-secondary)',
                 border: '1px solid var(--color-border-tertiary)',
                 borderRadius: 'var(--r-input)',
@@ -1106,7 +1150,7 @@ function DetailsTab({
               <Avatar name={qaList[0].name} size={26} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{qaList[0].name}</div>
-                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                   Auto-assigned — only QA tester on this team
                 </div>
               </div>
@@ -1134,20 +1178,20 @@ function DetailsTab({
         <div
           style={{
             borderTop: '0.5px solid var(--color-border-primary)',
-            paddingTop: 14,
-            marginBottom: 6,
+            paddingTop: 16,
+            marginBottom: 8,
           }}
         >
           <div style={{ ...labelStyle, marginBottom: 8 }}>QA Actions</div>
           {!canDoQA && (
-            <div style={{ fontSize: 11, color: '#dc2626', marginBottom: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--c-red)', marginBottom: 8 }}>
               This release is assigned to another tester.
             </div>
           )}
           {/* current stage + bug summary */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <StatusBadge status={release.status} />
-            <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               {bugCount} bug{bugCount === 1 ? '' : 's'} reported
               {openBugCount ? ` · ${openBugCount} open` : ''}
             </span>
@@ -1157,13 +1201,13 @@ function DetailsTab({
             const steps = isReadOnly(release) ? [] : nextStatuses(release.status);
             if (isReadOnly(release))
               return (
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
                   This release is closed (superseded) and read-only.
                 </div>
               );
             if (steps.length === 0)
               return (
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
                   {release.status === 'approved'
                     ? 'Approved — no further QA action.'
                     : release.status === 'sent_back'
@@ -1174,7 +1218,14 @@ function DetailsTab({
             return (
               <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
                 {steps.map((key) => {
-                  const c = STATUSES[key].color;
+                  // moving the build along is the primary action; the two QA
+                  // outcomes keep their meaning: Approve green, Send Back a red outline
+                  const look =
+                    key === 'approved'
+                      ? { color: 'var(--on-status)', background: 'var(--success)', border: '1px solid var(--success)' }
+                      : key === 'sent_back'
+                        ? { color: 'var(--danger)', background: 'var(--card)', border: `1px solid ${tint('var(--danger)', 45)}` }
+                        : { color: 'var(--accent-foreground)', background: 'var(--accent)', border: '1px solid var(--accent)' };
                   return (
                     <button
                       key={key}
@@ -1183,16 +1234,14 @@ function DetailsTab({
                       style={{
                         flex: 1,
                         minWidth: 130,
-                        padding: '10px 12px',
-                        fontSize: 12.5,
+                        padding: '12px 12px',
+                        fontSize: 13,
                         fontWeight: 600,
                         borderRadius: 10,
                         cursor: isSubmitting || !canDoQA ? 'default' : 'pointer',
                         fontFamily: 'inherit',
                         opacity: canDoQA ? 1 : 0.5,
-                        color: '#fff',
-                        background: c,
-                        border: `0.5px solid ${c}`,
+                        ...look,
                       }}
                     >
                       {TRANSITION_LABELS[key] || STATUSES[key].label}
@@ -1202,9 +1251,10 @@ function DetailsTab({
               </div>
             );
           })()}
-          <label style={labelStyle}>QA note (optional)</label>
+          <label style={labelStyle} htmlFor={`qa-note-${release.id}`}>QA note (optional)</label>
           <textarea
-            style={{ ...inputStyle, resize: 'vertical', marginBottom: 10 }}
+            id={`qa-note-${release.id}`}
+            style={{ ...inputStyle, resize: 'vertical', marginBottom: 12 }}
             rows={3}
             value={note}
             disabled={!canDoQA}
@@ -1221,13 +1271,13 @@ function DetailsTab({
         <div
           style={{
             borderTop: '0.5px solid var(--color-border-primary)',
-            paddingTop: 14,
+            paddingTop: 16,
           }}
         >
           <div style={labelStyle}>QA note</div>
           <div
             style={{
-              padding: '10px 12px',
+              padding: '12px 12px',
               background: 'var(--color-background-secondary)',
               border: '0.5px solid var(--color-border-primary)',
               borderRadius: 8,
@@ -1245,8 +1295,8 @@ function DetailsTab({
         <div
           style={{
             borderTop: '0.5px solid var(--color-border-primary)',
-            paddingTop: 14,
-            marginTop: 14,
+            paddingTop: 16,
+            marginTop: 16,
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -1262,13 +1312,13 @@ function DetailsTab({
             <button
               disabled={isSubmitting}
               onClick={onDelete}
-              style={{ ...ghostButton, color: '#dc2626', borderColor: '#dc262644' }}
+              style={{ ...ghostButton, color: 'var(--c-red)', borderColor: tint('var(--c-red)', 27) }}
             >
               Delete release
             </button>
           )}
           {ownerLocked && (
-            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               Editing closed — releases can only be changed within{' '}
               {EDIT_WINDOW_HOURS}h of submission.
             </span>
@@ -1286,6 +1336,7 @@ function BugsTab({
   bugs,
   user,
   isQA,
+  isManager = false, // Admin, the project's Team Lead, or its Project Manager
   profiles,
   projectTeamId,
   wbsEnabled,
@@ -1333,8 +1384,7 @@ function BugsTab({
   // (Start / Mark fixed) too — the app-layer guard (canDevActOn) already authorizes
   // a TL on their own team's release.
   const isDev = user.role === 'Developer' || user.role === 'Team Lead' || user.role === 'Admin';
-  // only a Team Lead / Admin verifies a developer's proposed close
-  const isManager = user.role === 'Team Lead' || user.role === 'Admin';
+  // only the project's managers verify a developer's proposed close (isManager prop)
   const readOnly = isReadOnly(release);
   // no new bugs once the release has left the QA gate (approved or closed)
   const noNewBugs = release.status === 'approved' || readOnly;
@@ -1375,14 +1425,14 @@ function BugsTab({
   return (
     <>
       {noNewBugs && (
-        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
           {readOnly
             ? 'This release is closed (superseded). Bugs are shown as they were at close.'
             : 'This release is approved — no new bugs can be filed. Report against a new build.'}
         </div>
       )}
       {isQA && !noNewBugs && (
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 16 }}>
           {!show ? (
             <button style={ghostButton} onClick={() => setShow(true)}>
               + Report a bug
@@ -1391,7 +1441,7 @@ function BugsTab({
             <div
               style={{
                 ...card,
-                padding: 14,
+                padding: 16,
                 background: 'var(--color-background-secondary)',
               }}
             >
@@ -1412,7 +1462,7 @@ function BugsTab({
                   onChange={(e) => set('description', e.target.value)}
                 />
               </Field>
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <Field label="Severity">
                     <select style={inputStyle} value={form.severity} onChange={(e) => set('severity', e.target.value)}>
@@ -1450,13 +1500,13 @@ function BugsTab({
                       </option>
                     ))}
                   </select>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 5 }}>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
                     The bug is linked to this task; the task returns to In Progress until it's resolved &amp; re-verified.
                   </div>
                 </Field>
               ) : (
                 <Field label="Component tags">
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {BUG_TAGS.map((t) => {
                       const on = form.tags.includes(t);
                       return (
@@ -1465,8 +1515,8 @@ function BugsTab({
                           type="button"
                           onClick={() => toggleTag(t)}
                           style={{
-                            padding: '4px 9px',
-                            fontSize: 11.5,
+                            padding: '4px 8px',
+                            fontSize: 12,
                             fontWeight: 600,
                             borderRadius: 999,
                             cursor: 'pointer',
@@ -1546,10 +1596,10 @@ function BugsTab({
             const fresh = bugs.filter((b) => !b.carriedForward);
             const group = (label, list, hint) =>
               list.length === 0 ? null : (
-                <div style={{ marginBottom: 14 }}>
+                <div style={{ marginBottom: 16 }}>
                   <div style={{ ...sideHead, marginBottom: 8, display: 'flex', gap: 8, alignItems: 'baseline' }}>
                     {label} <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}>· {list.length}</span>
-                    {hint && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', fontWeight: 400 }}>{hint}</span>}
+                    {hint && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontWeight: 400 }}>{hint}</span>}
                   </div>
                   <BugList list={list} render={renderBug} />
                 </div>
@@ -1577,7 +1627,7 @@ function BugList({ list, render }) {
   const [shown, setShown] = useState(BUG_STEP);
   const left = list.length - shown;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {list.slice(0, shown).map(render)}
       {left > 0 && (
         <button style={{ ...ghostButton, width: '100%' }} onClick={() => setShown((n) => n + BUG_STEP)}>
@@ -1607,8 +1657,8 @@ function FeatureSummary({ bugs }) {
         {entries.map(([feat, g]) => {
           const open = g.total - g.resolved;
           return (
-            <div key={feat} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600, flex: '0 0 130px' }}>{feat}</span>
+            <div key={feat} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, flex: '0 0 130px' }}>{feat}</span>
               <div style={{ flex: 1, height: 6, borderRadius: 999, background: 'var(--color-background-secondary)' }}>
                 <div
                   style={{
@@ -1619,7 +1669,7 @@ function FeatureSummary({ bugs }) {
                   }}
                 />
               </div>
-              <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', flex: '0 0 auto' }}>
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', flex: '0 0 auto' }}>
                 {g.total} bug{g.total === 1 ? '' : 's'} · {g.resolved} resolved
                 {open > 0 && <span style={{ color: 'var(--danger)', fontWeight: 600 }}> · {open} open</span>}
               </span>
@@ -1659,9 +1709,9 @@ function BugRow({
           <span
             title={`Carried across ${bug.iteration} releases`}
             style={{
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 700,
-              padding: '2px 7px',
+              padding: '2px 8px',
               borderRadius: 999,
               color: 'var(--brand)',
               background: 'var(--brand-soft)',
@@ -1679,7 +1729,7 @@ function BugRow({
       </div>
 
       {(bug.feature || bug.tags.length > 0 || (bug.resolution && bug.resolution !== 'Fixed')) && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
           {bug.feature && <TagChip label={bug.feature} tone="brand" />}
           {bug.tags.map((t) => (
             <TagChip key={t} label={t} />
@@ -1687,11 +1737,11 @@ function BugRow({
           {bug.resolution && bug.resolution !== 'Fixed' && (
             <span
               style={{
-                fontSize: 10.5,
+                fontSize: 12,
                 fontWeight: 700,
                 padding: '2px 8px',
                 borderRadius: 999,
-                color: 'var(--warning)',
+                color: 'var(--tone-warning-fg)',
                 background: 'var(--color-background-secondary)',
                 border: '1px solid var(--color-border-tertiary)',
               }}
@@ -1707,7 +1757,7 @@ function BugRow({
           style={{
             fontSize: 12,
             color: 'var(--color-text-secondary)',
-            marginTop: 6,
+            marginTop: 8,
             whiteSpace: 'pre-wrap',
           }}
         >
@@ -1716,9 +1766,9 @@ function BugRow({
       )}
       <div
         style={{
-          fontSize: 11,
+          fontSize: 12,
           color: 'var(--color-text-secondary)',
-          marginTop: 6,
+          marginTop: 8,
         }}
       >
         by {bug.createdBy} · {new Date(bug.createdAt).toLocaleDateString()}
@@ -1758,7 +1808,7 @@ function BugRow({
       <BugTimeline bugId={bug.id} />
 
       {/* comment thread */}
-      <div style={{ marginTop: 10, borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>
+      <div style={{ marginTop: 12, borderTop: '1px solid var(--color-border-primary)', paddingTop: 12 }}>
         <button
           onClick={() => setShowThread((v) => !v)}
           style={{
@@ -1772,21 +1822,21 @@ function BugRow({
             fontFamily: 'inherit',
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 6,
+            gap: 8,
           }}
         >
           {showThread ? 'Hide comments' : 'Comments'}
           {commentCount > 0 && (
             <span
               style={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 700,
                 fontFamily: 'var(--font-mono)',
                 color: 'var(--color-text-secondary)',
                 background: 'var(--color-background-secondary)',
                 border: '1px solid var(--color-border-tertiary)',
                 borderRadius: 999,
-                padding: '0 7px',
+                padding: '0 8px',
                 lineHeight: '16px',
               }}
             >
@@ -1932,22 +1982,22 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
   }
 
   return (
-    <div style={{ marginTop: 10 }}>
+    <div style={{ marginTop: 12 }}>
       {loading ? (
-        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+        <SkeletonList rows={2} height={40} />
       ) : comments.length === 0 ? (
-        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
           No comments yet.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
           {comments.map((c) => (
-            <div key={c.id} style={{ display: 'flex', gap: 9 }}>
+            <div key={c.id} style={{ display: 'flex', gap: 8 }}>
               <Avatar name={c.authorName} size={26} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.authorName}</span>
-                  <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{c.authorName}</span>
+                  <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                     {c.authorRole} · {new Date(c.createdAt).toLocaleString()}
                   </span>
                   {(user.role === 'Admin' || c.authorId === user.id) && (
@@ -1958,7 +2008,7 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
                         background: 'none',
                         border: 'none',
                         padding: 0,
-                        fontSize: 11,
+                        fontSize: 12,
                         color: 'var(--color-text-tertiary)',
                         cursor: 'pointer',
                         fontFamily: 'inherit',
@@ -1968,7 +2018,7 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
                     </button>
                   )}
                 </div>
-                <div style={{ fontSize: 13, marginTop: 3, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
+                <div style={{ fontSize: 13, marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
                   {renderCommentBody(c.body, taggableNames)}
                 </div>
               </div>
@@ -2009,7 +2059,7 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
               }}
             >
               {suggestions.length === 0 ? (
-                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 10px' }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 12px' }}>
                   No teammates to tag.
                 </div>
               ) : (
@@ -2024,7 +2074,7 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
-                      padding: '7px 8px',
+                      padding: '8px 8px',
                       borderRadius: 6,
                       cursor: 'pointer',
                     }}
@@ -2033,8 +2083,8 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
                   >
                     <Avatar name={p.name} size={24} />
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{p.role}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{p.role}</div>
                     </div>
                   </div>
                 ))
@@ -2042,7 +2092,7 @@ function BugThread({ bug, user, showToast, taggable = [], onChanged }) {
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <button
               style={primaryButton(!body.trim() || busy)}
               disabled={!body.trim() || busy}
@@ -2100,7 +2150,7 @@ function CommentsTab({ release, user, showToast, onAddComment, onDeleteComment }
 
   return (
     <>
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ marginBottom: 16 }}>
         <textarea
           style={{ ...inputStyle, resize: 'vertical' }}
           rows={2}
@@ -2120,9 +2170,7 @@ function CommentsTab({ release, user, showToast, onAddComment, onDeleteComment }
       </div>
 
       {loading ? (
-        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          Loading…
-        </div>
+        <SkeletonList rows={3} height={44} />
       ) : top.length === 0 ? (
         <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
           No comments yet.
@@ -2153,7 +2201,7 @@ function CommentsTab({ release, user, showToast, onAddComment, onDeleteComment }
                       placeholder="Reply…"
                       onChange={(e) => setReplyBody(e.target.value)}
                     />
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
                       <button style={ghostButton} onClick={() => setReplyTo(null)}>
                         Cancel
                       </button>
@@ -2189,7 +2237,7 @@ function CommentRow({ c, user, onReply, onDelete }) {
       <div style={{ flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, fontWeight: 500 }}>{c.authorName}</span>
-          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {c.authorRole} · {new Date(c.createdAt).toLocaleString()}
           </span>
         </div>
@@ -2204,7 +2252,7 @@ function CommentRow({ c, user, onReply, onDelete }) {
                 background: 'none',
                 border: 'none',
                 padding: 0,
-                fontSize: 11,
+                fontSize: 12,
                 color: 'var(--brand)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -2220,8 +2268,8 @@ function CommentRow({ c, user, onReply, onDelete }) {
                 background: 'none',
                 border: 'none',
                 padding: 0,
-                fontSize: 11,
-                color: '#dc2626',
+                fontSize: 12,
+                color: 'var(--c-red)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
               }}
@@ -2241,7 +2289,7 @@ function ChecklistTab({ items, checks, canEdit, onToggle }) {
   const done = items.filter((it) => checks[it.id]).length;
   return (
     <>
-      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
         {done}/{items.length} complete
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2251,8 +2299,8 @@ function ChecklistTab({ items, checks, canEdit, onToggle }) {
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 10,
-              padding: '10px 12px',
+              gap: 12,
+              padding: '12px 12px',
               background: 'var(--color-background-secondary)',
               border: '0.5px solid var(--color-border-primary)',
               borderRadius: 10,

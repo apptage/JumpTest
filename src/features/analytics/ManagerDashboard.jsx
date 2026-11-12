@@ -125,8 +125,8 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
       />
 
       {/* dataset scope — executive reporting over the whole project history */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 12 }}>
-        <span style={{ fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 12 }}>
+        <span style={{ fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'var(--brand-soft)', color: 'var(--brand-strong)' }}>
           Scope: Entire Project History
         </span>
         <span style={{ color: 'var(--color-text-tertiary)' }}>Metrics include all releases (active and closed).</span>
@@ -135,25 +135,25 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
       {tab === 'overview' && (
         <>
           {attention.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ ...sideHead, marginBottom: 10 }}>Attention required</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ ...sideHead, marginBottom: 12 }}>Attention required</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                 {attention.map((a, i) => <AlertCard key={i} level={a.level}>{a.text}</AlertCard>)}
               </div>
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
             <Segmented options={[['week', 'This week'], ['month', 'This month'], ['3months', 'Last 3 months'], ['custom', 'Custom']]} value={range} onChange={setRange} />
             {range === 'custom' && (
               <>
-                <input type="date" style={{ ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: 12 }} value={cFrom} onChange={(e) => setCFrom(e.target.value)} />
-                <input type="date" style={{ ...inputStyle, width: 'auto', padding: '6px 10px', fontSize: 12 }} value={cTo} onChange={(e) => setCTo(e.target.value)} />
+                <input type="date" style={{ ...inputStyle, width: 'auto', padding: '8px 12px', fontSize: 12 }} value={cFrom} onChange={(e) => setCFrom(e.target.value)} />
+                <input type="date" style={{ ...inputStyle, width: 'auto', padding: '8px 12px', fontSize: 12 }} value={cTo} onChange={(e) => setCTo(e.target.value)} />
               </>
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+          <div className="stat-row big" style={{ marginBottom: 12 }}>
             <StatBig label="Projects" value={projects.length} accent="var(--brand)" />
             <StatBig label="Currently Active Bugs" value={bugAgg.active} accent="var(--danger)" />
             <StatBig label="Critical Bugs" value={activeCritical} accent={activeCritical ? 'var(--danger)' : 'var(--success)'} />
@@ -161,7 +161,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
             <PassRing pct={mAll.passRate} label="Overall QA pass rate" sub="approved ÷ decided" />
           </div>
 
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+          <div className="stat-row" style={{ marginBottom: 24 }}>
             <StatSmall label="Teams" value={teams.length} />
             <StatSmall label="Developers" value={devs.length} />
             <StatSmall label="QA Engineers" value={qas.length} />
@@ -171,15 +171,15 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
             <StatSmall label="Production Bugs" value={prodBugs} color={prodBugs ? 'var(--danger)' : undefined} />
           </div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Release pipeline</div>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Release pipeline</div>
           <Chevron stages={pipelineStages} />
         </>
       )}
 
       {tab === 'teams' && (
         <>
-          <div style={{ ...sideHead, marginBottom: 10 }}>Team performance</div>
-          <div style={{ marginBottom: 22 }}>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Team performance</div>
+          <div style={{ marginBottom: 24 }}>
             <DataTable
               rows={teamRows}
               rowKey={(r) => r.id}
@@ -195,7 +195,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
             />
           </div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Team member performance — click a person for full detail</div>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Team member performance — click a person for full detail</div>
           <DataTable
             rows={memberShown}
             rowKey={(r) => r.p.id}
@@ -218,7 +218,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
 
       {tab === 'projects' && (
         <>
-          <div style={{ ...sideHead, marginBottom: 10 }}>Project health</div>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Project health</div>
           <DataTable
             rows={projectRows}
             rowKey={(r) => r.id}
@@ -239,37 +239,37 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
 
       {tab === 'analytics' && (
         <>
-          <div style={{ ...sideHead, marginBottom: 10 }}>Monthly trends</div>
-          <div style={{ marginBottom: 22 }}><MonthlyCombo releases={relAll} bugs={bugsAll} /></div>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Monthly trends</div>
+          <div style={{ marginBottom: 24 }}><MonthlyCombo releases={relAll} bugs={bugsAll} /></div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Bug Workflow</div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Bug Workflow</div>
+          <div className="stat-row" style={{ marginBottom: 8 }}>
             <StatSmall label="Total Bugs" value={wfAll.total} />
             <StatSmall label="Needs Development" value={wfAll.needsDev} color={wfAll.needsDev ? 'var(--danger)' : undefined} />
             <StatSmall label="Awaiting QA" value={wfAll.awaitingQa} color={wfAll.awaitingQa ? 'var(--warning)' : undefined} />
             <StatSmall label="Verified Bugs" value={wfAll.verified} color="var(--success)" />
             <StatSmall label="Carried Forward Bugs" value={carriedAll} color={carriedAll ? 'var(--warning)' : undefined} />
           </div>
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 22, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 24, lineHeight: 1.5 }}>
             Each bug is a single record — a carried-forward bug moves to the new build rather than being copied,
             so every count is a straight row count that reconciles with the KPIs.
           </div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>By severity &amp; environment</div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 22 }}>
+          <div style={{ ...sideHead, marginBottom: 12 }}>By severity &amp; environment</div>
+          <div className="stat-row" style={{ marginBottom: 24 }}>
             <StatSmall label="Critical Bugs" value={bugAgg.bySeverity.critical || 0} color={bugAgg.bySeverity.critical ? 'var(--danger)' : undefined} />
             <StatSmall label="Major Bugs" value={bugAgg.bySeverity.major || 0} />
             <StatSmall label="Minor Bugs" value={bugAgg.bySeverity.minor || 0} />
             <StatSmall label="Production Bugs" value={prodBugs} color={prodBugs ? 'var(--danger)' : undefined} />
           </div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Release history — every release</div>
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Release history — every release</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
             Complete audit across all teams and projects. Every bug exists only once — a carried-forward bug
             <strong> moves</strong> to the new build. Bug counts are historical (from each bug’s timeline):
             reported on this build vs. carried in, and they don’t change as bugs move on. Click a row to open the release.
           </div>
-          <div style={{ marginBottom: 22 }}>
+          <div style={{ marginBottom: 24 }}>
             <ReleaseHistory
               releases={relAll}
               projectsById={projectsById}
@@ -279,7 +279,7 @@ export function ManagerDashboard({ projects, releases, bugs, profiles, teams, pr
             />
           </div>
 
-          <div style={{ ...sideHead, marginBottom: 10 }}>Workload</div>
+          <div style={{ ...sideHead, marginBottom: 12 }}>Workload</div>
           <DataTable
             rows={workload}
             rowKey={(w) => w.m.id}
@@ -350,9 +350,9 @@ function MonthlyCombo({ releases, bugs }) {
           ))}
         </svg>
       </div>
-      <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
         {[['Submitted', 'var(--brand)'], ['Approved', 'var(--success)'], ['Bugs reported', 'var(--danger)']].map(([l, c]) => (
-          <span key={l} style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span key={l} style={{ fontSize: 12, color: 'var(--color-text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: c }} /> {l}
           </span>
         ))}
@@ -372,41 +372,41 @@ function MemberModal({ member, releases, bugs, projectsById, teamsById, onOpenRe
 
   return (
     <ModalShell onClose={onClose} title={member.name} maxWidth={640}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <Avatar name={member.name} size={40} />
         <div>
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{member.role} · {teamsById[member.teamId]?.name || 'No team'}</div>
+          <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{member.role} · {teamsById[member.teamId]?.name || 'No team'}</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{member.email}</div>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div className="stat-row" style={{ marginBottom: 16 }}>
         <StatSmall label={isQa ? 'Releases tested' : 'Releases'} value={theirRel.length} />
         <StatSmall label="QA Approved" value={approved} color="var(--success)" />
         <StatSmall label="Returned for Rework" value={sentBack} color={sentBack ? 'var(--danger)' : undefined} />
         <StatSmall label={isQa ? 'Bugs reported' : 'Active Bugs'} value={isQa ? theirBugs.length : theirBugs.filter(isActiveBug).length} />
       </div>
       <div style={{ ...sideHead, marginBottom: 8 }}>Assigned projects</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         {projIds.length ? projIds.map((id) => <Pill key={id} label={projectsById[id]?.name || 'Unknown'} tone="neutral" />) : <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>None</span>}
       </div>
       <div style={{ ...sideHead, marginBottom: 8 }}>{isQa ? 'Review history' : 'Release history'}</div>
       <div style={{ ...card, padding: '2px 0', marginBottom: 16, maxHeight: 220, overflowY: 'auto' }}>
-        {theirRel.length === 0 ? <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No releases.</div> : theirRel.slice(0, 40).map((r) => (
-          <div key={r.id} className="mgr-row" onClick={() => { onClose(); onOpenRelease(r.id); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: '1px solid var(--color-border-primary)', cursor: 'pointer' }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>{formatVersion(r.version)}</span>
+        {theirRel.length === 0 ? <div style={{ padding: '12px 12px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No releases.</div> : theirRel.slice(0, 40).map((r) => (
+          <div key={r.id} className="mgr-row" onClick={() => { onClose(); onOpenRelease(r.id); }} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderTop: '1px solid var(--color-border-primary)', cursor: 'pointer' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600 }}>{formatVersion(r.version)}</span>
             <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', flex: 1 }}>{projectsById[r.projectId]?.name}</span>
             <StatusBadge status={r.status} />
-            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{r.date}</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.date}</span>
           </div>
         ))}
       </div>
       <div style={{ ...sideHead, marginBottom: 8 }}>Bug history</div>
       <div style={{ ...card, padding: '2px 0', maxHeight: 200, overflowY: 'auto' }}>
-        {theirBugs.length === 0 ? <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No bugs.</div> : theirBugs.slice(0, 40).map((b) => (
+        {theirBugs.length === 0 ? <div style={{ padding: '12px 12px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No bugs.</div> : theirBugs.slice(0, 40).map((b) => (
           <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--color-border-primary)' }}>
             <SeverityBadge severity={b.severity} />
-            <span style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}>{b.title}</span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{BUG_STATUS_LABEL[b.status] || b.status}</span>
+            <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{b.title}</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{BUG_STATUS_LABEL[b.status] || b.status}</span>
           </div>
         ))}
       </div>

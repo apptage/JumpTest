@@ -5,8 +5,9 @@
    and it's dropped from memory again after REVEAL_MS. */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '@/api.js';
-import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell } from '@/ui.jsx';
-import { Pill } from '@shared/dashboard-kit.jsx';
+import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell, confirmAction } from '@/ui.jsx';
+import { Pill, SkeletonList } from '@shared/dashboard-kit.jsx';
+import { managesProject } from '@shared/permissions.js';
 
 const RESOURCE_SECTIONS = [
   ['domain', 'Domain & website'],
@@ -33,7 +34,7 @@ const REVEAL_MS = 30_000;
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // matches the project-files bucket limit
 const FILE_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.zip,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx';
 
-const smallBtn = { ...ghostButton, padding: '4px 10px', minHeight: 0, fontSize: 12 };
+const smallBtn = { ...ghostButton, padding: '4px 12px', minHeight: 0, fontSize: 12 };
 const fmtWhen = (iso) => new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 // '' → null; adds https:// to a bare domain; rejects anything that isn't a web link
@@ -53,9 +54,9 @@ function normalizeUrl(raw) {
 function Section({ title, sub, action, children }) {
   return (
     <div style={{ ...card, padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>{title}</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>{title}</div>
           {sub && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{sub}</div>}
         </div>
         {action}
@@ -107,7 +108,7 @@ function ResourceModal({ projectId, category, resource, userId, onClose, onSaved
 
   return (
     <ModalShell onClose={onClose} title={resource ? `Edit ${resource.title}` : `Add to ${section}`} maxWidth={520}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div>
           <label style={labelStyle} htmlFor="res-title">Title</label>
           <input id="res-title" style={inputStyle} autoFocus value={f.title} onChange={(e) => set('title', e.target.value)} />
@@ -118,15 +119,15 @@ function ResourceModal({ projectId, category, resource, userId, onClose, onSaved
         </div>
         <div>
           <label style={labelStyle} htmlFor="res-file">File</label>
-          <input id="res-file" type="file" accept={FILE_ACCEPT} style={{ fontSize: 12.5, display: 'block' }} onChange={(e) => pickFile(e.target.files?.[0] || null)} />
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+          <input id="res-file" type="file" accept={FILE_ACCEPT} style={{ fontSize: 13, display: 'block' }} onChange={(e) => pickFile(e.target.files?.[0] || null)} />
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
             {resource?.fileName && !file ? `Current file: ${resource.fileName}. ` : ''}Up to 25 MB. Only people on this project can open it.
           </div>
         </div>
         <div>
           <label style={labelStyle} htmlFor="res-notes">Notes</label>
           <textarea id="res-notes" style={{ ...inputStyle, resize: 'vertical' }} rows={3} value={f.notes} onChange={(e) => set('notes', e.target.value)} />
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>Don’t put passwords here. Use Credentials, which are encrypted.</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>Don’t put passwords here. Use Credentials, which are encrypted.</div>
         </div>
         {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -140,13 +141,13 @@ function ResourceModal({ projectId, category, resource, userId, onClose, onSaved
 
 function ResourceRow({ r, canEdit, onEdit, onDelete, onOpenFile }) {
   return (
-    <div style={{ padding: '9px 0', borderTop: '1px solid var(--color-border-primary)' }}>
+    <div style={{ padding: '8px 0', borderTop: '1px solid var(--color-border-primary)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
         {canEdit && (
           <>
-            <button style={{ ...smallBtn, padding: '2px 8px', fontSize: 11.5 }} onClick={() => onEdit(r)}>Edit</button>
-            <button style={{ ...smallBtn, padding: '2px 8px', fontSize: 11.5, color: 'var(--danger)' }} onClick={() => onDelete(r)}>Delete</button>
+            <button style={{ ...smallBtn, padding: '2px 8px', fontSize: 12 }} onClick={() => onEdit(r)}>Edit</button>
+            <button style={{ ...smallBtn, padding: '2px 8px', fontSize: 12, color: 'var(--danger)' }} onClick={() => onDelete(r)}>Delete</button>
           </>
         )}
       </div>
@@ -158,7 +159,7 @@ function ResourceRow({ r, canEdit, onEdit, onDelete, onOpenFile }) {
           ⬇ {r.fileName}
         </button>
       )}
-      {r.notes && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 3, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{r.notes}</div>}
+      {r.notes && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{r.notes}</div>}
     </div>
   );
 }
@@ -206,8 +207,8 @@ function CredentialModal({ projectId, credential, onClose, onSaved, showToast })
 
   return (
     <ModalShell onClose={onClose} title={credential ? `Edit ${credential.label}` : 'Add credential'} maxWidth={520}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
           <div>
             <label style={labelStyle} htmlFor="cred-label">Name</label>
             <input id="cred-label" style={inputStyle} autoFocus value={f.label} placeholder="e.g. Production server" onChange={(e) => set('label', e.target.value)} />
@@ -223,7 +224,7 @@ function CredentialModal({ projectId, credential, onClose, onSaved, showToast })
           <label style={labelStyle} htmlFor="cred-url">Login link</label>
           <input id="cred-url" style={inputStyle} value={f.url} placeholder="example.com/login" onChange={(e) => set('url', e.target.value)} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label style={labelStyle} htmlFor="cred-user">Username</label>
             <input id="cred-user" style={inputStyle} autoComplete="off" value={f.username} placeholder={credential ? 'Leave blank to keep' : ''} onChange={(e) => set('username', e.target.value)} />
@@ -236,7 +237,7 @@ function CredentialModal({ projectId, credential, onClose, onSaved, showToast })
         <div>
           <label style={labelStyle} htmlFor="cred-access">Who can see this</label>
           <select id="cred-access" style={inputStyle} value={f.access} onChange={(e) => set('access', e.target.value)}>
-            <option value="managers">Team Leads and Admins only</option>
+            <option value="managers">Managers only (Team Lead, Project Manager, Admin)</option>
             <option value="team">Project members too</option>
           </select>
         </div>
@@ -278,15 +279,15 @@ function CredentialRow({ c, canManage, onEdit, onDelete, showToast }) {
     }
   }
   const field = (label, value) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, minWidth: 0 }}>
-      <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', width: 70, flexShrink: 0 }}>{label}</span>
-      <code style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflowWrap: 'anywhere' }}>{value || '—'}</code>
-      {value && <button style={{ ...smallBtn, padding: '2px 8px', fontSize: 11.5 }} onClick={() => copy(value, label)}>Copy</button>}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, minWidth: 0 }}>
+      <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', width: 70, flexShrink: 0 }}>{label}</span>
+      <code style={{ flex: 1, minWidth: 0, fontSize: 13, overflowWrap: 'anywhere' }}>{value || '—'}</code>
+      {value && <button style={{ ...smallBtn, padding: '2px 8px', fontSize: 12 }} onClick={() => copy(value, label)}>Copy</button>}
     </div>
   );
 
   return (
-    <div style={{ padding: '10px 0', borderTop: '1px solid var(--color-border-primary)' }}>
+    <div style={{ padding: '12px 0', borderTop: '1px solid var(--color-border-primary)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' }}>{c.label}</span>
         <Pill label={categoryLabel(c.category)} tone="neutral" />
@@ -300,12 +301,12 @@ function CredentialRow({ c, canManage, onEdit, onDelete, showToast }) {
           </>
         )}
       </div>
-      {c.url && <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: 12, color: 'var(--brand)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.url}</a>}
+      {c.url && <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: 12, color: 'var(--brand)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.url}</a>}
       {secret && (
         <div>
           {field('Username', secret.username)}
           {field('Password', secret.password)}
-          <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 6 }}>Hides automatically after 30 seconds.</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 8 }}>Hides automatically after 30 seconds.</div>
         </div>
       )}
     </div>
@@ -318,16 +319,16 @@ function AccessLogModal({ projectId, onClose, showToast }) {
     api.fetchProjectCredentialLog(projectId).then(setRows).catch((e) => { showToast(e.message, 'error'); setRows([]); });
   }, [projectId, showToast]);
   return (
-    <ModalShell onClose={onClose} title="Credential access log" subtitle="Latest 200 events. Only Team Leads and Admins can see this." maxWidth={560}>
+    <ModalShell onClose={onClose} title="Credential access log" subtitle="Latest 200 events. Only the project's managers can see this." maxWidth={560}>
       {rows === null ? (
-        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+        <SkeletonList rows={2} height={40} />
       ) : rows.length === 0 ? (
         <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Nothing yet.</div>
       ) : (
         rows.map((l) => (
-          <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderTop: '1px solid var(--color-border-primary)', fontSize: 12.5 }}>
+          <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderTop: '1px solid var(--color-border-primary)', fontSize: 13 }}>
             <span style={{ minWidth: 0 }}><strong style={{ fontWeight: 600 }}>{l.userName}</strong> {LOG_ACTION[l.action] || l.action} <strong style={{ fontWeight: 600 }}>{l.label}</strong></span>
-            <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{fmtWhen(l.at)}</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{fmtWhen(l.at)}</span>
           </div>
         ))
       )}
@@ -337,7 +338,7 @@ function AccessLogModal({ projectId, onClose, showToast }) {
 
 /* ---- the tab ---- */
 export function ProjectInfoTab({ project, user, isMember, showToast }) {
-  const canManage = user.role === 'Admin' || (user.role === 'Team Lead' && project.teamId === user.teamId);
+  const canManage = managesProject(user, project);
   const canEdit = user.role !== 'Manager' && (canManage || isMember);
   const projectId = project.id;
   const [resources, setResources] = useState([]);
@@ -362,7 +363,7 @@ export function ProjectInfoTab({ project, user, isMember, showToast }) {
   useEffect(() => { setState('loading'); load(); }, [load]);
 
   async function deleteResource(r) {
-    if (!window.confirm(`Delete "${r.title}"?${r.fileName ? ' Its file is deleted too.' : ''}`)) return;
+    if (!await confirmAction(`Delete "${r.title}"?${r.fileName ? ' Its file is deleted too.' : ''}`)) return;
     try {
       await api.deleteProjectResource(r);
       showToast('Deleted');
@@ -372,7 +373,7 @@ export function ProjectInfoTab({ project, user, isMember, showToast }) {
     }
   }
   async function deleteCredential(c) {
-    if (!window.confirm(`Delete the "${c.label}" credential? This can't be undone. Change the password too if it's still in use.`)) return;
+    if (!await confirmAction(`Delete the "${c.label}" credential? This can't be undone. Change the password too if it's still in use.`)) return;
     try {
       await api.deleteProjectCredential(c.id);
       showToast('Credential deleted');
@@ -393,9 +394,9 @@ export function ProjectInfoTab({ project, user, isMember, showToast }) {
     }
   }
 
-  if (state === 'loading') return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Loading…</div>;
+  if (state === 'loading') return <SkeletonList rows={2} height={40} />;
   if (state === 'missing') {
-    return <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>Project information isn’t enabled yet. Run the project info migration on the database.</div>;
+    return <div style={{ ...card, padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>Project information isn’t enabled yet. Run the project info migration on the database.</div>;
   }
 
   return (
@@ -404,15 +405,15 @@ export function ProjectInfoTab({ project, user, isMember, showToast }) {
         title="Credentials"
         sub="Encrypted in the database. Only shown when someone reveals one, and every reveal is logged."
         action={canManage && (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <button style={smallBtn} onClick={() => setLogOpen(true)}>Access log</button>
             <button style={smallBtn} onClick={() => setCredentialForm('new')}>+ Add</button>
           </div>
         )}
       >
         {credentials.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>
-            {canManage ? 'No credentials yet.' : 'No credentials have been shared with you. Ask your Team Lead if you need access.'}
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-border-primary)', paddingTop: 12 }}>
+            {canManage ? 'No credentials yet.' : 'No credentials have been shared with you. Ask your Team Lead or Project Manager if you need access.'}
           </div>
         ) : (
           credentials.map((c) => (
@@ -428,7 +429,7 @@ export function ProjectInfoTab({ project, user, isMember, showToast }) {
             <div key={key} style={{ breakInside: 'avoid', marginBottom: 16 }}>
               <Section title={title} action={canEdit && <button style={{ ...smallBtn, flexShrink: 0 }} onClick={() => setResourceForm({ category: key })}>+ Add</button>}>
                 {rows.length === 0 ? (
-                  <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-border-primary)', paddingTop: 10 }}>Nothing added yet.</div>
+                  <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-border-primary)', paddingTop: 12 }}>Nothing added yet.</div>
                 ) : (
                   rows.map((r) => (
                     <ResourceRow key={r.id} r={r} canEdit={canEdit} onEdit={(res) => setResourceForm({ category: key, resource: res })} onDelete={deleteResource} onOpenFile={openFile} />

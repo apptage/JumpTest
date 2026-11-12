@@ -6,18 +6,19 @@
    Shown inside Project Hub in place of Plan (WBS). */
 import { useState, useEffect, useCallback } from 'react';
 import * as api from '@/api.js';
-import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell, Avatar } from '@/ui.jsx';
+import { card, inputStyle, labelStyle, ghostButton, primaryButton, ModalShell, Avatar, confirmAction } from '@/ui.jsx';
 import { Pill, StatCard, DataTable, Segmented } from '@shared/dashboard-kit.jsx';
 import {
   CMS_TASK_CATEGORIES, CMS_REQUESTERS, CMS_CHANNELS, CMS_TASK_STATUSES, CMS_TASK_STATUS_ORDER,
   CMS_JOURNEY, CMS_STAGE_STATUSES, CMS_STAGE_STATUS_ORDER, WBS_PRIORITIES,
   cmsCategoriesForKind, cmsCategoryLabel, cmsKindLabel,
 } from '@/constants.js';
+import { filterSelect } from '@shared/ui-kit.jsx';
 
-const panelHead = { fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' };
-const panelSub = { fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 };
-const muted = { fontSize: 12.5, color: 'var(--color-text-tertiary)' };
-const smallSel = { ...inputStyle, width: 'auto', minHeight: 0, padding: '5px 8px', fontSize: 12 };
+const panelHead = { fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: 'var(--tracking-tight)' };
+const panelSub = { fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 };
+const muted = { fontSize: 13, color: 'var(--color-text-tertiary)' };
+const smallSel = { ...inputStyle, width: 'auto', minHeight: 0, padding: '4px 8px', fontSize: 12 };
 
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => (d ? new Date(d.length === 10 ? `${d}T00:00:00` : d).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : '—');
@@ -106,50 +107,50 @@ export function CmsOverview({ project, tasks, stages, loading, missing, profiles
   return (
     <div>
       <div className="dash-kpis" style={{ marginBottom: 16 }}>
-        <StatCard label="Open tasks" value={dash ?? open.length} foot={`${tasks.length} ALL TIME`} />
-        <StatCard label="In review" value={dash ?? review.length} foot="AWAITING SIGN-OFF" />
-        <StatCard label="Overdue" value={dash ?? overdue.length} foot="PAST DUE DATE" />
-        <StatCard label="Done" value={dash ?? done.length} foot="COMPLETED TASKS" />
-        <StatCard label="Journey" value={dash ?? (journey.started ? `${journey.pct}%` : '—')} foot={journey.started ? `${journey.finished}/${journey.total} STAGES` : 'NOT STARTED'} />
+        <StatCard label="Open tasks" value={dash ?? open.length} foot={`${tasks.length} all time`} />
+        <StatCard label="In review" value={dash ?? review.length} foot="Awaiting sign-off" />
+        <StatCard label="Overdue" tone={overdue.length ? 'danger' : 'neutral'} value={dash ?? overdue.length} foot="Past due date" />
+        <StatCard label="Done" value={dash ?? done.length} foot="Completed tasks" />
+        <StatCard label="Journey" value={dash ?? (journey.started ? `${journey.pct}%` : '—')} foot={journey.started ? `${journey.finished}/${journey.total} stages` : 'Not started'} />
       </div>
 
       <div className="dash-mid">
-        <div style={{ ...card, padding: 18 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ ...card, padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
             <div>
               <div style={panelHead}>Development journey</div>
               <div style={panelSub}>{journey.started ? (journey.current ? `Now: ${journey.current.label}` : 'All stages finished') : 'Not started for this project'}</div>
             </div>
-            <button style={{ ...ghostButton, padding: '5px 11px', minHeight: 0, fontSize: 12 }} onClick={() => onTab('journey')}>Open</button>
+            <button style={{ ...ghostButton, padding: '4px 12px', minHeight: 0, fontSize: 12 }} onClick={() => onTab('journey')}>Open</button>
           </div>
           {journey.started ? (
-            <ol style={{ listStyle: 'none', margin: '14px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <ol style={{ listStyle: 'none', margin: '16px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {CMS_JOURNEY.map((j, i) => {
                 const s = byKey[j.key];
                 const st = CMS_STAGE_STATUSES[s?.status || 'pending'];
                 return (
-                  <li key={j.key} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
+                  <li key={j.key} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13 }}>
                     <StepDot index={i} status={s?.status || 'pending'} />
                     <span style={{ flex: 1, minWidth: 0, color: s?.status === 'skipped' ? 'var(--color-text-tertiary)' : undefined, textDecoration: s?.status === 'skipped' ? 'line-through' : undefined }}>{j.label}</span>
-                    {s?.ownerId && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{profilesById[s.ownerId]?.name}</span>}
+                    {s?.ownerId && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{profilesById[s.ownerId]?.name}</span>}
                     <Pill label={st.label} tone={st.tone} />
                   </li>
                 );
               })}
             </ol>
           ) : (
-            <div style={{ ...muted, marginTop: 14 }}>Start the journey when this project is a new website or landing page build.</div>
+            <div style={{ ...muted, marginTop: 16 }}>Start the journey when this project is a new website or landing page build.</div>
           )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...card, padding: 16 }}>
             <div style={panelHead}>Tasks by category</div>
             <div style={panelSub}>{cmsKindLabel(project.cmsKind)}</div>
-            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
               {catRows.map(({ c, total, open: o }) => (
                 <div key={c}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 5 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
                     <span style={{ fontWeight: 500 }}>{cmsCategoryLabel(c)}</span>
                     <span className="tnum" style={{ color: 'var(--color-text-secondary)' }}>{o} open · {total}</span>
                   </div>
@@ -160,12 +161,12 @@ export function CmsOverview({ project, tasks, stages, loading, missing, profiles
               ))}
             </div>
           </div>
-          <div style={{ ...card, padding: 18 }}>
+          <div style={{ ...card, padding: 16 }}>
             <div style={panelHead}>Open tasks by who assigned them</div>
             <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {reqRows.map(({ k, n }) => <Pill key={k} label={`${CMS_REQUESTERS[k].label}: ${n}`} tone={n ? 'info' : 'neutral'} />)}
             </div>
-            <button style={{ ...ghostButton, marginTop: 14, padding: '5px 11px', minHeight: 0, fontSize: 12 }} onClick={() => onTab('tasks')}>View tasks</button>
+            <button style={{ ...ghostButton, marginTop: 16, padding: '4px 12px', minHeight: 0, fontSize: 12 }} onClick={() => onTab('tasks')}>View tasks</button>
           </div>
         </div>
       </div>
@@ -181,7 +182,7 @@ function StepDot({ index, status }) {
       className="tnum"
       style={{
         width: 22, height: 22, borderRadius: 999, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 11, fontWeight: 700,
+        fontSize: 12, fontWeight: 700,
         background: doneish ? 'var(--tone-success-bg)' : active ? 'var(--tone-warning-bg)' : 'var(--color-background-secondary)',
         color: doneish ? 'var(--tone-success-fg)' : active ? 'var(--tone-warning-fg)' : 'var(--color-text-tertiary)',
         border: active ? '1px solid var(--tone-warning-fg)' : '1px solid transparent',
@@ -251,7 +252,7 @@ function TaskModal({ project, task, user, assignees, canDelete, onClose, onSaved
     }
   }
   async function remove() {
-    if (!window.confirm(`Delete “${task.title}”?`)) return;
+    if (!await confirmAction(`Delete “${task.title}”?`)) return;
     setSaving(true);
     try {
       await api.deleteCmsTask(task.id);
@@ -267,7 +268,7 @@ function TaskModal({ project, task, user, assignees, canDelete, onClose, onSaved
   const grid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 };
   return (
     <ModalShell onClose={onClose} title={task ? 'Edit task' : 'New task'} subtitle={project.name} maxWidth={600}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div>
           <label style={labelStyle} htmlFor="cms-cat">Category</label>
           <select id="cms-cat" style={inputStyle} value={f.category} onChange={(e) => pickCategory(e.target.value)}>
@@ -370,7 +371,7 @@ export function CmsTasksTab({ project, user, tasks, missing, assignees, profiles
       render: (t) => (
         <div style={{ minWidth: 200 }}>
           <div style={{ fontWeight: 600 }}>{t.title}</div>
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{cmsCategoryLabel(t.category)}</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{cmsCategoryLabel(t.category)}</div>
         </div>
       ),
     },
@@ -381,7 +382,7 @@ export function CmsTasksTab({ project, user, tasks, missing, assignees, profiles
         <span style={{ whiteSpace: 'nowrap' }}>
           {assignedByLabel(t)}
           {t.referenceUrl && (
-            <a href={t.referenceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, fontSize: 11.5, color: 'var(--brand)' }}>link</a>
+            <a href={t.referenceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ marginLeft: 8, fontSize: 12, color: 'var(--brand)' }}>link</a>
           )}
         </span>
       ),
@@ -389,7 +390,7 @@ export function CmsTasksTab({ project, user, tasks, missing, assignees, profiles
     {
       label: 'Assignee',
       render: (t) => t.assignedTo ? (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
           <Avatar name={profilesById[t.assignedTo]?.name || '?'} size={22} />
           {profilesById[t.assignedTo]?.name || 'Unknown'}
         </span>
@@ -416,10 +417,10 @@ export function CmsTasksTab({ project, user, tasks, missing, assignees, profiles
     },
   ];
 
-  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12, minHeight: 0 };
+  const fSel = filterSelect;
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <Segmented
           value={statusF}
           onChange={setStatusF}
@@ -489,21 +490,21 @@ function StageRow({ index, def, stage, assignees, profilesById, canEdit, onPatch
   const late = stage.dueDate && !['done', 'skipped'].includes(stage.status) && stage.dueDate < today();
 
   return (
-    <li style={{ display: 'flex', gap: 12, padding: '14px 4px', borderBottom: '1px solid var(--color-border-primary)' }}>
+    <li style={{ display: 'flex', gap: 12, padding: '16px 4px', borderBottom: '1px solid var(--color-border-primary)' }}>
       <StepDot index={index} status={stage.status} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600, textDecoration: stage.status === 'skipped' ? 'line-through' : undefined, color: stage.status === 'skipped' ? 'var(--color-text-tertiary)' : undefined }}>{def.label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 14, fontWeight: 600, textDecoration: stage.status === 'skipped' ? 'line-through' : undefined, color: stage.status === 'skipped' ? 'var(--color-text-tertiary)' : undefined }}>{def.label}</span>
           {!canEdit && <Pill label={st.label} tone={st.tone} />}
           {late && <Pill label="Late" tone="danger" />}
-          {stage.notes && !open && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }}>— {stage.notes}</span>}
+          {stage.notes && !open && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }}>— {stage.notes}</span>}
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 3 }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
           {def.hint ? `${def.hint}${dates ? ' · ' : ''}` : ''}{dates}
           {!canEdit && stage.ownerId ? ` · ${profilesById[stage.ownerId]?.name || ''}` : ''}
         </div>
         {canEdit && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
             <select style={smallSel} aria-label={`${def.label} status`} value={stage.status} onChange={(e) => onPatch(stage, { status: e.target.value })}>
               {CMS_STAGE_STATUS_ORDER.map((s) => <option key={s} value={s}>{CMS_STAGE_STATUSES[s].label}</option>)}
             </select>
@@ -512,16 +513,16 @@ function StageRow({ index, def, stage, assignees, profilesById, canEdit, onPatch
               {assignees.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <input type="date" style={smallSel} aria-label={`${def.label} due date`} value={stage.dueDate || ''} onChange={(e) => onPatch(stage, { due_date: e.target.value || null })} />
-            <button style={{ ...ghostButton, padding: '4px 10px', minHeight: 0, fontSize: 12 }} onClick={() => setOpen((o) => !o)}>
+            <button style={{ ...ghostButton, padding: '4px 12px', minHeight: 0, fontSize: 12 }} onClick={() => setOpen((o) => !o)}>
               {open ? 'Hide notes' : stage.notes ? 'Notes' : 'Add notes'}
             </button>
           </div>
         )}
         {open && canEdit && (
           <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <textarea style={{ ...inputStyle, resize: 'vertical', fontSize: 12.5 }} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Links, decisions, what’s left…" />
+            <textarea style={{ ...inputStyle, resize: 'vertical', fontSize: 13 }} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Links, decisions, what’s left…" />
             <button
-              style={{ ...primaryButton(notes === stage.notes), padding: '6px 12px', minHeight: 0, fontSize: 12 }}
+              style={{ ...primaryButton(notes === stage.notes), padding: '8px 12px', minHeight: 0, fontSize: 12 }}
               disabled={notes === stage.notes}
               onClick={async () => { if (await onPatch(stage, { notes: notes.trim() })) setOpen(false); }}
             >
@@ -567,11 +568,11 @@ export function CmsJourneyTab({ project, stages, missing, assignees, profilesByI
     return (
       <div style={{ ...card, padding: 32 }}>
         <div style={panelHead}>Development journey</div>
-        <div style={{ ...muted, marginTop: 6, maxWidth: 560, lineHeight: 1.6 }}>
+        <div style={{ ...muted, marginTop: 8, maxWidth: 560, lineHeight: 1.6 }}>
           For a new website or landing page build. It tracks the project from template selection to final handover, stage by stage.
           Existing websites that only get change requests don’t need it: use Tasks instead.
         </div>
-        <ol style={{ margin: '16px 0', paddingLeft: 20, fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.9 }}>
+        <ol style={{ margin: '16px 0', paddingLeft: 24, fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.9 }}>
           {CMS_JOURNEY.map((j) => <li key={j.key}>{j.label}</li>)}
         </ol>
         {canEdit && <button style={primaryButton(busy)} disabled={busy} onClick={start}>{busy ? 'Starting…' : 'Start development journey'}</button>}
@@ -582,13 +583,13 @@ export function CmsJourneyTab({ project, stages, missing, assignees, profilesByI
   // a stage added to the journey later shows up after a restart (fills the gap)
   const missingStages = CMS_JOURNEY.filter((j) => !byKey[j.key]);
   return (
-    <div style={{ ...card, padding: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+    <div style={{ ...card, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={panelHead}>Development journey</div>
           <div style={panelSub}>{journey.current ? `Now: ${journey.current.label}` : 'All stages finished'} · {journey.finished}/{journey.total} stages</div>
         </div>
-        <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700 }}>{journey.pct}%</span>
+        <span className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700 }}>{journey.pct}%</span>
       </div>
       <div style={{ height: 6, borderRadius: 999, background: 'var(--color-background-secondary)', overflow: 'hidden', marginTop: 12 }}>
         <div style={{ height: '100%', width: `${Math.max(2, journey.pct)}%`, borderRadius: 999, background: 'var(--brand)' }} />

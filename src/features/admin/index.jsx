@@ -4,9 +4,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as api from '@/api.js';
 import { useMetricsData } from '@shared/useMetricsData.js';
-import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, ModalShell } from '@/ui.jsx';
-import { Field } from '@shared/ui-kit.jsx';
-import { StatSmall, Pill, passColor } from '@shared/dashboard-kit.jsx';
+import { card, inputStyle, labelStyle, ghostButton, primaryButton, Avatar, ModalShell, confirmAction } from '@/ui.jsx';
+import { Field, Pager, filterSelect, filterInput, ActionMenu, onTabListKeyDown } from '@shared/ui-kit.jsx';
+import { StatSmall, Pill, passColor, SkeletonCards, SkeletonList, Skeleton } from '@shared/dashboard-kit.jsx';
 import { computeProjectSummaries, computeUserSummaries, projectSummaryFromCounts } from '@shared/releaseMetrics.js';
 import { computeWorkCompletion, liveBugs } from '@shared/wbsMetrics.js';
 import {
@@ -20,9 +20,9 @@ import {
   emailDomainOk,
   CMS_KINDS,
   CMS_KIND_ORDER,
-  cmsKindLabel,
-} from '@/constants.js';
-import { IconGlobe, IconPlus, IconSmartphone, IconLayers } from '@/icons.jsx';
+  cmsKindLabel, tint } from '@/constants.js';
+import { managesProject, PM_ROLE, canMoveProjectTeam, canDeleteProjects } from '@shared/permissions.js';
+import { IconGlobe, IconPlus, IconSmartphone, IconLayers, IconSearch } from '@/icons.jsx';
 
 /* the CMS kind picker shown next to Type when the project is a CMS project */
 function CmsKindSelect({ value, onChange }) {
@@ -72,24 +72,34 @@ function AdminPanel({
   teams.forEach((t) => (teamsById[t.id] = t));
 
   const tabBtn = (key, label) => (
-    <div
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === key}
+      tabIndex={tab === key ? 0 : -1}
       onClick={() => setTab(key)}
       style={{
         padding: '8px 12px',
-        fontSize: 12,
-        fontWeight: 500,
+        fontSize: 13,
+        fontWeight: tab === key ? 600 : 500,
         cursor: 'pointer',
+        background: 'none',
+        border: 'none',
+        fontFamily: 'inherit',
+        marginBottom: -1,
         color: tab === key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
         borderBottom: `2px solid ${tab === key ? 'var(--brand)' : 'transparent'}`,
       }}
     >
       {label}
-    </div>
+    </button>
   );
 
   return (
     <ModalShell onClose={onClose} title={isAdmin ? 'Manage' : 'Manage team'} maxWidth={680}>
       <div
+        role="tablist"
+        onKeyDown={onTabListKeyDown}
         style={{
           display: 'flex',
           gap: 4,
@@ -170,7 +180,7 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
   return (
     <div>
       {/* KPI header — house hierarchy */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+      <div className="stat-row" style={{ marginBottom: 16 }}>
         <StatSmall label="Teams" value={teams.length} />
         <StatSmall label="People assigned" value={profiles.filter((p) => p.teamId).length} />
         <StatSmall label="Projects" value={projects.filter((p) => p.teamId).length} />
@@ -181,8 +191,8 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
         />
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        <input
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <input aria-label="New team name"
           style={{ ...inputStyle, flex: 1 }}
           value={name}
           placeholder="New team name (e.g. Team B)"
@@ -207,8 +217,8 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 10,
-                  padding: '11px 13px',
+                  gap: 12,
+                  padding: '12px 12px',
                   background: 'var(--color-background-secondary)',
                   border: '0.5px solid var(--color-border-primary)',
                   borderRadius: 10,
@@ -216,14 +226,14 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 600 }}>{t.name}</span>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>{t.name}</span>
                     {lead ? (
                       <Pill label={`Lead: ${lead.name}`} tone="success" />
                     ) : (
                       <Pill label="No team lead" tone="danger" />
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
                     {members(t.id).length} member{members(t.id).length === 1 ? '' : 's'} · {projCount(t.id)} project
                     {projCount(t.id) === 1 ? '' : 's'}
                   </div>
@@ -231,7 +241,7 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
                 <button
                   onClick={() => onDeleteTeam(t.id)}
                   disabled={isSubmitting}
-                  style={{ ...ghostButton, padding: '6px 10px', fontSize: 12, color: '#dc2626', borderColor: '#dc262644' }}
+                  style={{ ...ghostButton, padding: '8px 12px', fontSize: 12, color: 'var(--c-red)', borderColor: tint('var(--c-red)', 27) }}
                 >
                   Delete
                 </button>
@@ -240,7 +250,7 @@ export function TeamsTab({ teams, profiles, projects, isSubmitting, onCreateTeam
           })}
         </div>
       )}
-      <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 12, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 12, lineHeight: 1.5 }}>
         Assign each team a Team Lead in the Users tab. Team Leads manage their own
         team's projects and members; Developers and QA only see their team's work.
       </div>
@@ -273,7 +283,7 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
       email: form.email.trim(),
       password: form.password,
       role: form.role,
-      teamId: form.teamId || null,
+      teamId: form.role === PM_ROLE ? null : form.teamId || null, // a Project Manager has no team
     });
     if (ok) {
       setForm({ name: '', email: '', password: '', role: 'Developer', teamId: '' });
@@ -283,9 +293,9 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
 
   if (!open) {
     return (
-      <div style={{ marginBottom: 6 }}>
+      <div style={{ marginBottom: 8 }}>
         <button
-          style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          style={{ ...primaryButton(false), display: 'inline-flex', alignItems: 'center', gap: 8 }}
           onClick={() => setOpen(true)}
         >
           <IconPlus size={15} />
@@ -300,13 +310,13 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
       className="anim-in"
       style={{
         ...card,
-        padding: 14,
+        padding: 16,
         background: 'var(--color-background-secondary)',
         marginBottom: 8,
       }}
     >
-      <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>New account</div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>New account</div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 160px' }}>
           <Field label="Name">
             <input
@@ -332,7 +342,7 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
           </Field>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 160px' }}>
           <Field label="Temporary password">
             <input
@@ -357,7 +367,7 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
         </div>
         <div style={{ flex: '1 1 120px' }}>
           <Field label="Team">
-            <select style={inputStyle} value={form.teamId} onChange={(e) => set('teamId', e.target.value)}>
+            <select style={inputStyle} value={form.role === PM_ROLE ? '' : form.teamId} disabled={form.role === PM_ROLE} title={form.role === PM_ROLE ? 'Project Managers have no team' : 'Team'} onChange={(e) => set('teamId', e.target.value)}>
               <option value="">No team</option>
               {teams.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -368,7 +378,7 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
           </Field>
         </div>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
         The account is created already-confirmed (no email sent). Share the
         temporary password with the user.
       </div>
@@ -456,7 +466,7 @@ export function UsersTab({
 
   async function removeUser(p) {
     if (
-      !window.confirm(
+      !await confirmAction(
         `Permanently delete ${p.name}? This removes them from both the app and the authentication system.`
       )
     )
@@ -473,13 +483,13 @@ export function UsersTab({
     }
   }
 
-  const selStyle = { ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 };
+  const selStyle = { ...inputStyle, width: 'auto', padding: '8px 8px', fontSize: 12 };
 
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [teamFilter, setTeamFilter] = useState('all');
   const [visible, setVisible] = useState(15);
-  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+  const fSel = filterSelect;
 
   const term = q.trim().toLowerCase();
   const filteredUsers = profiles.filter(
@@ -497,11 +507,12 @@ export function UsersTab({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* KPI header — role distribution */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+      <div className="stat-row" style={{ marginBottom: 4 }}>
         <StatSmall label="Total" value={profiles.length} />
-        <StatSmall label="Admins" value={roleCount('Admin')} color="var(--brand)" />
-        <StatSmall label="Team Leads" value={roleCount('Team Lead')} color="var(--warning)" />
-        <StatSmall label="QA" value={roleCount('QA')} color="var(--success)" />
+        <StatSmall label="Admins" value={roleCount('Admin')} />
+        <StatSmall label="Team Leads" value={roleCount('Team Lead')} />
+        <StatSmall label="Project Managers" value={roleCount(PM_ROLE)} />
+        <StatSmall label="QA" value={roleCount('QA')} />
         <StatSmall label="Developers" value={roleCount('Developer')} />
       </div>
 
@@ -511,7 +522,7 @@ export function UsersTab({
 
       {/* search + filters */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-        <input
+        <input aria-label="Search people"
           style={{ ...inputStyle, flex: '1 1 180px', width: 'auto' }}
           value={q}
           placeholder="Search by name or email…"
@@ -520,7 +531,7 @@ export function UsersTab({
             setVisible(15);
           }}
         />
-        <select style={fSel} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+        <select aria-label="Role" style={fSel} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
           <option value="all">All roles</option>
           {ROLES.map((r) => (
             <option key={r} value={r}>
@@ -529,7 +540,7 @@ export function UsersTab({
           ))}
         </select>
         {isAdmin && (
-          <select style={fSel} value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
+          <select aria-label="Team" style={fSel} value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
             <option value="all">All teams</option>
             <option value="none">No team</option>
             {teams.map((t) => (
@@ -551,25 +562,25 @@ export function UsersTab({
       </div>
 
       {/* member cards — responsive grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginTop: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginTop: 12 }}>
       {pageUsers.map((p) => {
         const isSelf = p.id === currentUser.id;
         // a team lead may only adjust Developers/QA in their own team
         const leadLocked =
-          !isAdmin && (p.role === 'Admin' || p.role === 'Team Lead');
+          !isAdmin && (p.role === 'Admin' || p.role === 'Team Lead' || p.role === PM_ROLE);
         const roleDisabled = isSelf || leadLocked || busyId === p.id;
-        const roleTone = { Admin: 'info', 'Team Lead': 'warning', QA: 'success' }[p.role] || 'neutral';
-        const fieldLbl = { display: 'block', fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' };
+        const roleTone = { Admin: 'info', 'Team Lead': 'warning', [PM_ROLE]: 'info', QA: 'success' }[p.role] || 'neutral';
+        const fieldLbl = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' };
         return (
           <div key={p.id} className="mgr-card" style={{ ...card, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <Avatar name={p.name} size={40} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {p.name}
-                  {isSelf && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: 6 }}>(you)</span>}
+                  {isSelf && <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: 8 }}>(you)</span>}
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</div>
               </div>
               <Pill label={p.role} tone={roleTone} />
             </div>
@@ -583,7 +594,8 @@ export function UsersTab({
                   <select
                     style={{ ...selStyle, width: '100%' }}
                     value={p.teamId || ''}
-                    disabled={busyId === p.id}
+                    disabled={busyId === p.id || p.role === PM_ROLE}
+                    title={p.role === PM_ROLE ? 'Project Managers manage every project and have no team' : 'Team'}
                     onChange={(e) => patch(p.id, { team_id: e.target.value || null })}
                   >
                     <option value="">No team</option>
@@ -593,7 +605,7 @@ export function UsersTab({
               ) : (
                 <div style={{ minWidth: 0 }}>
                   <span style={fieldLbl}>Team</span>
-                  <div style={{ fontSize: 12.5, minHeight: 32, display: 'flex', alignItems: 'center' }}>{p.teamId ? teamsById[p.teamId]?.name : '—'}</div>
+                  <div style={{ fontSize: 13, minHeight: 32, display: 'flex', alignItems: 'center' }}>{p.teamId ? teamsById[p.teamId]?.name : '—'}</div>
                 </div>
               )}
               <label style={{ display: 'block', minWidth: 0 }}>
@@ -618,7 +630,7 @@ export function UsersTab({
                 onClick={() => removeUser(p)}
                 disabled={isSelf || busyId === p.id}
                 style={{
-                  ...ghostButton, alignSelf: 'flex-end', padding: '6px 10px', minHeight: 0, fontSize: 12,
+                  ...ghostButton, alignSelf: 'flex-end', padding: '8px 12px', minHeight: 0, fontSize: 12,
                   color: isSelf ? 'var(--color-text-secondary)' : 'var(--danger)',
                   opacity: isSelf ? 0.5 : 1, cursor: isSelf ? 'default' : 'pointer',
                 }}
@@ -643,17 +655,35 @@ export function UsersTab({
           Load more ({filteredUsers.length - visible} left)
         </button>
       )}
-      <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
         {isAdmin
-          ? 'New sign-ups join as Developer. Set each user’s team and role here; one Team Lead per team.'
+          ? 'New sign-ups join as Developer. Set each user’s team and role here; one Team Lead per team. Project Managers manage every project and have no team.'
           : 'You can set your team members between Developer and QA. Ask an admin to add or remove people.'}
       </div>
     </div>
   );
 }
 
+/* The Projects tab: every project as a card. Anyone can open a project from its
+   card; Team Leads and Admins also create and edit projects (Admins delete them), and
+   a Project Manager edits the projects they're assigned to; managers also manage
+   each one's QA checklist and members from the card (the former Manage Projects
+   page). One page of cards at a time; build / bug numbers are fetched for the
+   cards on the page, or for the whole filtered list when a status filter or a
+   numeric sort needs them.
+   releases / bugs: the loaded lists in legacy mode (paged-lists migrations not
+   applied); undefined otherwise. filters / onFilters: kept by the caller so the
+   search, filters and page survive opening a project and coming back. */
+export const PROJECTS_FILTERS = { q: '', type: 'all', team: 'all', status: 'all', sort: 'name', page: 0 };
+const PROJECTS_PAGE_SIZE = 24;
+const PROJECT_STATUS_FILTERS = [['all', 'Any status'], ['bugs', 'Open bugs'], ['active', 'Active build'], ['idle', 'No active build']];
+const PROJECT_SORTS = [['name', 'Name (A–Z)'], ['bugs', 'Most open bugs'], ['recent', 'Latest build'], ['builds', 'Most builds']];
+
 export function ProjectsTab({
   isAdmin,
+  canManage = true,
+  canCreate = canManage,
+  canDelete = isAdmin, // Admins and Project Managers
   user,
   myTeamId,
   teams,
@@ -666,6 +696,10 @@ export function ProjectsTab({
   profiles,
   projectMembers,
   isSubmitting,
+  filters: filtersProp,
+  onFilters: onFiltersProp,
+  createSignal = 0,
+  onOpen,
   onCreateProject,
   onUpdateProject,
   onDeleteProject,
@@ -676,66 +710,110 @@ export function ProjectsTab({
   onRemoveMember,
 }) {
   const [creating, setCreating] = useState(false);
+  // Admins and Project Managers work across teams: they pick a project's team
+  const anyTeam = isAdmin || canMoveProjectTeam(user);
+  // the header's "New project" opens the form
+  useEffect(() => { if (createSignal && canCreate) setCreating(true); }, [createSignal, canCreate]);
   const [form, setForm] = useState({
     name: '',
     type: 'mobile',
     cmsKind: 'website',
-    team: isAdmin ? teams[0]?.id || '' : myTeamId || '',
+    team: anyTeam ? teams[0]?.id || '' : myTeamId || '',
     brand: '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const needsTeam = isAdmin && teams.length > 0;
+  const needsTeam = anyTeam && teams.length > 0;
   const invalid = !form.name.trim() || (needsTeam && !form.team);
-  const [q, setQ] = useState('');
-  const [teamFilter, setTeamFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [visible, setVisible] = useState(12);
 
-  const filteredProjects = projects.filter(
-    (p) =>
-      p.name.toLowerCase().includes(q.trim().toLowerCase()) &&
-      (teamFilter === 'all' ||
-        (teamFilter === 'none' ? !p.teamId : p.teamId === teamFilter)) &&
-      (typeFilter === 'all' || p.type === typeFilter)
+  const [localFilters, setLocalFilters] = useState(PROJECTS_FILTERS);
+  const f = filtersProp || localFilters;
+  const onFilters = onFiltersProp || setLocalFilters;
+  const setF = (k, v) => onFilters({ ...f, [k]: v, page: 0 });
+  const setPage = (n) => onFilters({ ...f, page: n });
+  const teamName = (id) => (id ? teamsById?.[id]?.name || '' : '');
+
+  // 1. filters that only need the project list, sorted by name
+  const term = f.q.trim().toLowerCase();
+  const metaFiltered = useMemo(() => projects
+    .filter((p) => !term || p.name.toLowerCase().includes(term) || teamName(p.teamId).toLowerCase().includes(term))
+    .filter((p) => f.type === 'all' || p.type === f.type)
+    .filter((p) => f.team === 'all' || (f.team === 'none' ? !p.teamId : p.teamId === f.team))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [projects, term, f.type, f.team, teamsById]);
+
+  // 2. numbers: the page's projects, or the whole filtered list when ordering needs them
+  const needsAll = f.sort !== 'name' || f.status !== 'all';
+  const lastPage = (n) => Math.max(0, Math.ceil(n / PROJECTS_PAGE_SIZE) - 1);
+  const wantedPage = f.page || 0;
+  const namePage = Math.min(wantedPage, lastPage(metaFiltered.length));
+  const countIds = useMemo(
+    () => (needsAll ? metaFiltered : metaFiltered.slice(namePage * PROJECTS_PAGE_SIZE, (namePage + 1) * PROJECTS_PAGE_SIZE)).map((p) => p.id).sort(),
+    [needsAll, metaFiltered, namePage]
   );
-  const pageProjects = filteredProjects.slice(0, visible);
-  // releases / bugs: the loaded lists in legacy mode; otherwise undefined, and the
-  // tiles use the database's per-project counts plus the live work
-  // only the tiles on screen (Load more adds 12) get counts, WBS items and live bugs
-  const projectIdsKey = pageProjects.map((p) => p.id).sort().join(',');
-  const allIdsKey = projects.map((p) => p.id).sort().join(',');
-  const buildsQ = useQuery({
-    queryKey: ['summaries', 'releaseCount', allIdsKey],
-    queryFn: () => api.countReleases(allIdsKey ? allIdsKey.split(',') : []),
-    enabled: !releases,
-  });
   const countsQ = useQuery({
-    queryKey: ['summaries', 'projects', projectIdsKey],
-    queryFn: () => api.fetchProjectSummaries(projectIdsKey ? projectIdsKey.split(',') : []),
-    enabled: !releases,
+    queryKey: ['releases', 'projectSummaries', countIds.join(',')],
+    queryFn: () => api.fetchProjectSummaries(countIds),
+    enabled: !releases && countIds.length > 0,
+    staleTime: 0, // counted again each time the list is shown
   });
-  const summaries = useMemo(() => {
-    if (releases) return computeProjectSummaries(releases, bugs || []);
+  // undefined = loading; null = not deployed, so count from the loaded lists
+  const counts = releases ? null : !countIds.length ? {} : countsQ.isError ? null : countsQ.data;
+  const legacySummaries = useMemo(() => (releases ? computeProjectSummaries(releases, bugs || []) : null), [releases, bugs]);
+  const legacyActive = useMemo(() => {
+    if (!releases) return {};
     const out = {};
-    Object.entries(countsQ.data || {}).forEach(([pid, c]) => { if (c.builds) out[pid] = projectSummaryFromCounts(c); });
+    releases.forEach((r) => { // releases come newest first
+      const o = (out[r.projectId] = out[r.projectId] || { active: null, latest: '' });
+      if (!o.active && r.status !== 'closed') o.active = { version: r.version, platform: r.platform };
+      if ((r.date || '') > o.latest) o.latest = r.date || '';
+    });
     return out;
-  }, [releases, bugs, countsQ.data]);
-  const totalBuilds = releases ? releases.length : buildsQ.data ?? '…';
+  }, [releases]);
+  const rowFor = (p) => {
+    if (counts !== null) {
+      const c = counts?.[p.id];
+      return { p, loading: counts === undefined, summary: c?.builds ? projectSummaryFromCounts(c) : null, open: c?.openBugs ?? 0, builds: c?.builds ?? 0, active: c?.active || null, latest: c?.latest || '' };
+    }
+    const s = legacySummaries?.[p.id] || null;
+    return { p, summary: s, open: s?.openBugs ?? 0, builds: s?.builds ?? 0, active: legacyActive[p.id]?.active || null, latest: legacyActive[p.id]?.latest || '' };
+  };
+
+  // 3. status filter + sort (need every number), then the page
+  const ordering = needsAll && counts === undefined;
+  let list = needsAll && !ordering ? metaFiltered.map(rowFor) : null;
+  if (list) {
+    list = list
+      .filter((r) => (f.status === 'bugs' ? r.open > 0 : f.status === 'active' ? !!r.active : f.status === 'idle' ? !r.active : true))
+      .sort((a, b) => {
+        const byName = a.p.name.localeCompare(b.p.name, undefined, { sensitivity: 'base' });
+        if (f.sort === 'bugs') return b.open - a.open || byName;
+        if (f.sort === 'builds') return b.builds - a.builds || byName;
+        if (f.sort === 'recent') return b.latest.localeCompare(a.latest) || byName;
+        return byName;
+      });
+  }
+  const total = ordering ? 0 : list ? list.length : metaFiltered.length;
+  const page = list ? Math.min(wantedPage, lastPage(list.length)) : namePage;
+  const pageRows = ordering ? [] : list
+    ? list.slice(page * PROJECTS_PAGE_SIZE, (page + 1) * PROJECTS_PAGE_SIZE)
+    : metaFiltered.slice(page * PROJECTS_PAGE_SIZE, (page + 1) * PROJECTS_PAGE_SIZE).map(rowFor);
+  const pageIds = pageRows.map((r) => r.p.id).sort();
+  const pageIdsKey = pageIds.join(',');
+
+  // 4. per-card extras for the page: completion (WBS + live bugs), CMS task totals
   const liveFallback = useMemo(() => (releases ? { releases, bugs: bugs || [] } : null), [releases, bugs]);
-  const live = useMetricsData({ scopeProjectIds: projectIdsKey ? projectIdsKey.split(',') : [], liveOnly: true, fallback: liveFallback });
-  // whole-project completion for each tile (every WBS track + live bugs)
-  const [wbsItems, setWbsItems] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    api.fetchWbsItemsForProjects(projectIdsKey ? projectIdsKey.split(',') : [])
-      .then((list) => { if (!cancelled) setWbsItems(list); })
-      .catch(() => { if (!cancelled) setWbsItems([]); });
-    return () => { cancelled = true; };
-  }, [projectIdsKey]);
+  const live = useMetricsData({ scopeProjectIds: pageIds, liveOnly: true, enabled: pageIds.length > 0, fallback: liveFallback });
+  const wbsQ = useQuery({
+    queryKey: ['projectsWbs', pageIdsKey],
+    queryFn: () => api.fetchWbsItemsForProjects(pageIdsKey.split(',').filter((id) => pageRows.find((r) => r.p.id === id)?.p.type !== 'cms')),
+    enabled: pageIds.length > 0,
+    staleTime: 30_000,
+  });
   const completions = useMemo(() => {
     const releaseById = Object.fromEntries(live.releases.map((r) => [r.id, r]));
     const itemsBy = {};
-    wbsItems.forEach((i) => (itemsBy[i.projectId] = itemsBy[i.projectId] || []).push(i));
+    (wbsQ.data || []).forEach((i) => (itemsBy[i.projectId] = itemsBy[i.projectId] || []).push(i));
     const bugsBy = {};
     liveBugs(live.bugs, releaseById).forEach((b) => {
       const pid = releaseById[b.releaseId]?.projectId;
@@ -744,9 +822,33 @@ export function ProjectsTab({
     const out = {};
     Object.keys(itemsBy).forEach((pid) => { out[pid] = computeWorkCompletion(itemsBy[pid], bugsBy[pid]); });
     return out;
-  }, [wbsItems, live.bugs, live.releases]);
+  }, [wbsQ.data, live.bugs, live.releases]);
+  const cmsIds = pageRows.filter((r) => r.p.type === 'cms').map((r) => r.p.id).sort();
+  const cmsQ = useQuery({
+    queryKey: ['cmsTaskCounts', cmsIds.join(',')],
+    queryFn: () => api.fetchCmsTaskCounts(cmsIds),
+    enabled: cmsIds.length > 0,
+    staleTime: 0,
+  });
 
-  const fSel = { ...inputStyle, width: 'auto', padding: '7px 10px', fontSize: 12 };
+  // KPI header
+  const allIdsKey = projects.map((p) => p.id).sort().join(',');
+  const buildsQ = useQuery({
+    queryKey: ['summaries', 'releaseCount', allIdsKey],
+    queryFn: () => api.countReleases(allIdsKey ? allIdsKey.split(',') : []),
+    enabled: !releases,
+  });
+  const totalBuilds = releases ? releases.length : buildsQ.data ?? '…';
+  const typeCount = (t) => projects.filter((p) => p.type === t).length;
+  const teamIds = [...new Set(projects.map((p) => p.teamId || 'none'))];
+  const showTeam = anyTeam || teamIds.length > 1;
+  const filtered = f.q.trim() || f.type !== 'all' || f.team !== 'all' || f.status !== 'all';
+  const statusCount = (k) => {
+    if (!list || k === 'all') return null;
+    return metaFiltered.map(rowFor).filter((r) => (k === 'bugs' ? r.open > 0 : k === 'active' ? !!r.active : !r.active)).length;
+  };
+
+  const fSel = filterSelect;
 
   function create() {
     if (invalid) return;
@@ -754,96 +856,85 @@ export function ProjectsTab({
       name: form.name.trim(),
       type: form.type,
       platform: projectTypeLabel(form.type),
-      team_id: isAdmin ? form.team || null : myTeamId || null,
+      team_id: anyTeam ? form.team || null : myTeamId || null,
       brand_id: form.brand || null,
       ...(form.type === 'cms' ? { cms_kind: form.cmsKind || 'website' } : {}),
     });
-    setForm({ name: '', type: 'mobile', cmsKind: 'website', team: isAdmin ? teams[0]?.id || '' : myTeamId || '', brand: '' });
+    setForm({ name: '', type: 'mobile', cmsKind: 'website', team: anyTeam ? teams[0]?.id || '' : myTeamId || '', brand: '' });
     setCreating(false);
   }
-
-  const typeCount = (t) => projects.filter((p) => p.type === t).length;
 
   return (
     <div>
       {/* KPI header — house hierarchy */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+      <div className="stat-row" style={{ marginBottom: 16 }}>
         <StatSmall label="Projects" value={projects.length} />
-        <StatSmall label="Mobile" value={typeCount('mobile')} color="var(--brand)" />
-        <StatSmall label="Web" value={typeCount('web')} color="var(--success)" />
-        <StatSmall label="Both" value={typeCount('both')} color="var(--warning)" />
-        <StatSmall label="CMS" value={typeCount('cms')} color="var(--info, var(--brand))" />
+        <StatSmall label="Mobile" value={typeCount('mobile')} />
+        <StatSmall label="Web" value={typeCount('web')} />
+        <StatSmall label="Both" value={typeCount('both')} />
+        <StatSmall label="CMS" value={typeCount('cms')} />
         <StatSmall label="Releases" value={totalBuilds} />
       </div>
 
       {/* header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 12,
-        }}
-      >
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-          {filteredProjects.length === projects.length
-            ? `${projects.length} project${projects.length === 1 ? '' : 's'}`
-            : `${filteredProjects.length} of ${projects.length}`}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+          {ordering ? <Skeleton width={110} height={12} style={{ display: 'inline-block' }} /> : filtered ? `${total} of ${projects.length} projects` : `${projects.length} project${projects.length === 1 ? '' : 's'}`}
         </span>
-        <button
-          style={creating ? ghostButton : primaryButton(false)}
-          onClick={() => setCreating((v) => !v)}
-        >
-          {creating ? 'Cancel' : '+ New project'}
-        </button>
+        {canCreate && (
+          <button style={creating ? ghostButton : primaryButton(false)} onClick={() => setCreating((v) => !v)}>
+            {creating ? 'Cancel' : '+ New project'}
+          </button>
+        )}
       </div>
 
-      {/* search + filters */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <input
-          style={{ ...inputStyle, flex: '1 1 160px', width: 'auto' }}
-          value={q}
-          placeholder="Search projects…"
-          onChange={(e) => {
-            setQ(e.target.value);
-            setVisible(12);
-          }}
-        />
-        {isAdmin && (
-          <select style={fSel} value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
+      {/* search + filters (the shared .filter-bar) */}
+      <div className="filter-bar">
+        <label className="filter-search" style={{ position: 'relative', display: 'block' }}>
+          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', display: 'inline-flex', pointerEvents: 'none' }}><IconSearch size={15} /></span>
+          <input
+            type="search"
+            style={{ ...filterInput, paddingLeft: 34 }}
+            value={f.q}
+            aria-label="Search projects"
+            placeholder={showTeam ? 'Search projects or teams…' : 'Search projects…'}
+            onChange={(e) => setF('q', e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && total === 1 && pageRows[0] && onOpen) onOpen(pageRows[0].p.id);
+              if (e.key === 'Escape') setF('q', '');
+            }}
+          />
+        </label>
+        {showTeam && (
+          <select style={fSel} aria-label="Team" value={f.team} onChange={(e) => setF('team', e.target.value)}>
             <option value="all">All teams</option>
             <option value="none">No team</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
+            {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         )}
-        <select style={fSel} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="all">All platforms</option>
-          {PROJECT_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {projectTypeLabel(t)}
-            </option>
-          ))}
+        <select style={fSel} aria-label="Project type" value={f.type} onChange={(e) => setF('type', e.target.value)}>
+          <option value="all">All types</option>
+          {PROJECT_TYPES.map((t) => <option key={t} value={t}>{projectTypeLabel(t)} ({typeCount(t)})</option>)}
         </select>
+        <select style={fSel} aria-label="Status" value={f.status} onChange={(e) => setF('status', e.target.value)}>
+          {PROJECT_STATUS_FILTERS.map(([k, label]) => {
+            const n = statusCount(k);
+            return <option key={k} value={k}>{n == null ? label : `${label} (${n})`}</option>;
+          })}
+        </select>
+        <select style={fSel} aria-label="Sort" value={f.sort} onChange={(e) => setF('sort', e.target.value)}>
+          {PROJECT_SORTS.map(([k, label]) => <option key={k} value={k}>Sort: {label}</option>)}
+        </select>
+        {filtered && (
+          <button style={{ ...ghostButton, minHeight: 36, padding: '0 12px', fontSize: 13 }} title="Clear the search and filters" onClick={() => onFilters({ ...PROJECTS_FILTERS, sort: f.sort })}>Clear</button>
+        )}
       </div>
 
       {/* create form (on demand) */}
-      {creating && (
+      {creating && canCreate && (
         <div
           className="anim-in"
-          style={{
-            ...card,
-            padding: 14,
-            background: 'var(--color-background-secondary)',
-            marginBottom: 16,
-            display: 'flex',
-            gap: 10,
-            alignItems: 'flex-end',
-            flexWrap: 'wrap',
-          }}
+          style={{ ...card, padding: 16, background: 'var(--color-background-secondary)', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}
         >
           <div style={{ flex: '2 1 200px' }}>
             <label style={labelStyle}>Name</label>
@@ -859,11 +950,7 @@ export function ProjectsTab({
           <div style={{ flex: '1 1 150px' }}>
             <label style={labelStyle}>Type</label>
             <select style={inputStyle} value={form.type} onChange={(e) => set('type', e.target.value)}>
-              {PROJECT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {projectTypeLabel(t)}
-                </option>
-              ))}
+              {PROJECT_TYPES.map((t) => <option key={t} value={t}>{projectTypeLabel(t)}</option>)}
             </select>
           </div>
           {form.type === 'cms' && (
@@ -872,16 +959,12 @@ export function ProjectsTab({
               <CmsKindSelect value={form.cmsKind} onChange={(v) => set('cmsKind', v)} />
             </div>
           )}
-          {isAdmin && (
+          {anyTeam && (
             <div style={{ flex: '1 1 150px' }}>
               <label style={labelStyle}>Team</label>
               <select style={inputStyle} value={form.team} onChange={(e) => set('team', e.target.value)}>
                 <option value="">No team</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
+                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
           )}
@@ -891,64 +974,57 @@ export function ProjectsTab({
               <BrandSelect brands={brands} value={form.brand} onChange={(v) => set('brand', v)} />
             </div>
           )}
-          <button
-            style={primaryButton(invalid || isSubmitting)}
-            disabled={invalid || isSubmitting}
-            onClick={create}
-          >
+          <button style={primaryButton(invalid || isSubmitting)} disabled={invalid || isSubmitting} onClick={create}>
             Create
           </button>
         </div>
       )}
 
-      {/* accordion list */}
-      {filteredProjects.length === 0 ? (
-        <div
-          style={{
-            ...card,
-            padding: 28,
-            textAlign: 'center',
-            fontSize: 13,
-            color: 'var(--color-text-tertiary)',
-          }}
-        >
-          {projects.length === 0 ? 'No projects yet — create your first one above.' : 'No projects match.'}
+      {/* cards */}
+      {ordering ? (
+        <SkeletonCards count={6} height={PROJECT_CARD_HEIGHT} />
+      ) : total === 0 ? (
+        <div style={{ ...card, padding: 32, textAlign: 'center', fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+          {projects.length === 0
+            ? canCreate ? 'No projects yet — create your first one above.' : 'You’re not a member of any project yet.'
+            : <>No projects match. <button style={{ ...ghostButton, marginLeft: 8, padding: '4px 12px', minHeight: 0, fontSize: 12 }} onClick={() => onFilters({ ...PROJECTS_FILTERS, sort: f.sort })}>Clear filters</button></>}
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, alignItems: 'start' }}>
-          {pageProjects.map((p) => (
-            <ProjectRow
-              key={p.id}
-              project={p}
-              isAdmin={isAdmin}
-              user={user}
-              teams={teams}
-              teamName={p.teamId ? teamsById[p.teamId]?.name : null}
-              brands={brands}
-              summary={summaries[p.id]}
-              completion={completions[p.id]}
-              items={checklistItems.filter((c) => c.projectId === p.id)}
-              profiles={profiles}
-              members={projectMembers.filter((m) => m.projectId === p.id)}
-              isSubmitting={isSubmitting}
-              onUpdate={onUpdateProject}
-              onDelete={() => onDeleteProject(p.id)}
-              onAddItem={(label, pos) => onAddChecklistItem(p.id, label, pos)}
-              onDeleteItem={onDeleteChecklistItem}
-              onAddMember={onAddMember}
-              onUpdateMember={onUpdateMember}
-              onRemoveMember={onRemoveMember}
-            />
-          ))}
-          {visible < filteredProjects.length && (
-            <button
-              style={{ ...ghostButton, width: '100%', marginTop: 4, gridColumn: '1 / -1' }}
-              onClick={() => setVisible((v) => v + 12)}
-            >
-              Load more ({filteredProjects.length - visible} left)
-            </button>
-          )}
-        </div>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'stretch' }}>
+            {pageRows.map(({ p, summary, loading }) => (
+              <ProjectRow
+                key={p.id}
+                project={p}
+                isAdmin={isAdmin}
+                canManage={canManage && (!user || managesProject(user, p))}
+                canDelete={canDelete}
+                canMoveTeam={anyTeam}
+                user={user}
+                teams={teams}
+                teamName={teamName(p.teamId) || null}
+                brands={brands}
+                summary={summary}
+                summaryLoading={loading}
+                completion={completions[p.id]}
+                cmsCounts={p.type === 'cms' ? (cmsQ.isError ? null : cmsQ.data ? cmsQ.data[p.id] || { open: 0, done: 0, total: 0 } : undefined) : undefined}
+                items={checklistItems.filter((c) => c.projectId === p.id)}
+                profiles={profiles}
+                members={projectMembers.filter((m) => m.projectId === p.id)}
+                isSubmitting={isSubmitting}
+                onOpen={onOpen ? () => onOpen(p.id) : null}
+                onUpdate={onUpdateProject}
+                onDelete={() => onDeleteProject(p.id)}
+                onAddItem={(label, pos) => onAddChecklistItem(p.id, label, pos)}
+                onDeleteItem={onDeleteChecklistItem}
+                onAddMember={onAddMember}
+                onUpdateMember={onUpdateMember}
+                onRemoveMember={onRemoveMember}
+              />
+            ))}
+          </div>
+          <Pager page={page} pageSize={PROJECTS_PAGE_SIZE} total={total} onPage={setPage} busy={countsQ.isFetching} noun={total === 1 ? 'project' : 'projects'} />
+        </>
       )}
     </div>
   );
@@ -976,9 +1052,9 @@ function UserSummary({ s, role, hoursLoading }) {
   if (!s) return null;
   const isQa = role === 'QA';
   const cell = (label, value, color) => (
-    <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 10, background: 'var(--color-background-secondary)' }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
-      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+    <div style={{ flex: 1, minWidth: 0, padding: '8px 12px', borderRadius: 10, background: 'var(--color-background-secondary)' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: color || 'var(--color-text-primary)' }}>{value}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
     </div>
   );
   const fmtH = (h) => (hoursLoading ? '…' : `${h}h`);
@@ -994,12 +1070,12 @@ function UserSummary({ s, role, hoursLoading }) {
   extras.push([fmtH(s.hoursWeek), 'last 7 days']);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
         {cell(`Project${s.projectCount === 1 ? '' : 's'}`, s.projectCount)}
         {cell('Hours logged', fmtH(s.hours))}
         {isQa ? cell('Builds reviewed', s.reviewed) : cell('Builds submitted', s.builds)}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', fontSize: 12, color: 'var(--color-text-secondary)' }}>
         {extras.map(([v, label, color]) => (
           <span key={label} style={{ whiteSpace: 'nowrap' }}>
             <b style={{ fontWeight: 600, color: color || 'var(--color-text-primary)' }}>{v}</b> {label}
@@ -1011,38 +1087,67 @@ function UserSummary({ s, role, hoursLoading }) {
 }
 
 const EMPTY_SUMMARY = { builds: 0, latest: null, openBugs: 0, resolvedBugs: 0, status: { label: 'No builds', tone: 'neutral' } };
+// CMS projects have no builds: their status follows their tasks
+function cmsStatus(c) {
+  if (!c) return { label: 'CMS', tone: 'info' };
+  if (!c.total) return { label: 'No tasks', tone: 'neutral' };
+  return c.open ? { label: 'Work ongoing', tone: 'info' } : { label: 'All done', tone: 'success' };
+}
 
-/* Bird's-eye strip on each project tile: builds / open / resolved bugs + the
-   latest build's QA status. */
-function ProjectSummary({ s, completion }) {
+/* Bird's-eye strip on each project tile: three number boxes, then two one-line
+   rows (completion, QA status). Every row is always there, so every card has
+   the same layout whatever the project holds.
+   isCms: task totals instead of builds (cmsCounts: undefined = loading, null = unavailable). */
+const ROW = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)', minWidth: 0, height: 18, whiteSpace: 'nowrap', overflow: 'hidden' };
+function ProjectSummary({ s, completion, loading = false, isCms = false, cmsCounts }) {
   const qa = s.latest ? STATUSES[s.latest.status] : null;
   const cell = (label, value, color) => (
-    <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 10, background: 'var(--color-background-secondary)' }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: value ? color : 'var(--color-text-primary)' }}>{value}</div>
-      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 1 }}>{label}</div>
+    <div title={label} style={{ flex: 1, minWidth: 0, padding: '8px', borderRadius: 8, background: 'var(--color-background-secondary)' }}>
+      <div className="tnum" style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: value ? color : 'var(--color-text-primary)' }}>{value}</div>
+      {/* two lines at most, same height in every box, so labels are never cut off */}
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginTop: 2, lineHeight: 1.25, height: 30, overflow: 'hidden', overflowWrap: 'anywhere' }}>{label}</div>
     </div>
   );
+  const dash = <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 6 }}>
-        {cell(`Build${s.builds === 1 ? '' : 's'} submitted`, s.builds, 'var(--color-text-primary)')}
-        {cell('Open bugs', s.openBugs, 'var(--danger)')}
-        {cell('Resolved bugs', s.resolvedBugs, 'var(--success)')}
-      </div>
-      {completion && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
-          <span style={{ fontWeight: 600 }}>Completion</span>
-          <span className="tnum" style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{completion.pct}%</span>
-          {completion.open > 0 && <span style={{ color: 'var(--color-text-tertiary)' }}>· {completion.open} still open</span>}
+      {isCms ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {cell(`Open task${cmsCounts?.open === 1 ? '' : 's'}`, cmsCounts == null ? '…' : cmsCounts.open, 'var(--color-text-primary)')}
+          {cell(`Task${cmsCounts?.done === 1 ? '' : 's'} done`, cmsCounts == null ? '…' : cmsCounts.done, 'var(--success)')}
+          {cell('Open bugs', loading ? '…' : s.openBugs, 'var(--danger)')}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {cell(`Build${s.builds === 1 ? '' : 's'} submitted`, loading ? '…' : s.builds, 'var(--color-text-primary)')}
+          {cell('Open bugs', loading ? '…' : s.openBugs, 'var(--danger)')}
+          {cell('Resolved bugs', loading ? '…' : s.resolvedBugs, 'var(--success)')}
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--color-text-secondary)', minWidth: 0 }}>
-        <span style={{ fontWeight: 600 }}>QA status</span>
-        {qa ? (
+      <div style={ROW}>
+        <span style={{ fontWeight: 600 }}>Completion</span>
+        {completion ? (
+          <>
+            <span className="tnum" style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{completion.pct}%</span>
+            {completion.open > 0 && <span style={{ color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>· {completion.open} still open</span>}
+          </>
+        ) : isCms ? (
+          cmsCounts == null ? dash : cmsCounts.total ? (
+            <span className="tnum" style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{Math.round((cmsCounts.done / cmsCounts.total) * 100)}% of tasks done</span>
+          ) : <span style={{ color: 'var(--color-text-tertiary)' }}>No tasks yet</span>
+        ) : dash}
+      </div>
+      <div style={ROW}>
+        <span style={{ fontWeight: 600 }}>{isCms ? 'Tasks' : 'QA status'}</span>
+        {isCms ? (
+          cmsCounts == null ? dash : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{cmsCounts.total} in total</span>
+        ) : loading ? (
+          <span style={{ color: 'var(--color-text-tertiary)' }}>…</span>
+        ) : qa ? (
           <>
             <span style={{ width: 7, height: 7, borderRadius: 999, background: qa.color, flexShrink: 0 }} />
-            <span style={{ color: qa.color, fontWeight: 600, whiteSpace: 'nowrap' }}>{qa.label}</span>
-            <span style={{ color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: qa.color, fontWeight: 600 }}>{qa.label}</span>
+            <span style={{ color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               · {formatVersion(s.latest.version) || 'latest build'}
             </span>
           </>
@@ -1054,15 +1159,27 @@ function ProjectSummary({ s, completion }) {
   );
 }
 
+/* Every card is the same height: one-line title and subtitle, the summary strip,
+   one line of labels (extra ones fold into "+N") and the buttons pinned at the
+   bottom. Nothing on the card expands: Edit and Manage open a modal. */
+export const PROJECT_CARD_HEIGHT = 320;
+const cardBtn = { padding: '8px 12px', minHeight: 0, fontSize: 12, flex: 1 };
+
 function ProjectRow({
   project,
   isAdmin,
+  canManage = true,
+  canDelete = isAdmin,
+  canMoveTeam = isAdmin,
   user,
   teams,
   teamName,
   brands,
   summary,
+  summaryLoading = false,
   completion,
+  cmsCounts,
+  onOpen = null,
   items,
   profiles,
   members,
@@ -1075,16 +1192,7 @@ function ProjectRow({
   onUpdateMember,
   onRemoveMember,
 }) {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState({
-    name: project.name,
-    type: project.type,
-    team: project.teamId || '',
-    brand: project.brandId || '',
-  });
-  const [label, setLabel] = useState('');
-
+  const [modal, setModal] = useState(null); // null | 'edit' | 'manage'
   const s = summary || EMPTY_SUMMARY;
   const projectBrand = brands.find((b) => b.id === project.brandId);
   // an approved build isn't "on track" for the project while tracked work is open
@@ -1093,232 +1201,234 @@ function ProjectRow({
     : s.status || EMPTY_SUMMARY.status;
   const isWeb = project.type === 'web';
   const isCms = project.type === 'cms';
-  const typeColor = isWeb ? '#f59e0b' : '#10b981';
+  const pill = isCms ? (cmsCounts !== undefined ? cmsStatus(cmsCounts) : null) : summaryLoading ? null : status;
 
-  function startEdit(e) {
-    e.stopPropagation();
-    setEdit({ name: project.name, type: project.type, cmsKind: project.cmsKind || 'website', team: project.teamId || '', brand: project.brandId || '' });
-    setEditing(true);
-    setOpen(true);
-  }
-  async function saveEdit() {
-    if (!edit.name.trim()) return;
-    const patch = {
-      name: edit.name.trim(),
-      type: edit.type,
-      platform: projectTypeLabel(edit.type),
-    };
+  // one line of labels; whatever doesn't fit is counted in "+N"
+  const tags = [
+    { label: teamName || 'No team', tone: teamName ? 'info' : 'neutral' },
+    projectBrand && { label: projectBrand.name, tone: 'neutral' },
+    project.ongoingSupport && { label: 'Ongoing support', tone: 'info' },
+    { label: `${items.length} checklist item${items.length === 1 ? '' : 's'}`, tone: 'neutral' },
+    { label: `${members.length} member${members.length === 1 ? '' : 's'}`, tone: 'neutral' },
+  ].filter(Boolean);
+  const MAX_TAGS = 3;
+  const shownTags = tags.slice(0, MAX_TAGS);
+  const moreTags = tags.slice(MAX_TAGS);
+
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+
+  return (
+    <>
+      <div
+        className={`mgr-card${onOpen ? ' clickable' : ''}`}
+        onClick={onOpen || undefined}
+        role={onOpen ? 'link' : undefined}
+        aria-label={onOpen ? `Open ${project.name}` : undefined}
+        style={{ ...card, padding: 16, height: PROJECT_CARD_HEIGHT, boxSizing: 'border-box', overflow: 'hidden', cursor: onOpen ? 'pointer' : 'default', display: 'flex', flexDirection: 'column', gap: 16 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexShrink: 0 }}>
+          <span style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)', background: 'var(--accent-soft)' }}>
+            {isCms ? <IconLayers size={18} /> : isWeb ? <IconGlobe size={18} /> : <IconSmartphone size={18} />}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div title={project.name} style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isCms ? `CMS · ${cmsKindLabel(project.cmsKind)}` : projectTypeLabel(project.type)}</div>
+          </div>
+          <span style={{ flexShrink: 0, minWidth: 0, maxWidth: 120, overflow: 'hidden' }}>{pill && <Pill label={pill.label} tone={pill.tone} />}</span>
+        </div>
+
+        <ProjectSummary s={s} completion={completion} loading={summaryLoading} isCms={isCms} cmsCounts={cmsCounts} />
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', overflow: 'hidden', height: 22, flexShrink: 0 }}>
+          {shownTags.map((tg) => <Pill key={tg.label} label={tg.label} tone={tg.tone} />)}
+          {moreTags.length > 0 && <span title={moreTags.map((tg) => tg.label).join(' · ')}><Pill label={`+${moreTags.length}`} tone="neutral" /></span>}
+        </div>
+
+        {(onOpen || canManage) && (
+          <div style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--color-border-primary)', paddingTop: 12, marginTop: 'auto', flexShrink: 0 }}>
+            {/* the page's one primary button is "+ New project"; cards use secondary
+                buttons, and the rarer actions sit in the ⋯ menu */}
+            {onOpen && <button style={{ ...ghostButton, ...cardBtn, fontWeight: 600 }} onClick={stop(onOpen)} title={`Open ${project.name}`}>Open</button>}
+            {canManage && (
+              <>
+                <button style={{ ...ghostButton, ...cardBtn }} onClick={stop(() => setModal('manage'))} title="QA checklist, members and client link">Manage</button>
+                <ActionMenu
+                  label={`More actions for ${project.name}`}
+                  items={[
+                    { label: 'Edit details', onSelect: () => setModal('edit'), disabled: isSubmitting },
+                    canDelete && { label: 'Delete project', onSelect: onDelete, danger: true, disabled: isSubmitting },
+                  ]}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {modal === 'edit' && canManage && (
+        <EditProjectModal project={project} canMoveTeam={canMoveTeam} teams={teams} brands={brands} isSubmitting={isSubmitting} onUpdate={onUpdate} onClose={() => setModal(null)} />
+      )}
+      {modal === 'manage' && canManage && (
+        <ManageProjectModal
+          project={project}
+          isAdmin={isAdmin}
+          user={user}
+          items={items}
+          profiles={profiles}
+          members={members}
+          isSubmitting={isSubmitting}
+          onAddItem={onAddItem}
+          onDeleteItem={onDeleteItem}
+          onAddMember={onAddMember}
+          onUpdateMember={onUpdateMember}
+          onRemoveMember={onRemoveMember}
+          onClose={() => setModal(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/* Edit a project's name, type, team and brand. */
+function EditProjectModal({ project, canMoveTeam, teams, brands, isSubmitting, onUpdate, onClose }) {
+  const [edit, setEdit] = useState({
+    name: project.name,
+    type: project.type,
+    cmsKind: project.cmsKind || 'website',
+    team: project.teamId || '',
+    brand: project.brandId || '',
+  });
+  const set = (k, v) => setEdit((e) => ({ ...e, [k]: v }));
+  const invalid = !edit.name.trim() || isSubmitting;
+  async function save() {
+    if (invalid) return;
+    const patch = { name: edit.name.trim(), type: edit.type, platform: projectTypeLabel(edit.type) };
     if (edit.type === 'cms') patch.cms_kind = edit.cmsKind || 'website';
     if (edit.type === 'cms' && project.type !== 'cms' && project.wbsEnabled &&
-      !window.confirm('CMS projects have no WBS. This project’s WBS will be hidden (its items are kept). Continue?')) return;
-    if (isAdmin) patch.team_id = edit.team || null;
+      !await confirmAction('CMS projects have no WBS. This project’s WBS will be hidden (its items are kept). Continue?')) return;
+    if (canMoveTeam) patch.team_id = edit.team || null;
     if (brands.length) patch.brand_id = edit.brand || null;
     const ok = await onUpdate(project.id, patch);
-    if (ok) setEditing(false);
+    if (ok) onClose();
   }
+  return (
+    <ModalShell
+      onClose={onClose}
+      title="Edit project"
+      subtitle={project.name}
+      maxWidth={520}
+      footer={(
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button style={ghostButton} onClick={onClose}>Cancel</button>
+          <button style={primaryButton(invalid)} disabled={invalid} onClick={save}>{isSubmitting ? 'Saving…' : 'Save'}</button>
+        </div>
+      )}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <label style={labelStyle} htmlFor="edit-project-name">Name</label>
+          <input id="edit-project-name" style={inputStyle} autoFocus value={edit.name} onChange={(e) => set('name', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} />
+        </div>
+        <div>
+          <label style={labelStyle} htmlFor="edit-project-type">Type</label>
+          <select id="edit-project-type" style={inputStyle} value={edit.type} onChange={(e) => set('type', e.target.value)}>
+            {PROJECT_TYPES.map((t) => <option key={t} value={t}>{projectTypeLabel(t)}</option>)}
+          </select>
+        </div>
+        {edit.type === 'cms' && (
+          <div>
+            <label style={labelStyle}>CMS project type</label>
+            <CmsKindSelect value={edit.cmsKind} onChange={(v) => set('cmsKind', v)} />
+          </div>
+        )}
+        {canMoveTeam && (
+          <div>
+            <label style={labelStyle} htmlFor="edit-project-team">Team</label>
+            <select id="edit-project-team" style={inputStyle} value={edit.team} onChange={(e) => set('team', e.target.value)}>
+              <option value="">No team</option>
+              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        )}
+        {brands.length > 0 && (
+          <div>
+            <label style={labelStyle}>Brand</label>
+            <BrandSelect brands={brands} value={edit.brand} onChange={(v) => set('brand', v)} />
+          </div>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+/* A project's QA checklist, members and (Admins) client link. */
+function ManageProjectModal({ project, isAdmin, user, items, profiles, members, isSubmitting, onAddItem, onDeleteItem, onAddMember, onUpdateMember, onRemoveMember, onClose }) {
+  const [label, setLabel] = useState('');
+  const typeColor = project.type === 'web' ? 'var(--c-amber)' : 'var(--c-green)';
   function addItem() {
     if (!label.trim()) return;
     onAddItem(label.trim(), items.length);
     setLabel('');
   }
-
-  const iconBtn = (color) => ({
-    ...ghostButton,
-    padding: '5px 9px',
-    fontSize: 12,
-    color,
-    borderColor: `${color}44`,
-    boxShadow: 'none',
-  });
-
   return (
-    // grid card — spans the full row while expanded so checklist / members have room
-    <div className="mgr-card clickable" style={{ ...card, padding: 0, overflow: 'hidden', gridColumn: open ? '1 / -1' : undefined }}>
-      {/* card face — click anywhere to expand */}
-      <div onClick={() => setOpen((o) => !o)} style={{ padding: 16, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <span style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)', background: 'var(--accent-soft)' }}>
-            {isCms ? <IconLayers size={18} /> : isWeb ? <IconGlobe size={18} /> : <IconSmartphone size={18} />}
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{isCms ? `CMS · ${cmsKindLabel(project.cmsKind)}` : projectTypeLabel(project.type)}</div>
-          </div>
-          <Pill label={status.label} tone={status.tone} />
-          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{open ? '▾' : '▸'}</span>
-        </div>
-        <ProjectSummary s={s} completion={completion} />
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <Pill label={teamName || 'No team'} tone={teamName ? 'info' : 'neutral'} />
-          {projectBrand && <Pill label={projectBrand.name} tone="neutral" />}
-          {project.ongoingSupport && <Pill label="Ongoing support" tone="info" />}
-          <Pill label={`${items.length} checklist item${items.length === 1 ? '' : 's'}`} tone="neutral" />
-          {members.length > 0 && <Pill label={`${members.length} member${members.length === 1 ? '' : 's'}`} tone="neutral" />}
-        </div>
-        <div style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--color-border-primary)', paddingTop: 12 }}>
-          <button style={{ ...ghostButton, flex: 1, padding: '6px 10px', minHeight: 0, fontSize: 12 }} onClick={startEdit} disabled={isSubmitting}>
-            Edit
-          </button>
-          <button
-            style={{ ...ghostButton, flex: 1, padding: '6px 10px', minHeight: 0, fontSize: 12, color: 'var(--danger)' }}
-            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            disabled={isSubmitting}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-
-      {/* expanded */}
-      {open && (
-        <div style={{ padding: '0 14px 14px', borderTop: '0.5px solid var(--color-border-primary)' }}>
-          {editing && (
-            <div
-              style={{
-                display: 'flex',
-                gap: 10,
-                alignItems: 'flex-end',
-                flexWrap: 'wrap',
-                padding: '14px 0',
-                borderBottom: '0.5px solid var(--color-border-primary)',
-                marginBottom: 14,
-              }}
-            >
-              <div style={{ flex: '2 1 180px' }}>
-                <label style={labelStyle}>Name</label>
-                <input
-                  style={inputStyle}
-                  value={edit.name}
-                  onChange={(e) => setEdit((s) => ({ ...s, name: e.target.value }))}
-                  onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
-                />
-              </div>
-              <div style={{ flex: '1 1 140px' }}>
-                <label style={labelStyle}>Type</label>
-                <select
-                  style={inputStyle}
-                  value={edit.type}
-                  onChange={(e) => setEdit((s) => ({ ...s, type: e.target.value }))}
-                >
-                  {PROJECT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {projectTypeLabel(t)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {edit.type === 'cms' && (
-                <div style={{ flex: '1 1 170px' }}>
-                  <label style={labelStyle}>CMS project type</label>
-                  <CmsKindSelect value={edit.cmsKind} onChange={(v) => setEdit((s) => ({ ...s, cmsKind: v }))} />
-                </div>
-              )}
-              {isAdmin && (
-                <div style={{ flex: '1 1 140px' }}>
-                  <label style={labelStyle}>Team</label>
-                  <select
-                    style={inputStyle}
-                    value={edit.team}
-                    onChange={(e) => setEdit((s) => ({ ...s, team: e.target.value }))}
+    <ModalShell
+      onClose={onClose}
+      title="Manage project"
+      subtitle={project.name}
+      maxWidth={720}
+      footer={<div style={{ display: 'flex', justifyContent: 'flex-end' }}><button style={ghostButton} onClick={onClose}>Done</button></div>}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <div style={{ ...labelStyle, marginBottom: 8 }}>QA checklist</div>
+          {items.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
+              No checklist items — QA can mark this release complete without a checklist.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+              {items.map((it) => (
+                <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 12px', background: 'var(--color-background-secondary)', borderRadius: 8 }}>
+                  <span style={{ color: typeColor }}>✓</span>
+                  <span style={{ flex: 1 }}>{it.label}</span>
+                  <button
+                    onClick={() => onDeleteItem(it.id)}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-red)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}
                   >
-                    <option value="">No team</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
+                    Remove
+                  </button>
                 </div>
-              )}
-              {brands.length > 0 && (
-                <div style={{ flex: '1 1 140px' }}>
-                  <label style={labelStyle}>Brand</label>
-                  <BrandSelect brands={brands} value={edit.brand} onChange={(v) => setEdit((s) => ({ ...s, brand: v }))} />
-                </div>
-              )}
-              <button style={ghostButton} onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-              <button
-                style={primaryButton(!edit.name.trim() || isSubmitting)}
-                disabled={!edit.name.trim() || isSubmitting}
-                onClick={saveEdit}
-              >
-                Save
-              </button>
+              ))}
             </div>
           )}
-
-          <div style={{ paddingTop: editing ? 0 : 14 }}>
-            <div style={{ ...labelStyle, marginBottom: 8 }}>QA checklist</div>
-            {items.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                No checklist items — QA can mark this release complete without a checklist.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                {items.map((it) => (
-                  <div
-                    key={it.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12.5,
-                      padding: '7px 10px',
-                      background: 'var(--color-background-secondary)',
-                      borderRadius: 8,
-                    }}
-                  >
-                    <span style={{ color: typeColor }}>✓</span>
-                    <span style={{ flex: 1 }}>{it.label}</span>
-                    <button
-                      onClick={() => onDeleteItem(it.id)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#dc2626',
-                        cursor: 'pointer',
-                        fontSize: 11,
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                style={{ ...inputStyle, flex: 1 }}
-                value={label}
-                placeholder="e.g. Smoke test passed"
-                onChange={(e) => setLabel(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addItem()}
-              />
-              <button style={ghostButton} disabled={!label.trim()} onClick={addItem}>
-                Add item
-              </button>
-            </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              style={{ ...inputStyle, flex: 1 }}
+              value={label}
+              placeholder="e.g. Smoke test passed"
+              aria-label="New checklist item"
+              onChange={(e) => setLabel(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addItem()}
+            />
+            <button style={ghostButton} disabled={!label.trim()} onClick={addItem}>Add item</button>
           </div>
-
-          <ProjectMembersSection
-            project={project}
-            profiles={profiles}
-            members={members}
-            canManage={isAdmin || (user?.role === 'Team Lead' && user?.teamId === project.teamId)}
-            currentUser={user}
-            isSubmitting={isSubmitting}
-            onAddMember={onAddMember}
-            onUpdateMember={onUpdateMember}
-            onRemoveMember={onRemoveMember}
-          />
-
-          {isAdmin && <ClientLinkSection projectId={project.id} />}
         </div>
-      )}
-    </div>
+
+        <ProjectMembersSection
+          project={project}
+          profiles={profiles}
+          members={members}
+          canManage={managesProject(user, project)}
+          currentUser={user}
+          isSubmitting={isSubmitting}
+          onAddMember={onAddMember}
+          onUpdateMember={onUpdateMember}
+          onRemoveMember={onRemoveMember}
+        />
+
+        {managesProject(user, project) && <ClientLinkSection projectId={project.id} />}
+      </div>
+    </ModalShell>
   );
 }
 
@@ -1345,9 +1455,10 @@ export function ProjectMembersSection({
   }, [profiles]);
 
   const memberUserIds = new Set(members.map((m) => m.userId));
-  // anyone (from any team) who isn't already a member and isn't an Admin
+  // anyone (from any team) who isn't already a member. Admins and Project
+  // Managers see every project without being members, so they aren't offered.
   const addable = (profiles || [])
-    .filter((p) => p.role !== 'Admin' && !memberUserIds.has(p.id))
+    .filter((p) => p.role !== 'Admin' && p.role !== PM_ROLE && !memberUserIds.has(p.id))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const home = members.filter((m) => m.accessType !== 'support');
@@ -1383,19 +1494,19 @@ export function ProjectMembersSection({
   const chip = (text, color) => (
     <span
       style={{
-        fontSize: 10,
+        fontSize: 12,
         fontWeight: 700,
-        padding: '1px 7px',
+        padding: '1px 8px',
         borderRadius: 999,
         color,
-        background: `${color}1a`,
+        background: tint(color, 10),
       }}
     >
       {text}
     </span>
   );
 
-  const roleColor = { qa: '#6366F1', lead: '#d97706', developer: '#16a34a', viewer: '#64748b' };
+  const roleColor = { qa: 'var(--c-indigo)', lead: 'var(--c-amber)', developer: 'var(--c-green)', viewer: 'var(--c-slate)' };
 
   const memberRow = (m) => {
     const p = profileById[m.userId];
@@ -1406,27 +1517,27 @@ export function ProjectMembersSection({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 9,
-          padding: '7px 0',
+          gap: 8,
+          padding: '8px 0',
           borderTop: '1px solid var(--color-border-primary)',
           opacity: expired ? 0.5 : 1,
         }}
       >
         <Avatar name={p?.name || '?'} size={24} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 500 }}>{p?.name || 'Unknown user'}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>{p?.name || 'Unknown user'}</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
             {p?.email}
           </div>
         </div>
-        {chip((m.projectRole || 'developer').toUpperCase(), roleColor[m.projectRole] || '#64748b')}
+        {chip((m.projectRole || 'developer').toUpperCase(), roleColor[m.projectRole] || 'var(--c-slate)')}
         {m.accessType === 'support' &&
-          chip(m.expiresAt ? `until ${fmt(m.expiresAt)}` : 'no end date', expired ? '#dc2626' : '#7c3aed')}
+          chip(m.expiresAt ? `until ${fmt(m.expiresAt)}` : 'no end date', expired ? 'var(--c-red)' : 'var(--c-violet)')}
         {canManage && (
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
             {m.accessType === 'support' && (
               <button
-                style={{ ...ghostButton, padding: '3px 8px', fontSize: 11 }}
+                style={{ ...ghostButton, padding: '4px 8px', fontSize: 12 }}
                 disabled={isSubmitting}
                 onClick={() => extend(m)}
                 title="Extend access by 30 days"
@@ -1435,7 +1546,7 @@ export function ProjectMembersSection({
               </button>
             )}
             <button
-              style={{ ...ghostButton, padding: '3px 8px', fontSize: 11, color: '#dc2626', borderColor: '#dc262644' }}
+              style={{ ...ghostButton, padding: '4px 8px', fontSize: 12, color: 'var(--c-red)', borderColor: tint('var(--c-red)', 27) }}
               disabled={isSubmitting || m.userId === currentUser?.id}
               onClick={() => onRemoveMember(m.id)}
               title={m.userId === currentUser?.id ? "You can't remove yourself" : 'Remove from project'}
@@ -1449,20 +1560,20 @@ export function ProjectMembersSection({
   };
 
   return (
-    <div style={{ marginTop: 14, borderTop: '0.5px solid var(--color-border-primary)', paddingTop: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+    <div style={{ marginTop: 16, borderTop: '0.5px solid var(--color-border-primary)', paddingTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div style={{ ...labelStyle, margin: 0 }}>
           Members <span style={{ color: 'var(--color-text-tertiary)' }}>· {members.length}</span>
         </div>
         {canManage && (
-          <button style={{ ...ghostButton, padding: '4px 10px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}>
+          <button style={{ ...ghostButton, padding: '4px 12px', fontSize: 12 }} onClick={() => setAdding((v) => !v)}>
             {adding ? 'Cancel' : '+ Add member'}
           </button>
         )}
       </div>
 
       {adding && (
-        <div style={{ ...card, padding: 12, marginBottom: 10, background: 'var(--color-background-secondary)' }}>
+        <div style={{ ...card, padding: 12, marginBottom: 12, background: 'var(--color-background-secondary)' }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div style={{ flex: '2 1 180px' }}>
               <div style={{ ...labelStyle }}>Person (any team)</div>
@@ -1491,19 +1602,19 @@ export function ProjectMembersSection({
                 Support access ends <span style={{ color: 'var(--color-text-tertiary)' }}>(blank = no end date)</span>
               </div>
               <input type="date" style={{ ...inputStyle, width: 'auto' }} value={expires} onChange={(e) => setExpires(e.target.value)} />
-              <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
                 This person is from another team — they'll get temporary <strong>support</strong> access that expires on this date.
               </div>
             </div>
           )}
-          <button style={{ ...primaryButton(!pick), marginTop: 10 }} disabled={!pick || isSubmitting} onClick={submitAdd}>
+          <button style={{ ...primaryButton(!pick), marginTop: 12 }} disabled={!pick || isSubmitting} onClick={submitAdd}>
             Add to project
           </button>
         </div>
       )}
 
       {members.length === 0 ? (
-        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
           No members yet — only Admins can see this project until members are added.
         </div>
       ) : (
@@ -1511,7 +1622,7 @@ export function ProjectMembersSection({
           {home.map(memberRow)}
           {support.length > 0 && (
             <>
-              <div style={{ ...labelStyle, marginTop: 10, marginBottom: 0 }}>
+              <div style={{ ...labelStyle, marginTop: 12, marginBottom: 0 }}>
                 Support (temporary) <span style={{ color: 'var(--color-text-tertiary)' }}>· {support.length}</span>
               </div>
               {support.map(memberRow)}
@@ -1556,7 +1667,7 @@ function ClientLinkSection({ projectId }) {
     setLink({ ...link, show_open_bugs: v });
   }
   async function revoke() {
-    if (!link || !window.confirm('Revoke this client link? The shared URL will stop working.')) return;
+    if (!link || !await confirmAction('Revoke this client link? The shared URL will stop working.')) return;
     await api.deleteClientLink(link.id);
     setLink(null);
   }
@@ -1567,10 +1678,10 @@ function ClientLinkSection({ projectId }) {
   }
 
   return (
-    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--color-border-primary)' }}>
+    <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--color-border-primary)' }}>
       <div style={{ ...labelStyle, marginBottom: 8 }}>Client portal link</div>
       {link === undefined ? (
-        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Loading…</div>
+        <SkeletonList rows={2} height={40} />
       ) : !link ? (
         <button style={ghostButton} disabled={busy} onClick={create}>
           {busy ? 'Creating…' : 'Create client link'}
@@ -1578,18 +1689,18 @@ function ClientLinkSection({ projectId }) {
       ) : (
         <>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input readOnly value={url} style={{ ...inputStyle, flex: 1, fontSize: 11.5 }} onFocus={(e) => e.target.select()} />
+            <input readOnly value={url} style={{ ...inputStyle, flex: 1, fontSize: 12 }} onFocus={(e) => e.target.select()} />
             <button style={ghostButton} onClick={copy}>
               {copied ? 'Copied!' : 'Copy'}
             </button>
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12.5, cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 13, cursor: 'pointer' }}>
             <input type="checkbox" checked={link.show_open_bugs} onChange={toggle} />
             Show open bug count to the client
           </label>
           <button
             onClick={revoke}
-            style={{ ...ghostButton, marginTop: 10, padding: '5px 10px', fontSize: 12, color: '#dc2626', borderColor: '#dc262644' }}
+            style={{ ...ghostButton, marginTop: 12, padding: '4px 12px', fontSize: 12, color: 'var(--c-red)', borderColor: tint('var(--c-red)', 27) }}
           >
             Revoke link
           </button>

@@ -1,4 +1,6 @@
 import { createPortal } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+import { useEffect, useRef, useState } from 'react';
 import {
   STATUSES,
   RELEASE_TYPES,
@@ -22,7 +24,7 @@ export const card = {
 export const inputStyle = {
   width: '100%',
   minHeight: 40,
-  padding: '9px 12px',
+  padding: '8px 12px',
   fontSize: 13,
   fontWeight: 500,
   color: 'var(--color-text-primary)',
@@ -35,10 +37,10 @@ export const inputStyle = {
 
 export const labelStyle = {
   display: 'block',
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   color: 'var(--color-text-secondary)',
-  marginBottom: 6,
+  marginBottom: 8,
   letterSpacing: '0.01em',
   fontFamily: 'var(--font-body)',
 };
@@ -47,7 +49,7 @@ export const labelStyle = {
    (charcoal in light; inverts to a light fill in dark via --accent-foreground). */
 export function primaryButton(disabled) {
   return {
-    padding: '9px 16px',
+    padding: '8px 16px',
     minHeight: 36,
     fontSize: 13,
     fontWeight: 600,
@@ -64,7 +66,7 @@ export function primaryButton(disabled) {
 
 /* Outline / secondary — DS chip language: border-border, bg-card, rounded-xl. */
 export const ghostButton = {
-  padding: '9px 16px',
+  padding: '8px 16px',
   minHeight: 36,
   fontSize: 13,
   fontWeight: 600,
@@ -82,10 +84,10 @@ export const ghostButton = {
 const dotPillStyle = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
-  padding: '3px 9px',
+  gap: 8,
+  padding: '4px 8px',
   borderRadius: 999,
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   color: 'var(--color-text-secondary)',
   background: 'var(--color-background-secondary)',
@@ -141,7 +143,7 @@ export function TypeBadge({ type }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 8,
         color: 'var(--color-text-secondary)',
         fontSize: 13,
         fontWeight: 600,
@@ -182,7 +184,7 @@ export function Avatar({ name, size = 30 }) {
   );
 }
 
-export function CountBadge({ count, color = '#dc2626' }) {
+export function CountBadge({ count, color = 'var(--c-red)' }) {
   if (!count) return null;
   return (
     <span
@@ -193,11 +195,11 @@ export function CountBadge({ count, color = '#dc2626' }) {
         justifyContent: 'center',
         minWidth: 18,
         height: 18,
-        padding: '0 5px',
+        padding: '0 4px',
         borderRadius: 999,
-        fontSize: 10,
+        fontSize: 12,
         fontWeight: 700,
-        color: '#fff',
+        color: 'var(--on-status)',
         background: color,
         boxShadow: '0 0 0 2px var(--color-background-primary)',
       }}
@@ -209,9 +211,49 @@ export function CountBadge({ count, color = '#dc2626' }) {
 
 /* ---------- modal shell ---------- */
 
-export function ModalShell({ children, onClose, title, subtitle, footer, maxWidth = 520, right, zIndex = 50 }) {
-  // header/body/footer flex layout: header + footer stay pinned, body scrolls.
+/* ModalShell — every dialog and drawer in the app.
+   variant 'modal' (default): centred, for short focused forms (create, edit,
+     settings, confirm).
+   variant 'drawer': full-height panel from the right, for looking at one record
+     next to its list (a build, a bug). The header (title + close) stays put.
+   Both: role=dialog, Esc closes, focus moves in on open and back on close, and
+   clicking the dimmed backdrop closes. */
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let modalSeq = 0;
+export function ModalShell({ children, onClose, title, subtitle, footer, maxWidth = 520, right, zIndex = 50, variant = 'modal', ariaLabel, initialFocus }) {
   const hasHeader = !!(title || subtitle);
+  const drawer = variant === 'drawer';
+  const panelRef = useRef(null);
+  const [titleId] = useState(() => `modal-title-${++modalSeq}`);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const before = document.activeElement;
+    const panel = panelRef.current;
+    // forms focus their first field; a drawer (reading a record) focuses the
+    // panel itself so no field grabs focus or pops up a phone keyboard
+    const target = (initialFocus && panel?.querySelector(initialFocus)) || (!drawer && panel?.querySelector('input, select, textarea')) || panel;
+    target?.focus?.({ preventScroll: true });
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        // only the top-most dialog closes
+        const all = document.querySelectorAll('[data-modal-panel]');
+        if (all[all.length - 1] === panelRef.current) { e.stopPropagation(); closeRef.current?.(); }
+      } else if (e.key === 'Tab' && panelRef.current) {
+        // keep Tab inside the dialog
+        const f = [...panelRef.current.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      if (before && before.focus && document.contains(before)) before.focus({ preventScroll: true });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Portal to <body> so the fixed overlay covers the whole viewport instead of
   // being trapped inside the animated `.page-area` (its `slideUp` transform makes
   // it the containing block for `position: fixed` descendants).
@@ -222,31 +264,40 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0, 0, 0, 0.4)',          /* DS Dialog overlay: bg-black/40 + blur */
+        background: 'rgba(0, 0, 0, 0.4)',
         backdropFilter: 'blur(4px)',
         WebkitBackdropFilter: 'blur(4px)',
         display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        padding: '40px 16px',
+        alignItems: drawer ? 'stretch' : 'flex-start',
+        justifyContent: drawer ? 'flex-end' : 'center',
+        padding: drawer ? 0 : '48px 16px',
         zIndex,
-        overflowY: 'auto',
+        overflowY: drawer ? 'hidden' : 'auto',
       }}
     >
       <div
-        className="anim-modal"
+        ref={panelRef}
+        data-modal-panel=""
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={hasHeader ? titleId : undefined}
+        aria-label={hasHeader ? undefined : ariaLabel}
+        tabIndex={-1}
+        className={drawer ? 'anim-drawer' : 'anim-modal'}
         onClick={(e) => e.stopPropagation()}
         style={{
           ...card,
-          borderRadius: 'var(--r-modal)',
+          borderRadius: drawer ? 'var(--r-modal) 0 0 var(--r-modal)' : 'var(--r-modal)',
           boxShadow: 'var(--shadow-lg)',
           width: '100%',
           maxWidth,
           padding: 0,
           overflow: 'hidden',
-          maxHeight: 'calc(100vh - 80px)',
+          height: drawer ? '100%' : undefined,
+          maxHeight: drawer ? '100%' : 'calc(100vh - 80px)',
           display: 'flex',
           flexDirection: 'column',
+          outline: 'none',
         }}
       >
         {hasHeader && (
@@ -255,15 +306,15 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
               display: 'flex',
               alignItems: 'flex-start',
               gap: 12,
-              padding: '18px 24px',
+              padding: '16px 24px',
               borderBottom: '1px solid var(--color-border-primary)',
               flex: '0 0 auto',
             }}
           >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {title && <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</div>}
+            <div id={titleId} style={{ flex: 1, minWidth: 0 }}>
+              {title && <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em' }}>{title}</div>}
               {subtitle && (
-                <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: title ? 3 : 0 }}>
+                <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: title ? 4 : 0 }}>
                   {subtitle}
                 </div>
               )}
@@ -272,12 +323,11 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
             <button
               onClick={onClose}
               aria-label="Close"
-              style={{
-                border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1,
-                color: 'var(--color-text-tertiary)', padding: 2, marginTop: -2, flex: '0 0 auto',
-              }}
+              title="Close (Esc)"
+              className="hdr-icon-btn"
+              style={{ flex: '0 0 auto', border: 'none', color: 'var(--color-text-secondary)', background: 'transparent' }}
             >
-              ✕
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>
           </div>
         )}
@@ -289,7 +339,7 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
               flex: '0 0 auto',
               borderTop: '1px solid var(--color-border-primary)',
               background: 'var(--color-background-secondary)',
-              padding: '14px 24px',
+              padding: '16px 24px',
             }}
           >
             {footer}
@@ -299,6 +349,49 @@ export function ModalShell({ children, onClose, title, subtitle, footer, maxWidt
     </div>,
     document.body
   );
+}
+
+/* ---------- confirm ----------
+   confirmAction(message) or confirmAction({ title, message, confirmLabel, danger })
+   → Promise<boolean>. The app's own dialog instead of the browser's confirm():
+   same look as every other dialog, works in dark mode, and Cancel has focus so
+   Enter never deletes by accident. Deletions get a red confirm button. */
+function ConfirmDialog({ title, message, confirmLabel, cancelLabel = 'Cancel', danger, onDone }) {
+  return (
+    <ModalShell onClose={() => onDone(false)} title={title} maxWidth={440} zIndex={90} initialFocus="[data-confirm-cancel]"
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+          <button data-confirm-cancel="" style={ghostButton} onClick={() => onDone(false)}>{cancelLabel}</button>
+          <button
+            style={danger
+              ? { ...primaryButton(false), background: 'var(--danger)', borderColor: 'var(--danger)', color: 'var(--on-status)' }
+              : primaryButton(false)}
+            onClick={() => onDone(true)}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      }
+    >
+      <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--color-text-secondary)', whiteSpace: 'pre-line' }}>{message}</div>
+    </ModalShell>
+  );
+}
+export function confirmAction(opts) {
+  const o = typeof opts === 'string' ? { message: opts } : { ...opts };
+  const msg = String(o.message || '');
+  const danger = o.danger ?? /^(delete|remove|revoke|turn off|permanently)/i.test(msg);
+  const verb = (msg.match(/^(Permanently delete|Delete|Remove|Revoke|Turn off|Mark|Complete|Reopen)/i) || [])[0];
+  o.danger = danger;
+  o.confirmLabel = o.confirmLabel || (verb ? verb[0].toUpperCase() + verb.slice(1).toLowerCase() : 'Continue');
+  o.title = o.title || (danger ? 'Are you sure?' : 'Please confirm');
+  return new Promise((resolve) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const done = (v) => { root.unmount(); host.remove(); resolve(v); };
+    root.render(<ConfirmDialog {...o} onDone={done} />);
+  });
 }
 
 /* ---------- toast ---------- */
@@ -320,8 +413,8 @@ export function Toast({ toast }) {
         maxWidth: 380,
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '11px 14px',
+        gap: 12,
+        padding: '12px 16px',
         background: 'var(--card)',
         border: '1px solid var(--border)',
         borderRadius: 12,
@@ -341,7 +434,7 @@ export function Toast({ toast }) {
           height: 20,
           borderRadius: 999,
           background: color,
-          color: '#fff',
+          color: 'var(--on-status)',
           fontSize: 12,
           flexShrink: 0,
         }}
@@ -380,10 +473,10 @@ export function Info({ label, value }) {
     <div>
       <div
         style={{
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           color: 'var(--color-text-secondary)',
-          marginBottom: 3,
+          marginBottom: 4,
         }}
       >
         {label}

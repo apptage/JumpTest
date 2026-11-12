@@ -1,12 +1,30 @@
+/* Status palette. Every status, severity, role and chart colour comes from
+   here; the values are CSS variables (app/globals.css → --c-*), so they follow
+   light and dark mode. For a soft background or border use tint(color, pct). */
+export const C = {
+  red: 'var(--c-red)',
+  amber: 'var(--c-amber)',
+  green: 'var(--c-green)',
+  slate: 'var(--c-slate)',
+  indigo: 'var(--c-indigo)',
+  violet: 'var(--c-violet)',
+  cyan: 'var(--c-cyan)',
+  blue: 'var(--c-blue)',
+  teal: 'var(--c-teal)',
+};
+/* `color` at `pct`% strength over transparent: tint(C.red, 10) for a pill
+   background, tint(C.red, 30) for its border. Works with any CSS colour. */
+export const tint = (color, pct) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+
 /* Release statuses — explicit QA lifecycle.
    qa_pending → qa_in_progress → qa_done → approved | sent_back; closed is terminal. */
 export const STATUSES = {
-  qa_pending: { label: 'QA Pending', color: '#d97706', icon: '⏳' },
-  qa_in_progress: { label: 'QA In Progress', color: '#6366F1', icon: '🔍' },
-  qa_done: { label: 'QA Done', color: '#7c3aed', icon: '📋' },
-  approved: { label: 'Approved', color: '#16a34a', icon: '✅' },
-  sent_back: { label: 'Sent Back', color: '#dc2626', icon: '↩️' },
-  closed: { label: 'Closed', color: '#64748b', icon: '🗄️' },
+  qa_pending: { label: 'QA Pending', color: C.amber, icon: '⏳' },
+  qa_in_progress: { label: 'QA In Progress', color: C.indigo, icon: '🔍' },
+  qa_done: { label: 'QA Done', color: C.violet, icon: '📋' },
+  approved: { label: 'Approved', color: C.green, icon: '✅' },
+  sent_back: { label: 'Sent Back', color: C.red, icon: '↩️' },
+  closed: { label: 'Closed', color: C.slate, icon: '🗄️' },
 };
 export const STATUS_ORDER = ['qa_pending', 'qa_in_progress', 'qa_done', 'approved', 'sent_back', 'closed'];
 
@@ -139,7 +157,7 @@ export function bugSlaLevel(status, createdISO) {
   return null;
 }
 
-export const SLA_COLORS = { warn: '#d97706', over: '#dc2626' };
+export const SLA_COLORS = { warn: C.amber, over: C.red };
 
 /* compact "3h" / "2d" duration from a start ISO to now (or to endISO) */
 export function humanizeSince(startISO, endISO) {
@@ -155,9 +173,9 @@ export function humanizeSince(startISO, endISO) {
 
 /* Bug severity */
 export const SEVERITIES = {
-  critical: { label: 'Critical', color: '#dc2626' },
-  major: { label: 'Major', color: '#d97706' },
-  minor: { label: 'Minor', color: '#64748b' },
+  critical: { label: 'Critical', color: C.red },
+  major: { label: 'Major', color: C.amber },
+  minor: { label: 'Minor', color: C.slate },
 };
 export const SEVERITY_ORDER = ['critical', 'major', 'minor'];
 
@@ -175,14 +193,14 @@ export function isOpenBlockingBug(bug) {
 
 /* Bug status workflow */
 export const BUG_STATUSES = {
-  open: { label: 'Open', color: '#dc2626' },
-  in_progress: { label: 'In Progress', color: '#6366F1' },
-  fixed: { label: 'Fixed', color: '#d97706' },
-  disputed: { label: 'Needs Clarification', color: '#7c3aed' },
+  open: { label: 'Open', color: C.red },
+  in_progress: { label: 'In Progress', color: C.indigo },
+  fixed: { label: 'Fixed', color: C.amber },
+  disputed: { label: 'Needs Clarification', color: C.violet },
   // a developer proposed closing the bug (Not a Bug / Out of Scope / Duplicate);
   // held here until a Team Lead approves or rejects the decision
-  pending_tl: { label: 'Pending TL Verification', color: '#0891b2' },
-  verified: { label: 'Verified', color: '#16a34a' },
+  pending_tl: { label: 'Pending TL Verification', color: C.cyan },
+  verified: { label: 'Verified', color: C.green },
 };
 export const BUG_STATUS_ORDER = ['open', 'in_progress', 'fixed', 'disputed', 'pending_tl', 'verified'];
 
@@ -248,11 +266,11 @@ export const DEV_DISPUTE_RESOLUTIONS = ['Not a Bug', 'Out of Scope', 'Duplicate'
 /* WBS is a FLAT item model (see fixes16.sql): one status per item, no
    backend/frontend tracks, platform_type + module are free-text grouping tags. */
 export const WBS_STATUSES = {
-  not_started: { label: 'Not Started', color: '#64748b' },
-  in_progress: { label: 'In Progress', color: '#d97706' },
-  in_qa: { label: 'In QA', color: '#6366F1' },
-  completed: { label: 'Completed', color: '#16a34a' },
-  blocked: { label: 'Blocked', color: '#dc2626' },
+  not_started: { label: 'Not Started', color: C.slate },
+  in_progress: { label: 'In Progress', color: C.amber },
+  in_qa: { label: 'In QA', color: C.indigo },
+  completed: { label: 'Completed', color: C.green },
+  blocked: { label: 'Blocked', color: C.red },
 };
 export const WBS_STATUS_ORDER = ['not_started', 'in_progress', 'in_qa', 'completed', 'blocked'];
 
@@ -442,12 +460,13 @@ export const CMS_STAGE_STATUSES = {
 export const CMS_STAGE_STATUS_ORDER = ['pending', 'in_progress', 'done', 'skipped'];
 
 /* Roles. ('Manager' was retired and merged into Admin — see fixes24.sql.) */
-export const ROLES = ['Developer', 'QA', 'Team Lead', 'Admin'];
+export const ROLES = ['Developer', 'QA', 'Team Lead', 'Project Manager', 'Admin'];
 export const ROLE_COLORS = {
-  QA: '#6366F1',
-  Developer: '#16a34a',
-  'Team Lead': '#d97706',
-  Admin: '#6366F1',
+  QA: C.indigo,
+  Developer: C.green,
+  'Team Lead': C.amber,
+  'Project Manager': C.cyan,
+  Admin: C.indigo,
 };
 /* Roles a Team Lead is allowed to assign within their own team. */
 export const TEAM_ASSIGNABLE_ROLES = ['Developer', 'QA'];

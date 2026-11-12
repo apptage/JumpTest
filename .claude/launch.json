@@ -1,7 +1,37 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "release-tracker", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 },
-    { "name": "release-tracker-staging", "runtimeExecutable": "bash", "runtimeArgs": ["-c", "set -a; . ./.env.staging.local; set +a; exec npx next dev -p 5174"], "port": 5174 }
+    {
+      "name": "release-tracker",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "release-tracker-staging",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a; . ./.env.staging.local; set +a; exec npx next dev -p 5174"
+      ],
+      "port": 5174
+    },
+    {
+      "name": "ui-harness",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5180",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "/private/tmp/claude-502/-Users-ahmedhakim-Projects-tools-JumpTest/f0299700-7b26-49b0-80f1-1d163a351373/scratchpad/ui"
+      ],
+      "port": 5180
+    }
   ]
 }

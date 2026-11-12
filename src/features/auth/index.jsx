@@ -9,8 +9,8 @@ import { IconBug } from '@/icons.jsx';
 import * as api from '@/api.js';
 import { BrandLogo } from '@/brand.jsx';
 
-export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest }) {
-  const [mode, setMode] = useState('signin');
+export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest, notice = null, initialMode = 'signin' }) {
+  const [mode, setMode] = useState(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -82,7 +82,7 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
               Ship it. Test it.<br />
               <span style={{ color: 'var(--brand)' }}>Track every build.</span>
             </h2>
-            <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--on-ink-dim)', margin: '14px 0 22px', maxWidth: 560 }}>
+            <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--on-ink-dim)', margin: '16px 0 24px', maxWidth: 560 }}>
               From APK to TestFlight to web — one pipeline for dev and QA.
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 28px' }}>
@@ -91,7 +91,7 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
                 [<IconBug size={16} />, 'QA bug tracking & screenshots'],
                 [<IconShieldCheck size={16} />, 'Checklists & role-based sign-off'],
               ].map(([icon, t]) => (
-                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 11, fontSize: 14 }}>
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 14 }}>
                   <span
                     style={{
                       width: 32,
@@ -114,9 +114,9 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
 
             {/* customer proof — the default brand runs its project tracking + client reviews here */}
             {brand && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 26, paddingTop: 20, borderTop: '1px solid var(--ink-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 24, paddingTop: 24, borderTop: '1px solid var(--ink-border)' }}>
                 <BrandLogo brand={brand} size={26} />
-                <span style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--on-ink-dim)', flex: '1 1 240px' }}>
+                <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--on-ink-dim)', flex: '1 1 240px' }}>
                   {brand.name} uses Miaro Verify for live project tracking and client status reviews.
                 </span>
               </div>
@@ -129,14 +129,14 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
         {/* entrance animation lives on the form column only — a translateY on the
             100vh wrapper would add a scrollbar */}
         <div className="anim-in" style={{ width: '100%', maxWidth: 440 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 700, marginBottom: 6, letterSpacing: '-0.02em' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, marginBottom: 8, letterSpacing: '-0.02em' }}>
             {isReset ? 'Reset password' : isSignup ? 'Create your account' : 'Welcome back'}
           </div>
           <div
             style={{
-              fontSize: 15,
+              fontSize: 16,
               color: 'var(--color-text-secondary)',
-              marginBottom: 26,
+              marginBottom: 24,
             }}
           >
             {isReset
@@ -146,11 +146,26 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
               : 'Sign in to continue'}
           </div>
 
+          {/* e.g. an expired or already-used reset link */}
+          {notice && (
+            <div
+              role={notice.tone === 'error' ? 'alert' : 'status'}
+              style={{
+                marginBottom: 16, padding: '12px 12px', borderRadius: 10, fontSize: 13, lineHeight: 1.5,
+                background: notice.tone === 'error' ? 'var(--tone-danger-bg)' : 'var(--tone-success-bg)',
+                color: notice.tone === 'error' ? 'var(--tone-danger-fg)' : 'var(--tone-success-fg)',
+              }}
+            >
+              {notice.title && <div style={{ fontWeight: 700, marginBottom: 2 }}>{notice.title}</div>}
+              {notice.text}
+            </div>
+          )}
+
           {!isReset && (
             <div
               style={{
                 display: 'flex',
-                marginBottom: 20,
+                marginBottom: 24,
                 borderBottom: '0.5px solid var(--color-border-tertiary)',
               }}
             >
@@ -212,9 +227,9 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
 
         <div
           style={{
-            fontSize: 11,
-            color: '#dc2626',
-            marginBottom: 14,
+            fontSize: 12,
+            color: 'var(--c-red)',
+            marginBottom: 16,
             minHeight: 14,
           }}
         >
@@ -226,7 +241,7 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
         </div>
 
           <button
-            style={{ ...primaryButton(invalid || isSubmitting), width: '100%', padding: '11px 16px' }}
+            style={{ ...primaryButton(invalid || isSubmitting), width: '100%', padding: '12px 16px' }}
             disabled={invalid || isSubmitting}
             onClick={submit}
           >
@@ -239,7 +254,7 @@ export function AuthScreen({ isSubmitting, onSignIn, onSignUp, onResetRequest })
               : 'Sign in'}
           </button>
 
-          <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12.5 }}>
+          <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13 }}>
             {isReset ? (
               <button onClick={() => setMode('signin')} style={authLink}>
                 ← Back to sign in
@@ -274,11 +289,11 @@ export function SetPasswordScreen({ isSubmitting, onSetPassword }) {
       }}
     >
       <div className="anim-in" style={{ ...card, width: '100%', maxWidth: 380, padding: 32, boxShadow: 'var(--shadow-lg)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <Wordmark size={26} />
         </div>
-        <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 4 }}>Set a new password</div>
-        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Set a new password</div>
+        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 24 }}>
           Choose a new password for your account.
         </div>
         <Field label="New password">
@@ -293,7 +308,7 @@ export function SetPasswordScreen({ isSubmitting, onSetPassword }) {
         </Field>
         <Field label="Confirm password">
           <input
-            style={{ ...inputStyle, borderColor: mismatch ? '#dc2626' : 'var(--color-border-tertiary)' }}
+            style={{ ...inputStyle, borderColor: mismatch ? 'var(--c-red)' : 'var(--color-border-tertiary)' }}
             type="password"
             value={pw2}
             placeholder="Re-enter password"
@@ -301,16 +316,47 @@ export function SetPasswordScreen({ isSubmitting, onSetPassword }) {
             onKeyDown={(e) => e.key === 'Enter' && !invalid && onSetPassword(pw)}
           />
         </Field>
-        <div style={{ fontSize: 11, color: '#dc2626', marginBottom: 14, minHeight: 14 }}>
+        <div style={{ fontSize: 12, color: 'var(--c-red)', marginBottom: 16, minHeight: 14 }}>
           {mismatch ? 'Passwords do not match.' : pw.length > 0 && pw.length < 6 ? 'At least 6 characters.' : ''}
         </div>
         <button
-          style={{ ...primaryButton(invalid || isSubmitting), width: '100%', padding: '11px 16px' }}
+          style={{ ...primaryButton(invalid || isSubmitting), width: '100%', padding: '12px 16px' }}
           disabled={invalid || isSubmitting}
           onClick={() => onSetPassword(pw)}
         >
           {isSubmitting ? 'Updating…' : 'Update password'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* Step 1 of a password reset from the email link. The link carries a one-time
+   token; it's only used when the person presses Continue. Email security
+   scanners (e.g. Microsoft Safe Links) open links before people do, and with a
+   link that used the token on open, the person always found it "expired". */
+export function ConfirmResetScreen({ isSubmitting, onContinue, onCancel }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div className="anim-in" style={{ ...card, width: '100%', maxWidth: 380, padding: 32, boxShadow: 'var(--shadow-lg)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <Wordmark size={26} />
+        </div>
+        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Reset your password</div>
+        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 24, lineHeight: 1.5 }}>
+          Continue to choose a new password for your account.
+        </div>
+        <button
+          style={{ ...primaryButton(isSubmitting), width: '100%', padding: '12px 16px' }}
+          disabled={isSubmitting}
+          onClick={onContinue}
+          autoFocus
+        >
+          {isSubmitting ? 'Checking the link…' : 'Continue'}
+        </button>
+        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13 }}>
+          <button onClick={onCancel} style={authLink}>← Back to sign in</button>
+        </div>
       </div>
     </div>
   );

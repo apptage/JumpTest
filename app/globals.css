@@ -10,9 +10,23 @@
   --accent-soft: rgba(18, 19, 23, 0.08); /* accent wash */
   --accent-muted: #F0F0F1;
   --border: #E4E6EF;
-  --green: #22C55E;
-  --yellow: #F59E0B;
-  --red: #FF6B6B;
+  /* ---- status palette — the only status hues in the app. Statuses, severities,
+     roles and charts all draw from these (src/constants.js → C). ---- */
+  --c-red: #DC2626;
+  --c-amber: #D97706;
+  --c-green: #16A34A;
+  --c-slate: #64748B;
+  --c-indigo: #6366F1;
+  --c-violet: #7C3AED;
+  --c-cyan: #0891B2;
+  --c-blue: #3B82F6;
+  --c-teal: #14B8A6;
+
+  --on-status: #FFFFFF;   /* text on a solid status fill (badges, Approve) */
+  /* semantic: one red, one amber, one green (dark enough to read on white) */
+  --green: var(--c-green);
+  --yellow: var(--c-amber);
+  --red: var(--c-red);
   --title-navy: #1D1D39;
   --filter-steel: #D5DCE3;
   --sidebar: #FFFFFF;
@@ -44,8 +58,8 @@
   --warning: var(--yellow);
   --danger: var(--red);
   --info: var(--accent);
-  --purple: #6366F1;
-  --cyan: #14B8A6;
+  --purple: var(--c-indigo);
+  --cyan: var(--c-teal);
 
   --color-app-bg: var(--bg);
   --color-background-primary: var(--card);
@@ -57,7 +71,7 @@
   --color-border-tertiary: var(--border);
   --color-text-primary: var(--text);
   --color-text-secondary: #5B647F;
-  --color-text-tertiary: #8A92A8;
+  --color-text-tertiary: #666E85;   /* 5.1:1 on white (WCAG AA) */
 
   --ink: var(--card);
   --ink-2: var(--bg);
@@ -68,7 +82,7 @@
   --rail-bg: var(--sidebar);
   --rail-fg: #5B647F;
   --rail-fg-strong: var(--sidebar-foreground);
-  --rail-muted: #8A92A8;
+  --rail-muted: #666E85;
   --rail-hover: rgba(0, 0, 0, 0.03);
   --rail-active: var(--sidebar-accent);
   --rail-border: var(--border);
@@ -104,12 +118,16 @@
   --text-body: 13px;
   --text-sm: 12px;
   --text-xs: 11px;
-  --text-2xs: 10.5px;
+  --text-2xs: 11px;
   --tracking-tight: -0.02em;
   --tracking-snug: -0.01em;
   --tracking-label: 0.8px;
   --leading-body: 1.5;
   --leading-tight: 1.2;
+
+  /* spacing scale (4px base): use these steps only */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px; --space-12: 48px;
 
   --header-h: 48px;
   --rail-width: 16rem;
@@ -126,7 +144,17 @@
   --accent-soft: rgba(255, 255, 255, 0.12);
   --accent-muted: rgba(255, 255, 255, 0.22);
   --border: #2C313C;
-  --red: #FB7185;
+  /* lighter hues so status colours stay readable on dark surfaces */
+  --on-status: #0F1218;
+  --c-red: #F87171;
+  --c-amber: #FBBF24;
+  --c-green: #4ADE80;
+  --c-slate: #94A3B8;
+  --c-indigo: #818CF8;
+  --c-violet: #A78BFA;
+  --c-cyan: #22D3EE;
+  --c-blue: #60A5FA;
+  --c-teal: #2DD4BF;
   --sidebar: #181C24;
   --sidebar-b: #141821;
   --sidebar-foreground: #EDEFF3;
@@ -143,11 +171,11 @@
   --color-background-tertiary: #242A34;
   --color-border-primary: #232833;
   --color-text-secondary: #AAB2BE;
-  --color-text-tertiary: #7C8494;
+  --color-text-tertiary: #8A92A2;   /* 5.5:1 on dark cards */
   --on-ink-dim: #AAB2BE;
   --ink-border: #2C313C;
   --rail-fg: #AAB2BE;
-  --rail-muted: #7C8494;
+  --rail-muted: #8A92A2;
   --rail-hover: rgba(255, 255, 255, 0.05);
   --tone-danger-bg: rgba(251, 113, 133, 0.15);  --tone-danger-fg: #FDA4AF;
   --tone-warning-bg: rgba(245, 158, 11, 0.15);  --tone-warning-fg: #FCD34D;
@@ -212,6 +240,8 @@ a:hover { text-decoration: underline; }
 @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 .anim-overlay { animation: fadeIn 0.18s var(--ease); }
 .anim-modal { animation: slideUp 0.24s var(--ease); }
+.anim-drawer { animation: drawerInRight 0.26s var(--ease); }
+@keyframes drawerInRight { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
 .anim-toast { animation: toastIn 0.28s var(--ease); }
 .anim-in { animation: slideUp 0.3s var(--ease) both; }
 .anim-pop { animation: pop 0.22s var(--ease); }
@@ -225,6 +255,75 @@ a:hover { text-decoration: underline; }
 .mgr-row:hover { background: var(--accent-soft); }
 .mgr-card { transition: box-shadow 0.2s var(--ease), transform 0.2s var(--ease), border-color 0.2s var(--ease); }
 .mgr-card.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+
+/* touch screens: 44px targets for the controls people tap most (WCAG 2.5.5).
+   Everything else is at least 32px, above the 24px AA minimum. */
+@media (pointer: coarse) {
+  .hdr-icon-btn { width: 44px; height: 44px; }
+  .hdr-new { min-height: 44px !important; }
+  .hdr-search input { min-height: 44px !important; }
+  .nav-item { min-height: 44px; }
+  [role="menuitem"] { min-height: 44px !important; }
+  .filter-bar select, .filter-bar input { min-height: 44px !important; }
+  [role="tab"] { min-height: 44px; }
+}
+@media (pointer: coarse) and (max-width: 479px) {
+  .hdr-new { width: 44px; }
+}
+
+/* tooltips (TooltipLayer in ui-kit) — inverted surface, readable in both themes */
+.app-tooltip {
+  background: var(--accent); color: var(--accent-foreground);
+  font-family: var(--font-body); font-size: 12px; font-weight: 500; line-height: 1.4;
+  padding: 6px 8px; border-radius: 8px; box-shadow: var(--shadow-lg);
+  width: max-content; white-space: normal; overflow-wrap: anywhere;
+  animation: fadeIn 0.12s var(--ease);
+}
+
+/* loading placeholders (Skeleton in dashboard-kit) */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-background-tertiary) 0%, var(--color-background-secondary) 50%, var(--color-background-tertiary) 100%);
+  background-size: 200% 100%; animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+/* the filter toolbar on every list page (filterSelect / filterInput in ui-kit):
+   search first, dropdowns next, count (and page actions) on the right */
+.filter-bar {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-card);
+  box-shadow: var(--shadow-premium); padding: 12px; margin-bottom: 16px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.filter-bar.stacked { flex-direction: column; align-items: stretch; gap: 12px; }
+.filter-bar .filter-search { flex: 1 1 240px; min-width: 0; }
+.filter-bar .filter-count { margin-left: auto; font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
+.filter-bar .filter-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 767px) {
+  .filter-bar .filter-search { flex-basis: 100%; }
+  .filter-bar select { flex: 1 1 calc(50% - 4px); min-width: 0; }
+  .filter-bar .filter-actions { margin-left: 0; }
+}
+
+/* ===== Card sizing system =====
+   Dashboard panels (Panel in dashboard/home/widgets.jsx) have a fixed height per
+   size, at every screen width, so cards side by side always match and content
+   never stretches a card: the body scrolls inside instead. */
+:root { --panel-lg: 640px; --panel-md: 480px; --panel-sm: 460px; --kpi-h: 148px; }
+/* KPI tiles (KpiTile): one height everywhere; label one line, caption two */
+.dash-panel { display: flex; flex-direction: column; overflow: hidden; height: var(--panel-lg); }
+.dash-panel.md { height: var(--panel-md); }
+.dash-panel.sm { height: var(--panel-sm); }
+.dash-panel-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 0 -8px; padding: 0 8px 2px; }
+.dash-panel-foot { flex: 0 0 auto; padding-top: 12px; margin-top: 8px; border-top: 1px solid var(--color-border-primary); }
+/* text that may run long: cut at one or two lines (put the full text in title) */
+.clamp-1 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+/* any card grid: cards in a row share the row's height */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px; align-items: stretch; }
+
+/* a row of small stat tiles: equal widths, wraps cleanly */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 16px; }
+.stat-row.big { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
@@ -317,7 +416,7 @@ a:hover { text-decoration: underline; }
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--rail-muted);
-  padding: 14px 12px 6px;
+  padding: 16px 12px 8px;
   white-space: nowrap;
 }
 .nav-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -338,7 +437,7 @@ a:hover { text-decoration: underline; }
   width: 32px; height: 32px; border-radius: 10px;
   border: 1px solid var(--ink-border); background: var(--card); color: var(--text);
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
-  position: relative;
+  position: relative; flex-shrink: 0;
 }
 .hdr-icon-btn:hover { background: var(--accent-soft); filter: none; }
 .crumb { display: flex; align-items: center; gap: 6px; font-size: 13px; font-family: var(--font-body); min-width: 0; }
@@ -346,10 +445,11 @@ a:hover { text-decoration: underline; }
 .crumb .sep { color: var(--color-text-tertiary); }
 .crumb .page { color: var(--color-text-secondary); }
 
-.page-area { max-width: 1500px; margin: 0 auto; padding: 22px 24px 72px; width: 100%; }
+.page-area { max-width: 1500px; margin: 0 auto; padding: 24px 24px 72px; width: 100%; }
 
 /* dashboard grids */
-.dash-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+/* column count via --cols (inline style), so the breakpoints below still apply */
+.dash-kpis { display: grid; grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 1280px) { .dash-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 720px)  { .dash-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* columns stretch to equal height so a short card never leaves bare canvas beside a tall one */
@@ -358,31 +458,47 @@ a:hover { text-decoration: underline; }
 @media (max-width: 1000px) { .dash-mid { grid-template-columns: 1fr; } }
 /* Home dashboard (src/features/dashboard/home) */
 .home { display: flex; flex-direction: column; gap: 16px; }
-.home-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; }
+.home-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 16px; }
 @media (max-width: 520px) { .home-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.home-2col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.home-2col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
 @media (max-width: 1100px) { .home-2col { grid-template-columns: minmax(0, 1fr); } }
-.home-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.home-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 640px) { .home-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-flow > * > span[aria-hidden] { display: none; } }
 .dash-bottom { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
 @media (max-width: 900px)  { .dash-bottom { grid-template-columns: 1fr; } }
 
-@media (max-width: 860px) {
-  .nav-layout { flex-direction: column; }
-  .nav-rail, .nav-rail.collapsed {
-    width: auto; height: auto; position: sticky; top: 0; z-index: 30;
-    flex-direction: row; align-items: center; gap: 4px; overflow-x: auto;
-    padding: 8px 10px; border-right: none; border-bottom: 1px solid var(--border);
-  }
-  .nav-rail .nav-section, .nav-rail .nav-wordmark { display: none; }
-  .nav-item { width: auto; white-space: nowrap; min-height: 36px; }
-  .app-header { position: static; }
+/* Sidebar by width (the mode comes from useNavMode in src/shell):
+   ≥1024 full sidebar · 768–1023 icon rail · <768 a drawer from the header's menu button */
+.nav-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(15, 18, 24, 0.45); }
+.nav-rail.drawer {
+  position: fixed; top: 0; left: 0; z-index: 61;
+  width: min(280px, 86vw); height: 100vh; height: 100dvh;
+  box-shadow: var(--shadow-lg); animation: drawerIn 0.22s var(--ease);
+}
+.nav-rail.drawer .nav-item { min-height: 44px; }   /* comfortable touch targets */
+@keyframes drawerIn { from { transform: translateX(-100%); } to { transform: none; } }
+
+@media (max-width: 1023px) {
+  .page-area { padding: 24px 16px 64px; }
+}
+@media (max-width: 767px) {
   .page-area { padding: 16px 16px 64px; }
+  .app-header { padding: 0 12px; gap: 8px; }
+  .crumb { display: none; }               /* the page header names the page */
+  .hdr-icon-btn { width: 36px; height: 36px; }
+  .hdr-search { padding: 0 !important; min-width: 0 !important; }
+  .hdr-new { min-height: 36px !important; }
+  /* search results use the full screen width under the header */
+  .hdr-search-results { position: fixed !important; top: calc(var(--header-h) + 4px) !important; left: 12px !important; right: 12px !important; }
+}
+@media (max-width: 479px) {
+  .hdr-new-label { display: none; }       /* icon only; the button keeps aria-label "New" */
+  .hdr-new { padding: 0 !important; width: 36px; justify-content: center; }
 }
 
 /* team-lead analytics 2-column workspace (70/30) with sticky sidebar */
 .an-workspace { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); gap: 16px; align-items: start; }
-.an-side { position: sticky; top: calc(var(--header-h) + 16px); display: flex; flex-direction: column; gap: 14px; }
+.an-side { position: sticky; top: calc(var(--header-h) + 16px); display: flex; flex-direction: column; gap: 16px; }
 @media (max-width: 1000px) { .an-workspace { grid-template-columns: 1fr; } .an-side { position: static; } }
 
 /* legacy 3-column shell (unused by the dashboard now; kept for safety) */

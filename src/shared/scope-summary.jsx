@@ -15,14 +15,14 @@ export function ScopeSummary({ shown, total, noun = 'items', crumbs = [] }) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
+        gap: 12,
         flexWrap: 'wrap',
         padding: '8px 12px',
         marginBottom: 12,
         background: filtered ? 'var(--brand-soft)' : 'var(--color-background-secondary)',
         border: `1px solid ${filtered ? 'var(--brand-ring)' : 'var(--color-border-tertiary)'}`,
         borderRadius: 8,
-        fontSize: 12.5,
+        fontSize: 13,
       }}
     >
       <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
@@ -38,10 +38,10 @@ export function ScopeSummary({ shown, total, noun = 'items', crumbs = [] }) {
         )}
       </span>
       {filtered && (
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', color: 'var(--color-text-secondary)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', color: 'var(--color-text-secondary)' }}>
           <span style={{ fontWeight: 600 }}>Filtered by:</span>
           {crumbs.map((c, i) => (
-            <span key={`${c}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span key={`${c}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               {i > 0 && <span style={{ color: 'var(--color-text-tertiary)' }}>→</span>}
               <span
                 style={{
