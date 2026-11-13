@@ -583,7 +583,9 @@ export default function ReleaseTracker() {
 
   /* ---- releases ---- */
   async function handleCreateRelease(form) {
-    const issue = linkIssue(form.linkUrl);
+    // TestFlight builds ship through App Store Connect, so their link is optional
+    // (same rule as the form); a link that is given is still checked.
+    const issue = linkIssue(form.linkUrl, form.releaseType !== 'testflight');
     if (issue) {
       showToast(issue, 'error');
       return;
@@ -1401,7 +1403,7 @@ export default function ReleaseTracker() {
   const canManage = isAdmin || isLead || isPmUser; // manages projects (Analytics, Manage)
   const canCreate = canCreateProjects(user);
   const canDelete = canDeleteProjects(user);
-  const canSeePeople = isAdmin || isLead; // the Users / Team page (not Project Managers)
+  const canSeePeople = isAdmin || isLead || isPmUser; // the Users / Team page (PMs: edit details only)
   const canExportReports = isExecutive || isLead;
   const canSubmit = user.role === 'Developer' || isLead || isAdmin;
   const myTeam = teams.find((t) => t.id === myTeamId) || null;
@@ -1423,7 +1425,7 @@ export default function ReleaseTracker() {
   // the people and teams someone works with: everyone for org-wide roles, else their own team
   const myPeople = isExecutive ? profiles : profiles.filter((p) => p.teamId === myTeamId);
   const myTeams = isExecutive ? teams : teams.filter((t) => t.id === myTeamId);
-  const visibleProfiles = isAdmin ? profiles : myPeople;
+  const visibleProfiles = isAdmin || isPmUser ? profiles : myPeople;
 
   return (
     <>
@@ -1620,11 +1622,12 @@ export default function ReleaseTracker() {
 
             {page === 'users' && canSeePeople && (
               <>
-                <PageHeader title={isAdmin ? 'Users' : 'Team members'} subtitle="Manage roles, teams and accounts" />
+                <PageHeader title={isAdmin || isPmUser ? 'Users' : 'Team members'} subtitle={isPmUser ? 'Edit people’s details' : 'Manage roles, teams and accounts'} />
                 <UsersTab
                   scopeProjectIds={releasesScopeIds}
                   currentUser={user}
                   isAdmin={isAdmin}
+                  isPm={isPmUser}
                   myTeamId={myTeamId}
                   profiles={visibleProfiles}
                   teams={teams}

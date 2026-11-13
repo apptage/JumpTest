@@ -58,7 +58,7 @@ function navSections({ canManage, isAdmin, isPm = false }) {
       { key: 'analytics', label: 'Analytics', Icon: IconChart, show: canManage },
     ] },
     { label: 'Admin', items: [
-      { key: 'users', label: isAdmin ? 'Users' : 'Team', Icon: IconUsers, show: canManage && !isPm }, // not for Project Managers
+      { key: 'users', label: isAdmin || isPm ? 'Users' : 'Team', Icon: IconUsers, show: canManage }, // PMs: edit people's details
       { key: 'teams', label: 'Teams', Icon: IconLayers, show: isAdmin },
       { key: 'brands', label: 'Brands', Icon: IconTag, show: isAdmin },
     ] },

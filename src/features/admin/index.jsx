@@ -21,7 +21,7 @@ import {
   CMS_KINDS,
   CMS_KIND_ORDER,
   cmsKindLabel, tint } from '@/constants.js';
-import { managesProject, PM_ROLE, canMoveProjectTeam, canDeleteProjects } from '@shared/permissions.js';
+import { managesProject, PM_ROLE, canMoveProjectTeam, canDeleteProjects, canEditUserDetails } from '@shared/permissions.js';
 import { IconGlobe, IconPlus, IconSmartphone, IconLayers, IconSearch } from '@/icons.jsx';
 
 /* the CMS kind picker shown next to Type when the project is a CMS project */
@@ -398,9 +398,72 @@ function CreateUserForm({ teams, isSubmitting, onCreateUser }) {
   );
 }
 
+/* Edit a person's name and login email (Users / Team members). Who may edit whom
+   is canEditUserDetails(); the database and the admin-update-user function
+   check the same rule. */
+function EditUserModal({ person, isSelf, onClose, onSaved, showToast }) {
+  const [name, setName] = useState(person.name || '');
+  const [email, setEmail] = useState(person.email || '');
+  const [saving, setSaving] = useState(false);
+  const emailTrim = email.trim();
+  const emailChanged = emailTrim.toLowerCase() !== (person.email || '').trim().toLowerCase();
+  const emailBad = !emailTrim || !/^[^\s@]+@[^\s@]+$/.test(emailTrim) || (emailChanged && !emailDomainOk(emailTrim));
+  const unchanged = name.trim() === (person.name || '').trim() && !emailChanged;
+  const invalid = !name.trim() || emailBad || unchanged || saving;
+
+  async function save() {
+    if (invalid) return;
+    setSaving(true);
+    try {
+      await api.updateUserDetails(person.id, { name, email: emailTrim }, person.email);
+      showToast(emailChanged ? `Details saved · ${isSelf ? 'you' : person.name.split(' ')[0]} now sign${isSelf ? '' : 's'} in with ${emailTrim.toLowerCase()}` : 'Details saved');
+      onSaved();
+      onClose();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalShell
+      onClose={onClose}
+      title="Edit user details"
+      subtitle={`${person.name} · ${person.role}`}
+      maxWidth={480}
+      footer={(
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button style={ghostButton} onClick={onClose}>Cancel</button>
+          <button style={primaryButton(invalid)} disabled={invalid} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      )}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <label style={labelStyle} htmlFor="edit-user-name">Full name</label>
+          <input id="edit-user-name" style={inputStyle} autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} />
+        </div>
+        <div>
+          <label style={labelStyle} htmlFor="edit-user-email">Email</label>
+          <input id="edit-user-email" type="email" style={{ ...inputStyle, borderColor: emailTrim && emailBad ? 'var(--c-red)' : undefined }} value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} />
+          <div style={{ fontSize: 12, marginTop: 4, color: emailTrim && emailBad ? 'var(--c-red)' : 'var(--color-text-tertiary)' }}>
+            {emailTrim && emailBad
+              ? 'Enter a valid @jumppace.com email address.'
+              : emailChanged
+              ? `This is also the sign-in email. ${isSelf ? 'You' : 'They'}'ll sign in with the new address; the password stays the same.`
+              : 'Also used to sign in.'}
+          </div>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 export function UsersTab({
   currentUser,
   isAdmin,
+  isPm: viewerIsPm = false,
   myTeamId,
   profiles,
   teams,
@@ -421,6 +484,7 @@ export function UsersTab({
     enabled: !releases,
   });
   const [busyId, setBusyId] = useState(null);
+  const [editing, setEditing] = useState(null);
   // hours per person come from the database (user_time_totals); until that
   // migration is applied, every log is downloaded and summed as before
   const [timeLogs, setTimeLogs] = useState({ list: [], totals: null, loading: true });
@@ -539,7 +603,7 @@ export function UsersTab({
             </option>
           ))}
         </select>
-        {isAdmin && (
+        {(isAdmin || viewerIsPm) && (
           <select aria-label="Team" style={fSel} value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
             <option value="all">All teams</option>
             <option value="none">No team</option>
@@ -567,8 +631,9 @@ export function UsersTab({
         const isSelf = p.id === currentUser.id;
         // a team lead may only adjust Developers/QA in their own team
         const leadLocked =
-          !isAdmin && (p.role === 'Admin' || p.role === 'Team Lead' || p.role === PM_ROLE);
+          !isAdmin && (viewerIsPm || p.role === 'Admin' || p.role === 'Team Lead' || p.role === PM_ROLE);
         const roleDisabled = isSelf || leadLocked || busyId === p.id;
+        const canEdit = canEditUserDetails(currentUser, p);
         const roleTone = { Admin: 'info', 'Team Lead': 'warning', [PM_ROLE]: 'info', QA: 'success' }[p.role] || 'neutral';
         const fieldLbl = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' };
         return (
@@ -625,18 +690,31 @@ export function UsersTab({
               </label>
             </div>
 
+            {(canEdit || isAdmin) && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            {canEdit && (
+              <button
+                onClick={() => setEditing(p)}
+                disabled={busyId === p.id}
+                style={{ ...ghostButton, padding: '8px 12px', minHeight: 0, fontSize: 12 }}
+              >
+                Edit details
+              </button>
+            )}
             {isAdmin && (
               <button
                 onClick={() => removeUser(p)}
                 disabled={isSelf || busyId === p.id}
                 style={{
-                  ...ghostButton, alignSelf: 'flex-end', padding: '8px 12px', minHeight: 0, fontSize: 12,
+                  ...ghostButton, padding: '8px 12px', minHeight: 0, fontSize: 12,
                   color: isSelf ? 'var(--color-text-secondary)' : 'var(--danger)',
                   opacity: isSelf ? 0.5 : 1, cursor: isSelf ? 'default' : 'pointer',
                 }}
               >
                 Remove
               </button>
+            )}
+            </div>
             )}
           </div>
         );
@@ -656,10 +734,21 @@ export function UsersTab({
         </button>
       )}
       <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
-        {isAdmin
+        {viewerIsPm
+          ? 'You can edit anyone’s name and email except an admin’s. Ask an admin to change roles or teams, or to add or remove people.'
+          : isAdmin
           ? 'New sign-ups join as Developer. Set each user’s team and role here; one Team Lead per team. Project Managers manage every project and have no team.'
-          : 'You can set your team members between Developer and QA. Ask an admin to add or remove people.'}
+          : 'You can edit your Developers’ and QA’s names and emails, and set them between Developer and QA. Ask an admin to add or remove people.'}
       </div>
+      {editing && (
+        <EditUserModal
+          person={editing}
+          isSelf={editing.id === currentUser.id}
+          showToast={showToast}
+          onSaved={refetchProfiles}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
