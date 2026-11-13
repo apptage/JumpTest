@@ -35,3 +35,20 @@ export const canMoveProjectTeam = canDeleteProjects;
 export function hasOrgScope(user) {
   return user?.role === 'Admin' || user?.role === 'Manager' || user?.role === PM_ROLE;
 }
+
+/* Edit someone's name and email. Mirrors enforce_profile_details() in
+   202611130001_edit_user_details.sql and the admin-update-user function:
+     Admin            anyone
+     Project Manager  anyone except an Admin
+     Team Lead        Developers and QA on their own team
+   Everyone can edit their own details. */
+export function canEditUserDetails(user, target) {
+  if (!user || !target) return false;
+  if (user.id === target.id) return true;
+  if (user.role === 'Admin') return true;
+  if (user.role === PM_ROLE) return target.role !== 'Admin';
+  if (user.role === 'Team Lead') {
+    return (target.role === 'Developer' || target.role === 'QA') && !!user.teamId && target.teamId === user.teamId;
+  }
+  return false;
+}

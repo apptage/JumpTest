@@ -290,6 +290,31 @@ export async function fetchProfiles() {
   return data.map(mapProfile);
 }
 
+/* Edit a user's name and email. A name-only change is a plain profile update
+   (checked by enforce_profile_details); a new email also has to change the login
+   in auth.users, which only the admin-update-user Edge Function can do. */
+export async function updateUserDetails(id, { name, email }, currentEmail = '') {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (cleanEmail === (currentEmail || '').trim().toLowerCase()) {
+    return updateProfile(id, { name: name.trim() });
+  }
+  const { data, error } = await supabase.functions.invoke('admin-update-user', {
+    body: { id, name: name.trim(), email: cleanEmail },
+  });
+  if (error) {
+    let msg = error.message;
+    try {
+      const body = await error.context?.json?.();
+      if (body?.error) msg = body.error;
+    } catch (_) {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 export async function updateProfile(id, patch) {
   const { error } = await supabase.from('profiles').update(patch).eq('id', id);
   if (error) throw error;
